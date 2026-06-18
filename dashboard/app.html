@@ -129,9 +129,15 @@
   .pl{font:600 10px/1 var(--body);padding:4px 8px;border-radius:6px;background:#1b1620;color:#fff;white-space:nowrap}
   .pl.ig{background:rgba(190,30,116,.12);color:#b81e74}
   .post .go{border:0;background:var(--sky-soft);color:var(--sky);font:600 11.5px/1 var(--body);padding:8px 12px;border-radius:9px;cursor:pointer;white-space:nowrap}
-  .post .more{color:var(--dim);cursor:pointer;padding:4px 8px;font-weight:700}
+  .post .more{color:var(--sky);cursor:pointer;padding:5px 10px;font:600 11.5px/1 var(--body);border-radius:8px;background:var(--sky-soft);border:0;white-space:nowrap}
   .chan-chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}
   .chan-chip{font:500 10px/1 var(--body);padding:3px 8px;border-radius:20px;background:var(--graphite-soft);color:var(--ink2);border:1px solid var(--hair)}
+  .chan-pill-wrap{display:inline-flex;align-items:stretch;border-radius:20px;background:rgba(255,255,255,.7);border:1px solid var(--gline);overflow:hidden}
+  .chan-pill{font:600 12px/1 var(--body);padding:6px 11px;background:transparent;border:0;color:var(--ink2);cursor:pointer}
+  .chan-pill.on{background:var(--graphite);color:#fff}
+  .chan-pill-wrap.on{border-color:var(--graphite)}
+  .chan-gear{padding:5px 9px;background:transparent;border:0;border-left:1px solid var(--gline);color:var(--dim);cursor:pointer;font-size:12px;line-height:1}
+  .chan-gear:hover{background:var(--sky-soft);color:var(--sky)}
 
   /* ---------- right dock: AI chat ---------- */
   .chat-dock{display:flex;flex-direction:column;min-height:0;overflow:hidden}
@@ -326,23 +332,12 @@ function saveOpen(){
   localStorage.setItem("gtmos.rail.open",
     JSON.stringify({ projects:[...OPEN.projects], profiles:[...OPEN.profiles] }));
 }
-// A node is open if explicitly toggled open OR it contains the active selection
-// (so navigating to a profile/channel never leaves it hidden in a collapsed parent).
+// A node is open if it's in the OPEN set (persisted). Navigate actions below
+// auto-add the parent to OPEN so navigating to a child keeps it visible,
+// but the user can still manually collapse the parent afterwards.
 function isOpen(kind, slug){
-  if(kind === "projects"){
-    if(OPEN.projects.has(slug) || STATE.project === slug) return true;
-    const proj = _TREE.find(p => p.slug === slug);
-    if(proj && STATE.profile && proj.profiles.some(pr => pr.slug === STATE.profile)) return true;
-    if(proj && STATE.channelGuidelines && proj.profiles.some(pr =>
-        pr.channels.some(c => c.slug === STATE.channelGuidelines))) return true;
-    return false;
-  }
-  if(kind === "profiles"){
-    if(OPEN.profiles.has(slug) || STATE.profile === slug) return true;
-    const prof = _TREE.flatMap(p => p.profiles).find(pr => pr.slug === slug);
-    if(prof && STATE.channelGuidelines && prof.channels.some(c => c.slug === STATE.channelGuidelines)) return true;
-    return false;
-  }
+  if(kind === "projects") return OPEN.projects.has(slug);
+  if(kind === "profiles") return OPEN.profiles.has(slug);
   return false;
 }
 function toggleOpen(kind, slug){
@@ -362,7 +357,7 @@ async function renderRail(){
       const profOpen = !hasCh || isOpen("profiles", prof.slug);
       const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
       const channelsBlock = prof.channels.length ? `<div style="margin-left:10px;border-left:1px solid var(--hair);padding-left:8px;margin-top:1px">
-        ${prof.channels.map(ch=>`<a data-chan-guidelines="${esc(ch.slug)}" style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:8px;cursor:pointer"><span style="opacity:.5">⌗</span>${esc(ch.name||ch.platform)}</a>`).join("")}
+        ${prof.channels.map(ch=>`<a data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}" style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:8px;cursor:pointer"><span style="opacity:.5">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(ch.name||ch.platform)}</a>`).join("")}
         <a data-new-channel="${esc(prof.slug)}" style="font-size:11px;color:var(--sky);padding:4px 7px;cursor:pointer">＋ Channel</a>
       </div>` : `<div style="margin-left:10px;padding-left:8px"><a data-new-channel="${esc(prof.slug)}" style="font-size:11px;color:var(--sky);padding:4px 7px;cursor:pointer">＋ Channel</a></div>`;
       return `<div style="display:flex;align-items:center;gap:1px">
@@ -402,8 +397,7 @@ async function renderRail(){
     `;
   $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>selectGlobal(a.dataset.view));
   $("#rail").querySelectorAll("[data-section]").forEach(a=>a.onclick=()=>selectSection(a.dataset.project,a.dataset.section));
-  $("#rail").querySelectorAll("[data-profile]").forEach(a=>a.onclick=()=>selectProfile(a.dataset.profile));
-  $("#rail").querySelectorAll("[data-chan-guidelines]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectChannelGuidelines(a.dataset.chanGuidelines); });
+  $("#rail").querySelectorAll("[data-profile]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectProfile(a.dataset.profile, a.dataset.chanFilter||null); });
   $("#rail").querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
   $("#rail").querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
   $("#rail").querySelectorAll("[data-toggle-project]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("projects", el.dataset.toggleProject); });
@@ -461,14 +455,25 @@ function openNewChannel(profileSlug){
 function highlight(){
   document.querySelectorAll("#rail [data-view]").forEach(a=>a.classList.toggle("active",STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
   document.querySelectorAll("#rail [data-section]").forEach(a=>a.classList.toggle("active",STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
-  document.querySelectorAll("#rail [data-profile]").forEach(a=>a.classList.toggle("active",STATE.view==="profile"&&STATE.profile===a.dataset.profile));
+  document.querySelectorAll("#rail [data-profile]").forEach(a=>a.classList.toggle("active",(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
   document.querySelectorAll("#rail [data-chan-guidelines]").forEach(a=>a.classList.toggle("active",STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
 }
 function selectGlobal(v){ STATE={view:v,project:null,section:null,profile:null,channelGuidelines:null}; highlight();
   if(v==="calendar") renderTimeline(); else if(v==="operations") renderOperations(); else renderNeeds(); }
-function selectSection(project,section){ STATE={view:"section",project,section,profile:null,channelGuidelines:null}; highlight(); renderProjectSection(project,section); }
-function selectProfile(slug){ STATE={view:"profile",project:null,section:null,profile:slug,channelGuidelines:null}; highlight(); renderProfile(slug); }
-function selectChannelGuidelines(slug){ STATE={view:"channelGuidelines",project:null,section:null,profile:null,channelGuidelines:slug}; highlight(); renderChannelGuidelines(slug); }
+function selectSection(project,section){
+  OPEN.projects.add(project); saveOpen();
+  STATE={view:"section",project,section,profile:null,channelGuidelines:null}; highlight(); renderProjectSection(project,section); }
+function selectProfile(slug, chanFilter){
+  const parentProj = _TREE.find(p=>p.profiles.some(pr=>pr.slug===slug));
+  if(parentProj){ OPEN.projects.add(parentProj.slug); saveOpen(); }
+  STATE={view:"profile",project:null,section:null,profile:slug,channelGuidelines:null}; highlight(); renderProfile(slug, chanFilter||null); }
+function selectChannelGuidelines(slug){
+  const parentProf = _TREE.flatMap(p=>p.profiles).find(pr=>pr.channels.some(c=>c.slug===slug));
+  const parentProj = _TREE.find(p=>p.profiles.some(pr=>pr.channels.some(c=>c.slug===slug)));
+  if(parentProf){ OPEN.profiles.add(parentProf.slug); }
+  if(parentProj){ OPEN.projects.add(parentProj.slug); }
+  if(parentProf||parentProj) saveOpen();
+  STATE={view:"channelGuidelines",project:null,section:null,profile:null,channelGuidelines:slug}; highlight(); renderChannelGuidelines(slug); }
 
 // Re-render the rail + the current center view (used after the chat agent
 // mutates entities via osctl, so new/changed items appear without a reload).
@@ -479,6 +484,7 @@ async function refreshViews(){
   if (v === "operations") return renderOperations();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return renderProfile(STATE.profile);
+  if (v === "profileSetup") return renderProfileSetup(STATE.profile);
   if (v === "channelGuidelines") return renderChannelGuidelines(STATE.channelGuidelines);
   return renderNeeds();
 }
@@ -499,7 +505,7 @@ async function renderOperations(){
         <span class="stp ${done?"sched":"idea"}">${esc(r.status||"planned")}</span>
         <div class="t">${esc(r.title)}<small>${[r.entity_name||r.entity_slug, r.date].filter(Boolean).join(" · ")}</small></div>
         ${!done?`<button class="go" data-done-title="${esc(r.title)}" data-done-entity="${esc(r.entity_slug||"")}">Done ✓</button>`:""}
-        <span class="more" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>⋯</span>
+        <button class="more" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>Edit</button>
       </div>`;
     }).join("") : `<div style="padding:24px 4px;color:var(--dim)">Nothing here.</div>`;
     const active=items.filter(r=>r.status!=="done").length;
@@ -593,6 +599,11 @@ function openEvPopup(r){
     catch(e){ toast("✗ "+e.message); }
   }});
   if(r.kind==="post") acts.push({id:"go",label:"Open post →",onclick:()=>selectProfile(r.entity_slug)});
+  if(r.kind==="activity") acts.push({id:"del",label:"Delete",onclick:async()=>{
+    if(!confirm(`Delete "${r.title}"?`)) return;
+    try{ await jpost("/api/activity/delete",{title:r.title}); toast("Deleted ✓"); refreshViews(); }
+    catch(e){ toast("✗ "+e.message); }
+  }});
   popup(r.title||r.kind, [
     ["Type", r.kind],
     ["Entity", r.entity_name||r.entity_slug||"—"],
@@ -656,14 +667,33 @@ const NEXT = {
   scheduled:{label:"Mark published →",to:"published"}, published:null, rejected:{label:"Restore",to:"planned"},
 };
 
-async function renderProfile(slug){
-  const posts = await api(`/api/profile/${slug}/posts`);
+const PLATFORM_ICON = {instagram:"📸",tiktok:"🎵",x:"𝕏",linkedin:"in",youtube:"▶",facebook:"f"};
+async function renderProfile(slug, initChanFilter){
+  const [posts, profData] = await Promise.all([
+    api(`/api/profile/${slug}/posts`),
+    api(`/api/profile/${slug}`),
+  ]);
+  const profNode = _TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===slug)||{channels:[]};
+  const channels = profNode.channels||[];
   const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
   let FILTER = "all";
-  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">Profiles · <b>${esc(slug)}</b></div>
-      <h1 class="title">${esc(slug)}</h1><div class="titlemeta">${posts.length} posts</div></div>
-      <div style="margin-left:auto;display:flex;gap:8px"><button class="btn" id="addIdea">＋ Add idea</button><button class="btn primary" id="genIdeas">✦ Generate ideas</button></div></div>
+  let CHAN_FILTER = initChanFilter||null;
+  const chanSection = `<div class="pcard" style="margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}">${PLATFORM_ICON[ch.platform]||"⌗"} ${esc(ch.name||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
+      <button class="btn" id="addChanBtn" style="font-size:12px;padding:5px 11px;border-radius:20px">＋ Add channel</button>
+    </div>
+    ${profData.topic?`<div style="margin-top:8px;font-size:12px;color:var(--dim)">${esc(profData.topic)}</div>`:""}
+  </div>`;
+  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">Profiles · <b>${esc(profData.name||slug)}</b></div>
+      <h1 class="title">${esc(profData.name||slug)}</h1><div class="titlemeta">${posts.length} posts</div></div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="setupBtn">⚙ Setup</button>
+        <button class="btn" id="addIdea">＋ Add idea</button>
+        <button class="btn primary" id="genIdeas">✦ Generate ideas</button>
+      </div></div>
     <div class="scroll">
+      ${chanSection}
       <div class="filters">
         <span class="chip on" data-f="all">All <span class="n">${posts.length}</span></span>
         <span class="chip" data-f="ideas">💡 Ideas <span class="n">${count("ideas")}</span></span>
@@ -674,7 +704,8 @@ async function renderProfile(slug){
       <div class="rowc" id="list"></div></div>`;
 
   function drawList(){
-    const list = posts.filter(p=>FILTER==="all"||STAGE_GROUP[p.status]===FILTER);
+    const list = posts.filter(p=>(FILTER==="all"||STAGE_GROUP[p.status]===FILTER)
+      && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER))));
     const el = $("#list");
     if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
     el.innerHTML = list.map(p=>{
@@ -687,7 +718,7 @@ async function renderProfile(slug){
         <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
         <div class="t">${esc(p.pillar||p.id)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
         ${n?`<button class="go" data-act="${p.id}">${n.label}</button>`:""}
-        <span class="more" data-menu="${p.id}">⋯</span></div>`;
+        <button class="more" data-menu="${p.id}">Edit</button></div>`;
     }).join("");
     el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>doNext(b.dataset.act));
     el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>rowMenu(b.dataset.menu));
@@ -709,16 +740,92 @@ async function renderProfile(slug){
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f;
     $("#main").querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===c)); drawList(); });
+  $("#main").querySelectorAll(".chan-pill").forEach(p=>p.onclick=()=>{
+    CHAN_FILTER = CHAN_FILTER===p.dataset.cf ? null : p.dataset.cf;
+    $("#main").querySelectorAll(".chan-pill").forEach(x=>x.classList.toggle("on",x.dataset.cf===CHAN_FILTER));
+    $("#main").querySelectorAll(".chan-pill-wrap").forEach(x=>x.classList.toggle("on",x.querySelector(".chan-pill")?.dataset.cf===CHAN_FILTER));
+    drawList(); });
+  $("#main").querySelectorAll(".chan-gear").forEach(btn=>btn.onclick=async()=>{
+    const cs = btn.dataset.cg;
+    const ch = channels.find(c=>c.slug===cs)||{};
+    const gl = await api(`/api/channel/${cs}/guidelines`);
+    modal(`${PLATFORM_ICON[ch.platform]||"⌗"} ${ch.name||ch.platform} setup`,
+      `<label>Voice & guidelines <span style="font-weight:400;text-transform:none">(injected into every generation for this channel)</span></label>
+       <textarea name="text" rows="8" style="font-family:ui-monospace,Menlo,monospace;font-size:12px">${esc(gl.text||"")}</textarea>
+       <p style="margin:14px 0 0"><button type="button" class="btn" id="delChanBtn" style="color:#c0392b">Delete channel</button></p>`,
+      async data=>{ await jpost(`/api/channel/${cs}/guidelines`,{text:data.text}); toast("Saved ✓"); renderProfile(slug); },
+      {saveLabel:"Save"}
+    );
+    setTimeout(()=>{
+      const d=document.getElementById("delChanBtn"); if(!d) return;
+      d.onclick=async()=>{ if(!confirm(`Delete ${ch.name||ch.platform} channel?`)) return;
+        try{ await jpost(`/api/channel/${cs}/delete`,{}); document.querySelector(".modal-bg")?.remove(); toast("Channel deleted ✓"); renderRail(); renderProfile(slug); }
+        catch(e){ toast("✗ "+e.message); } };
+    },0);
+  });
+  $("#addChanBtn").onclick=e=>{ e.stopPropagation(); openNewChannel(slug); };
+  $("#setupBtn").onclick=()=>selectProfileSetup(slug);
   $("#addIdea").onclick=()=>modal("Add idea", `<label>Date</label><input name="date" placeholder="2026-07-01">
     <label>Pillar / idea</label><input name="pillar" placeholder="e.g. Story Craft">
-    <label>Channels (slugs, comma-separated)</label><input name="channels" placeholder="e.g. my-profile-tiktok">`,
+    <label>Channels (slugs, comma-separated)</label><input name="channels" placeholder="${channels.map(c=>c.slug).join(", ")||"e.g. my-profile-tiktok"}">`,
     async data=>{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}); toast("Idea added ✓"); renderProfile(slug); renderRail(); });
   $("#genIdeas").onclick=()=>modal("Generate ideas (claude -p)", `<label>Period</label><input name="period" placeholder="2026-07-01 to 2026-07-14">
-    <label>Platforms</label><input name="platforms" placeholder="tiktok,instagram">
+    <label>Platforms</label><input name="platforms" value="${esc(channels.map(c=>c.platform).join(","))}" placeholder="tiktok,instagram">
     <label>Cadence (per platform / week)</label><input name="cadence" placeholder="3">
     <label>Focus (optional)</label><input name="focus" placeholder="push the launch">`,
     async data=>{ toast("Generating via claude -p… (10–30s)"); await api(`/api/profile/${slug}/plan`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}); toast("Ideas generated ✓"); renderProfile(slug); renderRail(); });
   drawList();
+}
+
+function selectProfileSetup(slug){
+  const parentProj = _TREE.find(p=>p.profiles.some(pr=>pr.slug===slug));
+  if(parentProj){ OPEN.projects.add(parentProj.slug); saveOpen(); }
+  STATE={view:"profileSetup",project:null,section:null,profile:slug,channelGuidelines:null};
+  highlight(); renderProfileSetup(slug);
+}
+
+async function renderProfileSetup(slug){
+  const profData = await api(`/api/profile/${slug}`);
+  const profName = profData.name||slug;
+  $("#main").innerHTML = `
+    <div class="topbar">
+      <div>
+        <div class="crumbs"><a id="backToProfile" style="cursor:pointer;color:var(--sky)">← ${esc(profName)}</a> · <b>Setup</b></div>
+        <h1 class="title">Profile setup</h1>
+      </div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="delProfBtn" style="color:#c0392b">Delete profile</button>
+        <button class="btn primary" id="saveProfBtn">Save</button>
+      </div>
+    </div>
+    <div class="scroll">
+      <div style="max-width:740px">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:22px">
+          <div>
+            <label style="display:block;font-size:11px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Display name</label>
+            <input id="ps-name" value="${esc(profName)}" style="width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px 13px;font:inherit;background:rgba(255,255,255,.82)">
+          </div>
+          <div>
+            <label style="display:block;font-size:11px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Topic / niche</label>
+            <input id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Film reviews for movie lovers" style="width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px 13px;font:inherit;background:rgba(255,255,255,.82)">
+          </div>
+        </div>
+        <label style="display:block;font-size:11px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Brand voice & tone</label>
+        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Describe how this brand speaks — personality, tone, things to always or never say, example phrases. This context is injected into every AI generation for this profile.</p>
+        <textarea id="ps-voice" style="width:100%;min-height:480px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.voice||"")}</textarea>
+      </div>
+    </div>`;
+  $("#backToProfile").onclick = ()=>selectProfile(slug);
+  $("#saveProfBtn").onclick = async()=>{
+    const data={name:$("#ps-name").value, topic:$("#ps-topic").value, voice:$("#ps-voice").value};
+    try{ await jpost(`/api/profile/${slug}/update`,data); toast("Saved ✓"); renderRail(); }
+    catch(e){ toast("✗ "+e.message); }
+  };
+  $("#delProfBtn").onclick = async()=>{
+    if(!confirm(`Delete "${profName}" and all its posts?`)) return;
+    try{ await jpost(`/api/profile/${slug}/delete`,{}); toast("Profile deleted ✓"); renderRail(); selectGlobal("calendar"); }
+    catch(e){ toast("✗ "+e.message); }
+  };
 }
 
 async function renderChannelGuidelines(slug){

@@ -154,6 +154,49 @@ def generate_brief(post_id):
     return {"id": post_id, "status": "briefed", "stdout": res.stdout.strip()}
 
 
+def _parse_frontmatter(text):
+    """Return (dict of frontmatter fields, body string) for --- ... --- text."""
+    fm, body = {}, ""
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            for line in parts[1].strip().splitlines():
+                if ":" in line:
+                    k, _, v = line.partition(":")
+                    fm[k.strip()] = v.strip()
+            body = parts[2].strip()
+    return fm, body
+
+
+def read_profile(slug):
+    """Read profile.md and return name, topic, voice, and project."""
+    d = _profile_dir(slug)
+    f = d / "profile.md"
+    if not f.exists():
+        return {"slug": slug, "name": slug, "topic": "", "voice": ""}
+    fm, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
+    return {"slug": slug, "name": fm.get("name", slug),
+            "topic": fm.get("topic", ""), "voice": body,
+            "project": fm.get("project", "")}
+
+
+def update_profile(slug, fields):
+    """Rewrite profile.md, preserving the project field."""
+    d = _profile_dir(slug)
+    f = d / "profile.md"
+    proj = ""
+    if f.exists():
+        fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
+        proj = fm.get("project", "")
+    name = (fields.get("name") or slug).strip()
+    topic = (fields.get("topic") or "").strip()
+    voice = (fields.get("voice") or "").strip()
+    md = f"---\nname: {name}\ntopic: {topic}\nproject: {proj}\n---\n{voice}\n"
+    f.write_text(md, encoding="utf-8")
+    reindex()
+    return {"slug": slug}
+
+
 def read_channel_guidelines(slug):
     """Read guidelines for a channel from its guidelines.md file."""
     f = _channel_dir(slug) / "guidelines.md"
@@ -319,6 +362,36 @@ def create_channel(profile_slug: str, slug: str, platform: str, handle: str = ""
     (channel_dir / "guidelines.md").write_text("", encoding="utf-8")
     reindex()
     return {"slug": slug, "profile": profile_slug, "platform": platform}
+
+
+def delete_channel(slug: str) -> dict:
+    import shutil
+    shutil.rmtree(_channel_dir(slug))
+    reindex()
+    return {"slug": slug, "deleted": True}
+
+
+def delete_profile(slug: str) -> dict:
+    import shutil
+    shutil.rmtree(_profile_dir(slug))
+    reindex()
+    return {"slug": slug, "deleted": True}
+
+
+def delete_activity(title: str) -> dict:
+    path = ROOT / "portfolio" / "activities.md"
+    if not path.exists():
+        raise ActionError("activities.md not found")
+    text = path.read_text(encoding="utf-8")
+    escaped = re.escape(title)
+    new_text, n = re.subn(
+        rf"^- \[[ x]\] {escaped}[^\n]*\n?", "", text, flags=re.MULTILINE
+    )
+    if n == 0:
+        raise ActionError(f"activity '{title}' not found")
+    path.write_text(new_text, encoding="utf-8")
+    reindex()
+    return {"title": title, "deleted": True}
 
 
 def mark_activity_done(title: str, entity_slug: str) -> dict:

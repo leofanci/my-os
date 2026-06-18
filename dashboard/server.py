@@ -236,6 +236,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/posts"):
                 slug = path[len("/api/profile/"):-len("/posts")]
                 return self._send(200, db.profile_posts(slug))
+            if path.startswith("/api/profile/"):
+                slug = path[len("/api/profile/"):]
+                return self._send(200, fileops.read_profile(slug))
             if path.startswith("/api/channel/") and path.endswith("/guidelines"):
                 slug = path[len("/api/channel/"):-len("/guidelines")]
                 return self._send(200, {"text": fileops.read_channel_guidelines(slug)})
@@ -256,6 +259,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/posts"):
                 slug = path[len("/api/profile/"):-len("/posts")]
                 return self._send(200, {"ok": True, **fileops.add_post(slug, body)})
+            if path.startswith("/api/profile/") and path.endswith("/update"):
+                slug = path[len("/api/profile/"):-len("/update")]
+                return self._send(200, {"ok": True, **fileops.update_profile(slug, body)})
             if path.startswith("/api/profile/") and path.endswith("/plan"):
                 slug = path[len("/api/profile/"):-len("/plan")]
                 return self._send(200, {"ok": True, **fileops.run_plan(slug, body)})
@@ -279,6 +285,14 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/channel/") and path.endswith("/guidelines"):
                 slug = path[len("/api/channel/"):-len("/guidelines")]
                 return self._send(200, {"ok": True, **fileops.write_channel_guidelines(slug, body.get("text", ""))})
+            if path.startswith("/api/channel/") and path.endswith("/delete"):
+                slug = path[len("/api/channel/"):-len("/delete")]
+                return self._send(200, {"ok": True, **fileops.delete_channel(slug)})
+            if path.startswith("/api/profile/") and path.endswith("/delete"):
+                slug = path[len("/api/profile/"):-len("/delete")]
+                return self._send(200, {"ok": True, **fileops.delete_profile(slug)})
+            if path == "/api/activity/delete":
+                return self._send(200, {"ok": True, **fileops.delete_activity(body.get("title", ""))})
             if path == "/api/project/new":
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()
                 return self._send(200, {"ok": True, **fileops.create_project(slug, body)})
