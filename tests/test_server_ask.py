@@ -41,7 +41,7 @@ class SSE(unittest.TestCase):
 
         tree = [{"slug": "acme", "kind": "brand", "type": "project",
                  "profiles": [{"slug": "demo", "name": "Demo Brand",
-                               "channels": [{"slug": "mt-tiktok", "name": "TikTok",
+                               "channels": [{"slug": "demo-tiktok", "name": "TikTok",
                                              "platform": "tiktok"}]}]}]
         with mock.patch.object(server, "get_chat_session", return_value=CaptureSession()), \
              mock.patch.object(server.db, "tree", return_value=tree):
@@ -60,14 +60,14 @@ class StateSnapshot(unittest.TestCase):
         tree = [{"slug": "acme", "kind": "brand", "type": "project",
                  "profiles": [{"slug": "demo", "name": "Demo Brand",
                                "channels": [
-                                   {"slug": "mt-tiktok", "name": "TikTok", "platform": "tiktok"},
-                                   {"slug": "mt-ig", "name": "Instagram", "platform": "instagram"},
+                                   {"slug": "demo-tiktok", "name": "TikTok", "platform": "tiktok"},
+                                   {"slug": "demo-ig", "name": "Instagram", "platform": "instagram"},
                                ]}]}]
         out = server.state_snapshot(tree)
         self.assertIn("acme (brand)", out)
         self.assertIn('  profile demo "Demo Brand"', out)
-        self.assertIn("    channel mt-tiktok (tiktok)", out)
-        self.assertIn("    channel mt-ig (instagram)", out)
+        self.assertIn("    channel demo-tiktok (tiktok)", out)
+        self.assertIn("    channel demo-ig (instagram)", out)
 
     def test_project_no_profiles_and_profile_no_channels(self):
         tree = [{"slug": "solo", "type": "project", "profiles": []},
