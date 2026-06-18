@@ -54,6 +54,7 @@ class ChatSession:
                "--output-format", "stream-json",
                "--include-partial-messages",
                "--verbose",
+               "--model", "sonnet",  # always the latest/recommended Sonnet
                "--add-dir", self.repo_dir,
                "--append-system-prompt", self.rail,
                "--allowedTools", ALLOWED_TOOLS,
