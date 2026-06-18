@@ -1,0 +1,75 @@
+#!/bin/bash
+# GTM OS launcher — never sources .zprofile (too slow); probes known paths directly.
+
+# Find python3 — probe in order of preference
+PYTHON3=""
+for _p in \
+    "$HOME/anaconda3/bin/python3" \
+    "$HOME/miniconda3/bin/python3" \
+    "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3" \
+    "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3" \
+    "/opt/homebrew/bin/python3" \
+    "/usr/local/bin/python3" \
+    "/usr/bin/python3"; do
+    [ -x "$_p" ] && PYTHON3="$_p" && break
+done
+# Fall back to whatever python3 is on PATH
+[ -z "$PYTHON3" ] && PYTHON3="$(command -v python3 2>/dev/null)"
+
+if [ -z "$PYTHON3" ]; then
+    osascript -e 'display alert "GTM OS" message "python3 not found. Install from python.org."'
+    exit 1
+fi
+
+# Put claude (nvm/homebrew node) + swiftc on PATH — don't source anything slow.
+# Pick the newest installed nvm node, if any, then prepend common locations.
+NVM_BIN=""
+for _d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$_d" ] && NVM_BIN="$_d"; done
+export PATH="${NVM_BIN:+$NVM_BIN:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+
+REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
+PORT=8765
+URL="http://127.0.0.1:$PORT"
+LOGFILE="$REPO/dashboard/server.log"
+SWIFT_SRC="$REPO/GTM OS.app/Contents/Resources/webview.swift"
+LAUNCHER_BIN="$HOME/.cache/gtm-os/gtm-os-webview"
+
+# If server already running, just open a new native window
+if curl -sf "$URL/" > /dev/null 2>&1; then
+    [ -f "$LAUNCHER_BIN" ] && "$LAUNCHER_BIN" "$URL" && exit 0
+fi
+
+# Kill any stale process on this port before starting fresh
+/usr/sbin/lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null; sleep 0.1
+
+# Start the Python server
+cd "$REPO"
+"$PYTHON3" dashboard/server.py --port "$PORT" > "$LOGFILE" 2>&1 &
+SERVER_PID=$!
+trap "kill $SERVER_PID 2>/dev/null" EXIT TERM INT HUP
+
+# Wait up to 12s (index.py runs first; give it room)
+for i in $(seq 1 60); do
+    curl -sf "$URL/" > /dev/null 2>&1 && break
+    sleep 0.2
+done
+
+if ! curl -sf "$URL/" > /dev/null 2>&1; then
+    osascript -e "display alert \"GTM OS failed to start\" message \"Check $LOGFILE for details.\""
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi
+
+# Compile Swift native-window launcher if missing or stale
+if [ ! -f "$LAUNCHER_BIN" ] || [ "$SWIFT_SRC" -nt "$LAUNCHER_BIN" ]; then
+    mkdir -p "$(dirname "$LAUNCHER_BIN")"
+    /usr/bin/swiftc -framework Cocoa -framework WebKit -o "$LAUNCHER_BIN" "$SWIFT_SRC" 2>>"$LOGFILE"
+fi
+
+if [ -f "$LAUNCHER_BIN" ]; then
+    "$LAUNCHER_BIN" "$URL"
+else
+    osascript -e "display alert \"GTM OS\" message \"Swift compile failed — install Xcode Command Line Tools:\n  xcode-select --install\""
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi

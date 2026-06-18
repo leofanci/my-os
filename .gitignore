@@ -1,0 +1,22 @@
+# Derived / disposable
+database/data/os.db
+database/data/*.db-journal
+__pycache__/
+*.pyc
+dashboard/server.log
+.pytest_cache/
+
+# OS noise
+.DS_Store
+
+# Local / personal machine config
+.claude/settings.local.json
+.superpowers/
+.remember/
+
+# Compiled native webview cache (built on first launch)
+.cache/
+
+# User project content — keep the folder structure, not the private data
+/projects/*
+!/projects/.gitkeep
