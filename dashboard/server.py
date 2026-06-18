@@ -37,8 +37,28 @@ RAIL = (
     "Mutate state ONLY by running `python -m dashboard.osctl <command>` "
     "(e.g. create-project, create-profile, create-channel, add-post, "
     "create-activity, create-milestone, mark-done, update-post, set-status). "
-    "Never write or edit files directly. After acting, confirm briefly what you changed."
+    "Never write or edit files directly. After acting, confirm briefly what you changed. "
+    "The current GTM OS state is provided to you at the start of each turn — do "
+    "not explore with Read/Grep/Glob to discover existing structure; act directly."
 )
+
+
+def state_snapshot(projects):
+    """Render db.tree() output as a compact text outline for the chat agent,
+    so it already knows the project/profile/channel structure and need not
+    forage. Pure + deterministic — fed a fresh tree each turn."""
+    lines = ["## Current GTM OS state"]
+    if not projects:
+        lines.append("(no projects yet)")
+        return "\n".join(lines)
+    for p in projects:
+        lines.append(f"{p['slug']} ({p.get('kind') or p.get('type')})")
+        for prof in p.get("profiles", []):
+            lines.append(f"  profile {prof['slug']} \"{prof['name']}\"")
+            for ch in prof.get("channels", []):
+                lines.append(f"    channel {ch['slug']} ({ch.get('platform')})")
+    return "\n".join(lines)
+
 
 _CHAT = None
 
@@ -80,6 +100,14 @@ class Handler(BaseHTTPRequestHandler):
         if not messages or messages[-1].get("role") != "user":
             return self._send(400, {"error": "no user message"})
         text = messages[-1]["content"]
+
+        # Hand the agent the current structure up front so it acts instead of
+        # foraging for the data model with Read/Grep/Glob each turn.
+        try:
+            snapshot = state_snapshot(db.tree())
+            text = f"{snapshot}\n\n## Request\n{text}"
+        except Exception:  # noqa: BLE001 — never block a turn on snapshot failure
+            pass
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")

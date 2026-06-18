@@ -314,31 +314,77 @@ const SECTIONS = [
 let STATE = {view:"calendar", project:null, section:null, profile:null, channelGuidelines:null};
 let _TREE = [];
 
+// Rail fold state — which projects/profiles are expanded. Persisted so folds
+// survive the full renderRail() that fires after every chat action / refresh.
+const OPEN = loadOpen();
+function loadOpen(){
+  try{ const o = JSON.parse(localStorage.getItem("gtmos.rail.open") || "{}");
+    return { projects:new Set(o.projects||[]), profiles:new Set(o.profiles||[]) }; }
+  catch{ return { projects:new Set(), profiles:new Set() }; }
+}
+function saveOpen(){
+  localStorage.setItem("gtmos.rail.open",
+    JSON.stringify({ projects:[...OPEN.projects], profiles:[...OPEN.profiles] }));
+}
+// A node is open if explicitly toggled open OR it contains the active selection
+// (so navigating to a profile/channel never leaves it hidden in a collapsed parent).
+function isOpen(kind, slug){
+  if(kind === "projects"){
+    if(OPEN.projects.has(slug) || STATE.project === slug) return true;
+    const proj = _TREE.find(p => p.slug === slug);
+    if(proj && STATE.profile && proj.profiles.some(pr => pr.slug === STATE.profile)) return true;
+    if(proj && STATE.channelGuidelines && proj.profiles.some(pr =>
+        pr.channels.some(c => c.slug === STATE.channelGuidelines))) return true;
+    return false;
+  }
+  if(kind === "profiles"){
+    if(OPEN.profiles.has(slug) || STATE.profile === slug) return true;
+    const prof = _TREE.flatMap(p => p.profiles).find(pr => pr.slug === slug);
+    if(prof && STATE.channelGuidelines && prof.channels.some(c => c.slug === STATE.channelGuidelines)) return true;
+    return false;
+  }
+  return false;
+}
+function toggleOpen(kind, slug){
+  const set = OPEN[kind];
+  set.has(slug) ? set.delete(slug) : set.add(slug);
+  saveOpen(); renderRail();
+}
+
 async function boot(){ await renderRail(); selectGlobal("calendar"); }
 
 async function renderRail(){
   _TREE = await api("/api/tree");
   const projects = _TREE.map(p=>{
     const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
-    const profileRows = p.profiles.length ? p.profiles.map(prof=>`
-      <a data-profile="${esc(prof.slug)}">${esc(prof.name)} <span class="c">${prof.posts}</span></a>
-      ${prof.channels.length ? `<div style="margin-left:10px;border-left:1px solid var(--hair);padding-left:8px;margin-top:1px">
+    const profileRows = p.profiles.length ? p.profiles.map(prof=>{
+      const hasCh = prof.channels.length > 0;
+      const profOpen = !hasCh || isOpen("profiles", prof.slug);
+      const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
+      const channelsBlock = prof.channels.length ? `<div style="margin-left:10px;border-left:1px solid var(--hair);padding-left:8px;margin-top:1px">
         ${prof.channels.map(ch=>`<a data-chan-guidelines="${esc(ch.slug)}" style="font-size:11px;color:var(--dim);display:flex;align-items:center;gap:6px;padding:4px 7px;border-radius:8px;cursor:pointer"><span style="opacity:.5">⌗</span>${esc(ch.name||ch.platform)}</a>`).join("")}
         <a data-new-channel="${esc(prof.slug)}" style="font-size:11px;color:var(--sky);padding:4px 7px;cursor:pointer">＋ Channel</a>
-      </div>` : `<div style="margin-left:10px;padding-left:8px"><a data-new-channel="${esc(prof.slug)}" style="font-size:11px;color:var(--sky);padding:4px 7px;cursor:pointer">＋ Channel</a></div>`}
-    `).join("") : `<a style="color:var(--dim);font-size:12px;padding:4px 9px">No profiles yet</a>`;
+      </div>` : `<div style="margin-left:10px;padding-left:8px"><a data-new-channel="${esc(prof.slug)}" style="font-size:11px;color:var(--sky);padding:4px 7px;cursor:pointer">＋ Channel</a></div>`;
+      return `<div style="display:flex;align-items:center;gap:1px">
+        <span data-toggle-profile="${esc(prof.slug)}" style="opacity:.55;font-size:9px;width:13px;text-align:center;cursor:pointer;padding:4px 0">${wedge}</span>
+        <a data-profile="${esc(prof.slug)}" style="flex:1">${esc(prof.name)} <span class="c">${prof.posts}</span></a>
+      </div>
+      ${profOpen ? channelsBlock : ""}`;
+    }).join("") : `<a style="color:var(--dim);font-size:12px;padding:4px 9px">No profiles yet</a>`;
+    const pOpen = isOpen("projects", p.slug);
     return `
     <div style="margin-top:8px;padding:10px 9px 8px;border-radius:14px;background:rgba(255,255,255,.5);border:1px solid var(--gline)">
-      <div style="display:flex;align-items:center;gap:8px;font:700 13.5px/1 var(--disp);padding:2px 4px 8px">${esc(p.name)}
+      <div data-toggle-project="${esc(p.slug)}" style="display:flex;align-items:center;gap:7px;font:700 13.5px/1 var(--disp);padding:2px 4px ${pOpen?"8px":"2px"};cursor:pointer">
+        <span style="opacity:.55;font-size:10px;width:9px;display:inline-block">${pOpen?"▾":"▸"}</span>${esc(p.name)}
         <span class="tag" style="margin-left:auto;font:600 9px/1 var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--sky);background:var(--sky-soft);padding:3px 7px;border-radius:20px">${esc(p.kind||p.type)}</span></div>
-      <nav class="sec">
+      ${pOpen ? `<nav class="sec">
         ${SECTIONS.map(s=>`<a data-project="${esc(p.slug)}" data-section="${s.key}"><span class="ico">${s.ico}</span> ${esc(s.label)}${
           s.key==="experiments"&&p.experiments?`<span class="c">${p.experiments}</span>`:
           s.key==="product"&&totalFeatures?`<span class="c">${totalFeatures}</span>`:""}</a>`).join("")}
         <div class="grp" style="display:flex;align-items:center">Profiles
           <button class="add-btn" data-new-profile="${esc(p.slug)}" style="margin-left:auto" title="Add profile">＋</button></div>
         <div class="kid">${profileRows}</div>
-      </nav>
+      </nav>` : ""}
     </div>`;
   }).join("");
   $("#rail").innerHTML = `
@@ -360,6 +406,8 @@ async function renderRail(){
   $("#rail").querySelectorAll("[data-chan-guidelines]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectChannelGuidelines(a.dataset.chanGuidelines); });
   $("#rail").querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
   $("#rail").querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
+  $("#rail").querySelectorAll("[data-toggle-project]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("projects", el.dataset.toggleProject); });
+  $("#rail").querySelectorAll("[data-toggle-profile]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("profiles", el.dataset.toggleProfile); });
   $("#new-project-btn").onclick=e=>{ e.stopPropagation(); openNewProject(); };
   const brandMenu = $("#brand-menu");
   $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
@@ -375,7 +423,7 @@ function openNewProject(){
      <label>Kind</label><select name="kind"><option value="venture">Venture</option><option value="brand">Brand</option></select>
      <label>Priority</label><select name="priority"><option value="primary">Primary</option><option value="secondary">Secondary</option><option value="experiment">Experiment</option></select>
      <label>Status</label><select name="status"><option value="idea">Idea</option><option value="prototype">Prototype</option><option value="live">Live</option><option value="revenue">Revenue</option></select>`,
-    async data=>{ await jpost("/api/project/new", data); toast("Project created ✓"); renderRail(); },
+    async data=>{ await jpost("/api/project/new", data); if(data.slug){ OPEN.projects.add(data.slug); saveOpen(); } toast("Project created ✓"); renderRail(); },
     {saveLabel:"Create project"}
   );
   // auto-slug from name
@@ -391,7 +439,7 @@ function openNewProfile(projectSlug){
     `<label>Name</label><input name="name" placeholder="My Brand" required>
      <label>Slug <span style="font-weight:400;text-transform:none">(auto-filled)</span></label><input name="slug" placeholder="my-brand" required>
      <label>Topic / niche</label><input name="topic" placeholder="e.g. sustainable fashion for Gen-Z">`,
-    async data=>{ await jpost(`/api/project/${projectSlug}/profile/new`, data); toast("Profile created ✓"); renderRail(); },
+    async data=>{ await jpost(`/api/project/${projectSlug}/profile/new`, data); OPEN.projects.add(projectSlug); if(data.slug){ OPEN.profiles.add(data.slug); } saveOpen(); toast("Profile created ✓"); renderRail(); },
     {saveLabel:"Create profile"}
   );
   setTimeout(()=>{
@@ -406,7 +454,7 @@ function openNewChannel(profileSlug){
     `<label>Platform</label>
      <select name="platform"><option value="instagram">Instagram</option><option value="tiktok">TikTok</option><option value="x">X / Twitter</option><option value="linkedin">LinkedIn</option><option value="youtube">YouTube</option><option value="facebook">Facebook</option></select>
      <label>Handle <span style="font-weight:400;text-transform:none">(optional)</span></label><input name="handle" placeholder="@handle">`,
-    async data=>{ await jpost(`/api/profile/${profileSlug}/channel/new`, data); toast("Channel created ✓"); renderRail(); },
+    async data=>{ await jpost(`/api/profile/${profileSlug}/channel/new`, data); OPEN.profiles.add(profileSlug); saveOpen(); toast("Channel created ✓"); renderRail(); },
     {saveLabel:"Add channel"}
   );
 }
