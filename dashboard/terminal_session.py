@@ -28,7 +28,10 @@ class TerminalSession:
         if self.pid == 0:  # child
             try:
                 os.chdir(self.cwd)
-                os.execvp(self.cmd[0], self.cmd)
+                # Finder-launched GUI apps inherit no TERM, so claude detects no
+                # color support and renders monochrome. Advertise a color terminal.
+                env = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
+                os.execvpe(self.cmd[0], self.cmd, env)
             except Exception:
                 os._exit(1)
         self._alive = True

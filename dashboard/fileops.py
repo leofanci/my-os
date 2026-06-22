@@ -332,6 +332,66 @@ def create_project(slug: str, fields: dict) -> dict:
     return {"slug": slug}
 
 
+def update_project(slug: str, fields: dict) -> dict:
+    """Rewrite project.md frontmatter (name/kind/priority/status/hours), keep body.
+    The slug is identity (it's the directory name + every reference key), so it is
+    NOT changed here — only the display name and metadata are editable."""
+    f = ROOT / "projects" / slug / "project.md"
+    if not f.exists():
+        raise ActionError(f"project '{slug}' not found")
+    fm, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
+    name = (fields.get("name") or fm.get("name") or slug).strip()
+    kind = (fields.get("kind") or fm.get("kind") or "venture").strip()
+    priority = (fields.get("priority") or fm.get("priority") or "primary").strip()
+    status = (fields.get("status") or fm.get("status") or "idea").strip()
+    hours = str(fields.get("hours_per_week") or fm.get("hours_per_week") or "0").strip()
+    md = (f"---\nname: {name}\nkind: {kind}\npriority: {priority}\n"
+          f"hours_per_week: {hours}\nstatus: {status}\n---\n{body}\n")
+    f.write_text(md, encoding="utf-8")
+    reindex()
+    return {"slug": slug}
+
+
+def _portfolio_refs(slug: str) -> list:
+    """Portfolio activities/milestones that reference this entity slug. These live
+    OUTSIDE the project tree, so deleting the tree would leave them dangling and
+    break the next re-index's slug integrity check — callers refuse on non-empty."""
+    refs = []
+    acts = ROOT / "portfolio" / "activities.md"
+    if acts.exists():
+        pat = re.compile(rf"entity:\s*{re.escape(slug)}(?![\w-])")
+        for line in acts.read_text(encoding="utf-8").splitlines():
+            if pat.search(line):
+                m = re.match(r"^- \[[ x]\]\s*(.*?)(?:\s+—|$)", line)
+                refs.append(f"activity '{(m.group(1) if m else line).strip()}'")
+    ms = ROOT / "portfolio" / "milestones.json"
+    if ms.exists():
+        try:
+            data = json.loads(ms.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        for m in data.get("milestones", []) if isinstance(data, dict) else []:
+            if m.get("entity") == slug:
+                refs.append(f"milestone '{m.get('title') or m.get('id')}'")
+    return refs
+
+
+def delete_project(slug: str) -> dict:
+    """Remove a project tree, refusing if portfolio items still reference it."""
+    import shutil
+    project_dir = ROOT / "projects" / slug
+    if not project_dir.exists():
+        raise ActionError(f"project '{slug}' not found")
+    refs = _portfolio_refs(slug)
+    if refs:
+        raise ActionError(
+            f"cannot delete '{slug}' — still referenced by {', '.join(refs)}."
+            " Remove or reassign these first.")
+    shutil.rmtree(project_dir)
+    reindex()
+    return {"slug": slug, "deleted": True}
+
+
 def create_profile(project_slug: str, slug: str, fields: dict) -> dict:
     project_dir = ROOT / "projects" / project_slug
     if not project_dir.exists():
@@ -362,6 +422,26 @@ def create_channel(profile_slug: str, slug: str, platform: str, handle: str = ""
     (channel_dir / "guidelines.md").write_text("", encoding="utf-8")
     reindex()
     return {"slug": slug, "profile": profile_slug, "platform": platform}
+
+
+def update_channel(slug: str, fields: dict) -> dict:
+    """Rewrite channel.md frontmatter (platform/handle/name), keep body.
+    guidelines.md is a separate authored file and is left untouched."""
+    f = _channel_dir(slug) / "channel.md"  # _channel_dir raises if slug unknown
+    fm, body = _parse_frontmatter(f.read_text(encoding="utf-8")) if f.exists() else ({}, "")
+    platform = (fields.get("platform") or fm.get("platform") or "").strip()
+    raw_handle = fields.get("handle") if fields.get("handle") is not None else fm.get("handle", "")
+    handle = (raw_handle or "").strip()
+    name = (fields.get("name") or fm.get("name") or "").strip()
+    lines = [f"platform: {platform}"]
+    if handle:
+        lines.append(f"handle: {handle}")
+    if name:
+        lines.append(f"name: {name}")
+    md = "---\n" + "\n".join(lines) + "\n---\n" + (f"{body}\n" if body else "")
+    f.write_text(md, encoding="utf-8")
+    reindex()
+    return {"slug": slug}
 
 
 def delete_channel(slug: str) -> dict:
@@ -487,6 +567,54 @@ def create_milestone(fields: dict) -> dict:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     reindex()
     return {"id": ms_id, "title": title}
+
+
+_MILESTONE_FIELDS = ("title", "date", "date_end", "type", "entity", "entity_type",
+                     "notes", "priority")
+
+
+def _load_milestones(path):
+    if not path.exists():
+        raise ActionError("milestones.json not found")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        raise ActionError("milestones.json is not valid JSON")
+    if not isinstance(data, dict) or not isinstance(data.get("milestones"), list):
+        raise ActionError("milestones.json has an unexpected shape")
+    return data
+
+
+def update_milestone(ms_id: str, fields: dict) -> dict:
+    """Edit one milestone in milestones.json. Empty values clear the field."""
+    path = ROOT / "portfolio" / "milestones.json"
+    data = _load_milestones(path)
+    for m in data["milestones"]:
+        if m.get("id") == ms_id:
+            for k in _MILESTONE_FIELDS:
+                if k not in fields or fields[k] is None:
+                    continue
+                v = str(fields[k]).strip()
+                if v:
+                    m[k] = v
+                else:
+                    m.pop(k, None)
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            reindex()
+            return {"id": ms_id}
+    raise ActionError(f"milestone '{ms_id}' not found")
+
+
+def delete_milestone(ms_id: str) -> dict:
+    path = ROOT / "portfolio" / "milestones.json"
+    data = _load_milestones(path)
+    kept = [m for m in data["milestones"] if m.get("id") != ms_id]
+    if len(kept) == len(data["milestones"]):
+        raise ActionError(f"milestone '{ms_id}' not found")
+    data["milestones"] = kept
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    reindex()
+    return {"id": ms_id, "deleted": True}
 
 
 def read_authored_json(relpath):

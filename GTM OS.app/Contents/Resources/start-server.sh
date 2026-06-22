@@ -35,10 +35,18 @@ if [ -z "$PYTHON3" ]; then
     exit 1
 fi
 
-# Put claude (nvm/homebrew node) on PATH so chat features work — pick newest nvm node.
+# Put claude on PATH so chat features work. Don't assume the newest nvm node has
+# it — a `claude` reinstall lands in whichever node was active at the time, which
+# may be older than the newest installed version. Prefer the node bin that
+# actually contains claude; fall back to the newest node otherwise.
 NVM_BIN=""
-for _d in "$HOME"/.nvm/versions/node/*/bin; do [ -d "$_d" ] && NVM_BIN="$_d"; done
-export PATH="${NVM_BIN:+$NVM_BIN:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+NVM_CLAUDE=""
+for _d in "$HOME"/.nvm/versions/node/*/bin; do
+    [ -d "$_d" ] && NVM_BIN="$_d"
+    [ -x "$_d/claude" ] && NVM_CLAUDE="$_d"
+done
+NODE_BIN="${NVM_CLAUDE:-$NVM_BIN}"
+export PATH="${NODE_BIN:+$NODE_BIN:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
 # Kill any stale process on this port before starting fresh.
 /usr/sbin/lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null

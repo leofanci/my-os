@@ -80,6 +80,28 @@ class T(unittest.TestCase):
         c, out = run(["create-activity", "--entity", "acme"])
         self.assertEqual(c, 1); self.assertIn("title is required", out["error"])
 
+    def test_update_project(self):
+        run(["create-project", "--slug", "acme", "--name", "Acme"])
+        c, out = run(["update-project", "--slug", "acme", "--name", "Acme Inc",
+                      "--status", "live"])
+        self.assertEqual(c, 0); self.assertTrue(out["ok"])
+        self.assertEqual(db.project("acme")["entity"]["name"], "Acme Inc")
+
+    def test_update_channel(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        run(["create-channel", "--profile", "demo", "--slug", "demo-tt", "--platform", "tiktok"])
+        c, out = run(["update-channel", "--slug", "demo-tt", "--platform", "instagram"])
+        self.assertEqual(c, 0); self.assertTrue(out["ok"])
+        self.assertEqual(db.channel("demo-tt")["platform"], "instagram")
+
+    def test_update_milestone(self):
+        run(["create-project", "--slug", "acme"])
+        _, ms = run(["create-milestone", "--title", "Launch", "--date", "2026-07-01",
+                     "--entity", "acme"])
+        c, out = run(["update-milestone", "--id", ms["id"], "--title", "Big Launch"])
+        self.assertEqual(c, 0); self.assertTrue(out["ok"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,38 @@ def _build_parser():
     p.add_argument("--status", required=True)
     p.set_defaults(_run=lambda a: fileops.set_status(a.id, a.status))
 
+    # edit (rename) commands — the slug stays fixed; metadata/name are editable.
+    p = sub.add_parser("update-project")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--name")
+    p.add_argument("--kind")
+    p.add_argument("--priority")
+    p.add_argument("--status")
+    p.add_argument("--hours-per-week", dest="hours_per_week")
+    p.set_defaults(_run=lambda a: fileops.update_project(
+        a.slug, _fields(a, ["name", "kind", "priority", "status", "hours_per_week"])))
+
+    p = sub.add_parser("update-channel")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--platform")
+    p.add_argument("--handle")
+    p.add_argument("--name")
+    p.set_defaults(_run=lambda a: fileops.update_channel(
+        a.slug, _fields(a, ["platform", "handle", "name"])))
+
+    p = sub.add_parser("update-milestone")
+    p.add_argument("--id", required=True, dest="id")
+    p.add_argument("--title")
+    p.add_argument("--date")
+    p.add_argument("--date-end", dest="date_end")
+    p.add_argument("--type")
+    p.add_argument("--entity")
+    p.add_argument("--entity-type", dest="entity_type")
+    p.add_argument("--notes")
+    p.add_argument("--priority")
+    p.set_defaults(_run=lambda a: fileops.update_milestone(a.id, _fields(
+        a, ["title", "date", "date_end", "type", "entity", "entity_type", "notes", "priority"])))
+
     return parser
 
 

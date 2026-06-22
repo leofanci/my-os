@@ -4,29 +4,40 @@
 <dict>
 	<key>files</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<data>
+		smFmd04O+JAI9CRCTpvMW9EoTHo=
+		</data>
 		<key>Resources/start-server.sh</key>
 		<data>
-		9uYuwUKBCSoPcqvZyXNRoWtrHps=
+		pgya1vKyDYQwAQasrG8ASzu3QuQ=
 		</data>
 		<key>Resources/webview.swift</key>
 		<data>
-		ecfHfvZqsSEoYSYWrID5tEx8VEk=
+		bQfHpS97et8Tm/jRojR9w/yjfKw=
 		</data>
 	</dict>
 	<key>files2</key>
 	<dict>
+		<key>Resources/AppIcon.icns</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			u4I2hf3+9WAas3mznnec6ik+d2uvy/bjGM8SL1SmL5E=
+			</data>
+		</dict>
 		<key>Resources/start-server.sh</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			BZf2LcC3/jq4O0hzo8QtYPpjhTqgKeUTtHw8F8uiX/g=
+			pjUW7+Q6eYGmuSrL9ZDC8SNJItfNZYA/pmiUdhSsx7Y=
 			</data>
 		</dict>
 		<key>Resources/webview.swift</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			Zrmy2+wG/dKnLQ1z5w47wKsULRFVVIVvdwhMieXkO5E=
+			D73tmvdhoZaCAJO8/DRJFG69JQh0K2FfPihozDk6bc4=
 			</data>
 		</dict>
 	</dict>

@@ -36,7 +36,8 @@ RAIL = (
     "You operate a GTM OS whose source of truth is authored files. "
     "Mutate state ONLY by running `python -m dashboard.osctl <command>` "
     "(e.g. create-project, create-profile, create-channel, add-post, "
-    "create-activity, create-milestone, mark-done, update-post, set-status). "
+    "create-activity, create-milestone, mark-done, update-post, set-status, "
+    "update-project, update-channel, update-milestone). "
     "Never write or edit files directly. After acting, confirm briefly what you changed. "
     "The current GTM OS state is provided to you at the start of each turn — do "
     "not explore with Read/Grep/Glob to discover existing structure; act directly."
@@ -101,11 +102,19 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "no user message"})
         text = messages[-1]["content"]
 
+        # Client-supplied context (current view + attached file contents from
+        # buildContext() in app.html). Placed ahead of the request so the agent
+        # sees what the user is looking at and any files they attached.
+        text = f"## Request\n{text}"
+        context = (body.get("context") or "").strip()
+        if context:
+            text = f"{context}\n\n{text}"
+
         # Hand the agent the current structure up front so it acts instead of
         # foraging for the data model with Read/Grep/Glob each turn.
         try:
             snapshot = state_snapshot(db.tree())
-            text = f"{snapshot}\n\n## Request\n{text}"
+            text = f"{snapshot}\n\n{text}"
         except Exception:  # noqa: BLE001 — never block a turn on snapshot failure
             pass
 
@@ -285,6 +294,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/channel/") and path.endswith("/guidelines"):
                 slug = path[len("/api/channel/"):-len("/guidelines")]
                 return self._send(200, {"ok": True, **fileops.write_channel_guidelines(slug, body.get("text", ""))})
+            if path.startswith("/api/channel/") and path.endswith("/update"):
+                slug = path[len("/api/channel/"):-len("/update")]
+                return self._send(200, {"ok": True, **fileops.update_channel(slug, body)})
             if path.startswith("/api/channel/") and path.endswith("/delete"):
                 slug = path[len("/api/channel/"):-len("/delete")]
                 return self._send(200, {"ok": True, **fileops.delete_channel(slug)})
@@ -296,6 +308,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/project/new":
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()
                 return self._send(200, {"ok": True, **fileops.create_project(slug, body)})
+            if path.startswith("/api/project/") and path.endswith("/update"):
+                slug = path[len("/api/project/"):-len("/update")]
+                return self._send(200, {"ok": True, **fileops.update_project(slug, body)})
+            if path.startswith("/api/project/") and path.endswith("/delete"):
+                slug = path[len("/api/project/"):-len("/delete")]
+                return self._send(200, {"ok": True, **fileops.delete_project(slug)})
             if path.startswith("/api/project/") and path.endswith("/profile/new"):
                 proj = path[len("/api/project/"):-len("/profile/new")]
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()
@@ -310,6 +328,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.mark_activity_done(body.get("title",""), body.get("entity",""))})
             if path == "/api/milestone/new":
                 return self._send(200, {"ok": True, **fileops.create_milestone(body)})
+            if path.startswith("/api/milestone/") and path.endswith("/update"):
+                ms_id = path[len("/api/milestone/"):-len("/update")]
+                return self._send(200, {"ok": True, **fileops.update_milestone(ms_id, body)})
+            if path.startswith("/api/milestone/") and path.endswith("/delete"):
+                ms_id = path[len("/api/milestone/"):-len("/delete")]
+                return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
         except fileops.ActionError as exc:

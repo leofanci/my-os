@@ -103,24 +103,27 @@ CREATE TABLE milestones (
   notes       TEXT
 );
 
+-- ref_id carries each event's own identity (milestone/post id) so the UI can
+-- act on it (edit/delete). Kinds without a stable id expose NULL.
 CREATE VIEW timeline AS
   SELECT x.started_on AS date, NULL AS date_end, x.entity_slug AS entity_slug,
          'experiment' AS kind, x.assumption AS title, x.status AS status,
-         e.priority AS priority, e.hours_per_week AS hours_per_week
+         e.priority AS priority, e.hours_per_week AS hours_per_week,
+         NULL AS ref_id
   FROM experiments x LEFT JOIN entities e ON e.slug = x.entity_slug
   UNION ALL
   SELECT p.date, NULL, p.profile_slug, 'post',
-         COALESCE(p.pillar, ''), p.status, e.priority, e.hours_per_week
+         COALESCE(p.pillar, ''), p.status, e.priority, e.hours_per_week, p.id
   FROM posts p LEFT JOIN entities e ON e.slug = p.profile_slug
   UNION ALL
   SELECT COALESCE(f.shipped_date, f.target_date), NULL, f.product_slug, 'feature',
-         f.title, f.status, COALESCE(f.priority, e.priority), e.hours_per_week
+         f.title, f.status, COALESCE(f.priority, e.priority), e.hours_per_week, NULL
   FROM features f LEFT JOIN entities e ON e.slug = f.product_slug
   UNION ALL
   SELECT a.date, a.date_end, a.entity_slug, 'activity', a.title, a.status,
-         COALESCE(a.priority, e.priority), e.hours_per_week
+         COALESCE(a.priority, e.priority), e.hours_per_week, NULL
   FROM activities a LEFT JOIN entities e ON e.slug = a.entity_slug
   UNION ALL
   SELECT m.date, m.date_end, m.entity_slug, 'milestone', m.title, NULL,
-         COALESCE(m.priority, e.priority), e.hours_per_week
+         COALESCE(m.priority, e.priority), e.hours_per_week, m.id
   FROM milestones m LEFT JOIN entities e ON e.slug = m.entity_slug;

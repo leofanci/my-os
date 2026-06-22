@@ -10,14 +10,34 @@ class FakeSession:
         yield ("done", {"result": "Hi there"})
 
 
+def _bare_handler(sink):
+    """A Handler with the socket-backed I/O stubbed out, writing to `sink`."""
+    h = server.Handler.__new__(server.Handler)  # bypass __init__/socket
+    h.wfile = sink
+    h.send_response = h.send_header = h.end_headers = lambda *a, **k: None
+    return h
+
+
+def _captured_prompt(body, tree=None):
+    """Run _handle_ask with a session that records the prompt; return that prompt."""
+    seen = {}
+
+    class CaptureSession:
+        def ask(self, text):
+            seen["text"] = text
+            yield ("done", {"result": "ok"})
+
+    h = _bare_handler(io.BytesIO())
+    with mock.patch.object(server, "get_chat_session", return_value=CaptureSession()), \
+         mock.patch.object(server.db, "tree", return_value=tree or []):
+        h._handle_ask(body)
+    return seen["text"]
+
+
 class SSE(unittest.TestCase):
     def test_handle_ask_streams_sse(self):
-        h = server.Handler.__new__(server.Handler)  # bypass __init__/socket
         sink = io.BytesIO()
-        h.wfile = sink
-        h.send_response = lambda *a, **k: None
-        h.send_header = lambda *a, **k: None
-        h.end_headers = lambda *a, **k: None
+        h = _bare_handler(sink)
         with mock.patch.object(server, "get_chat_session", return_value=FakeSession()):
             h._handle_ask({"messages": [{"role": "user", "content": "hi"}]})
         out = sink.getvalue().decode()
@@ -26,29 +46,28 @@ class SSE(unittest.TestCase):
         self.assertLess(out.index('"delta": "Hi "'), out.index("[DONE]"))
 
     def test_handle_ask_prepends_state_snapshot(self):
-        h = server.Handler.__new__(server.Handler)
-        sink = io.BytesIO()
-        h.wfile = sink
-        h.send_response = lambda *a, **k: None
-        h.send_header = lambda *a, **k: None
-        h.end_headers = lambda *a, **k: None
-        seen = {}
-
-        class CaptureSession:
-            def ask(self, text):
-                seen["text"] = text
-                yield ("done", {"result": "ok"})
-
         tree = [{"slug": "acme", "kind": "brand", "type": "project",
                  "profiles": [{"slug": "demo", "name": "Demo Brand",
                                "channels": [{"slug": "demo-tiktok", "name": "TikTok",
                                              "platform": "tiktok"}]}]}]
-        with mock.patch.object(server, "get_chat_session", return_value=CaptureSession()), \
-             mock.patch.object(server.db, "tree", return_value=tree):
-            h._handle_ask({"messages": [{"role": "user", "content": "do a thing"}]})
-        self.assertIn("## Current GTM OS state", seen["text"])
-        self.assertIn("acme (brand)", seen["text"])
-        self.assertIn("## Request\ndo a thing", seen["text"])
+        text = _captured_prompt({"messages": [{"role": "user", "content": "do a thing"}]}, tree)
+        self.assertIn("## Current GTM OS state", text)
+        self.assertIn("acme (brand)", text)
+        self.assertIn("## Request\ndo a thing", text)
+
+    def test_handle_ask_includes_client_context(self):
+        ctx = "Current view: Profiles · Demo\n## Attached files\n### plan.md\n```\nhello\n```"
+        text = _captured_prompt({"messages": [{"role": "user", "content": "summarize"}],
+                                 "context": ctx})
+        # the client-supplied context (current view + attached file contents)
+        # must reach the agent, ahead of the request itself
+        self.assertIn("### plan.md", text)
+        self.assertIn("Current view: Profiles · Demo", text)
+        self.assertLess(text.index("### plan.md"), text.index("## Request\nsummarize"))
+
+    def test_handle_ask_without_context_still_works(self):
+        text = _captured_prompt({"messages": [{"role": "user", "content": "hi"}]})
+        self.assertIn("## Request\nhi", text)
 
 
 class StateSnapshot(unittest.TestCase):
