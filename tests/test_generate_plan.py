@@ -23,6 +23,22 @@ class DoPlanTest(unittest.TestCase):
         files = list((self.root / "projects/acme/profiles/demo/content").glob("plan-*.json"))
         return json.loads(files[0].read_text())
 
+    def test_plan_prompt_includes_brief_spec(self):
+        # The planner must see the per-profile brief spec, so the calendar matches
+        # how posts are actually produced (e.g. one slot targeting both channels).
+        write(self.root / "projects/acme/profiles/demo/brief-spec.md",
+              "One carousel reused as a reel across both channels.")
+        captured = {}
+        def fake_run_job(prompt, voice, validate, **k):
+            captured["prompt"] = prompt
+            return {"period": "p", "profile": "demo",
+                    "posts": [{"id": "draft-001", "date": "2026-07-01",
+                               "pillar": "curiosity", "channels": ["demo-tiktok"]}]}
+        generate.run_job = fake_run_job
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None)
+        self.assertIn("PROFILE BRIEF SPEC", captured["prompt"])
+        self.assertIn("reused as a reel", captured["prompt"])
+
     def test_forces_planned_and_normalizes_channels(self):
         # Model emits an advanced status + a platform name instead of a slug.
         generate.run_job = lambda *a, **k: {

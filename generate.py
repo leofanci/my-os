@@ -323,6 +323,13 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
     if not voice_text.strip():
         raise JobError(f"could not build voice cascade for profile '{profile_slug}'")
 
+    # Per-profile brief spec: the same hard output rules the brief job honors.
+    # The planner needs them too — e.g. "one carousel reused as a reel across both
+    # platforms" means a slot should target BOTH channels, not split into one post
+    # per platform. Without this the calendar drifts from how the posts are produced.
+    brief_spec_file = profile_dir / "brief-spec.md"
+    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
+
     base = (PROMPTS / "plan.txt").read_text(encoding="utf-8")
     params = (
         "\n\n--- PARAMETERS ---\n"
@@ -334,6 +341,11 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         "\n--- RECENT HISTORY (do not repeat) ---\n"
         f"{recent_history(content_dir)}\n"
     )
+    if brief_spec:
+        params += (
+            "\n--- PROFILE BRIEF SPEC (how posts are produced — plan accordingly) ---\n"
+            f"{brief_spec}\n"
+        )
     obj = run_job(base + params, voice_text, validate_plan)
 
     # Normalize channel refs: the model often emits platform names ('tiktok')

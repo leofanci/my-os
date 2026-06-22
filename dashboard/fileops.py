@@ -103,12 +103,29 @@ def _write_plan(ctx):
     )
 
 
+def _effective_status(ctx):
+    """The post's real status, reconciled with reality on disk.
+
+    A brief written directly via `generate.py brief` (batch jobs, the terminal)
+    creates the brief file but does NOT advance the plan-file status — only
+    generate_brief() does. The indexer already *displays* such posts as 'briefed';
+    mirror that here so a transition off the UI's "Review →" button doesn't fail
+    with an illegal-transition error. Persists the correction when it applies.
+    """
+    current = ctx["post"].get("status") or "planned"
+    brief_file = ctx["plan"].parent / "briefs" / f"{ctx['post'].get('id')}.json"
+    if brief_file.exists() and current in ("planned", "approved_slot"):
+        ctx["post"]["status"] = current = "briefed"
+        _write_plan(ctx)
+    return current
+
+
 def set_status(post_id, new_status):
     """Transition a post's status in its plan file, then re-index."""
     if new_status not in ALLOWED_TRANSITIONS:
         raise ActionError(f"unknown status '{new_status}'")
     ctx = find_post(post_id)
-    current = ctx["post"].get("status") or "planned"
+    current = _effective_status(ctx)
     if new_status == current:
         raise ActionError(f"post is already '{current}'")
     if new_status not in ALLOWED_TRANSITIONS.get(current, set()):

@@ -53,6 +53,18 @@ class T(unittest.TestCase):
         self.assertEqual(fileops.read_profile("demo")["brief_spec"].strip(),
                          "Captions under 100 words.")
 
+    def test_brief_file_reconciles_status_for_review(self):
+        # A brief written directly (batch/terminal) leaves status at 'planned'
+        # but the UI shows it as a Draft and offers "Review →" (briefed->approved).
+        # set_status must reconcile, not raise an illegal-transition error.
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        briefs = fileops.find_post(pid)["plan"].parent / "briefs"
+        briefs.mkdir(parents=True, exist_ok=True)
+        (briefs / f"{pid}.json").write_text(json.dumps({"id": pid}), encoding="utf-8")
+        fileops.set_status(pid, "approved")  # must not raise
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "approved")
+
     def test_add_unknown_profile(self):
         with self.assertRaises(fileops.ActionError):
             fileops.add_post("nope", {})
