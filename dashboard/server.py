@@ -277,6 +277,8 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/post/") and path.endswith("/update"):
                 post_id = path[len("/api/post/"):-len("/update")]
                 return self._send(200, {"ok": True, **fileops.update_post(post_id, body)})
+            if path == "/api/posts/delete":
+                return self._send(200, {"ok": True, **fileops.delete_posts(body.get("ids", []))})
             if path.startswith("/api/post/") and path.endswith("/delete"):
                 post_id = path[len("/api/post/"):-len("/delete")]
                 return self._send(200, {"ok": True, **fileops.delete_post(post_id)})

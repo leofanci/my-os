@@ -65,6 +65,20 @@ class T(unittest.TestCase):
         fileops.set_status(pid, "approved")  # must not raise
         self.assertEqual(db.profile_posts("demo")[0]["status"], "approved")
 
+    def test_bulk_delete(self):
+        for name in ("A", "B", "C"):
+            fileops.add_post("demo", {"working_title": name, "channels": "demo-tiktok"})
+        ids = [p["id"] for p in db.profile_posts("demo")]
+        # give one a brief file so we confirm it's removed too
+        briefs = fileops.find_post(ids[0])["plan"].parent / "briefs"
+        briefs.mkdir(parents=True, exist_ok=True)
+        (briefs / f"{ids[0]}.json").write_text("{}", encoding="utf-8")
+        res = fileops.delete_posts([ids[0], ids[1], "does-not-exist"])
+        self.assertEqual(res["count"], 2)
+        left = [p["id"] for p in db.profile_posts("demo")]
+        self.assertEqual(left, [ids[2]])
+        self.assertFalse((briefs / f"{ids[0]}.json").exists())
+
     def test_add_unknown_profile(self):
         with self.assertRaises(fileops.ActionError):
             fileops.add_post("nope", {})

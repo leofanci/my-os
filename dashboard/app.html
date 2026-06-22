@@ -116,6 +116,7 @@
   .pcard h4{margin:0 0 6px;font:600 13.5px/1.2 var(--disp)}
   .rowc{display:flex;flex-direction:column;gap:9px}
   .post{display:flex;align-items:center;gap:13px;background:rgba(255,255,255,.66);border:1px solid var(--gline);border-radius:14px;padding:12px 14px}
+  .post.sel{background:rgba(192,57,43,.06);border-color:rgba(192,57,43,.32)}
   .post .t{font:600 13px/1.3 var(--disp);flex:1;min-width:0}
   .post .t small{display:block;color:var(--dim);font-weight:500;font-size:11px;margin-top:2px}
   .stp{font:600 10px/1 var(--body);padding:4px 9px;border-radius:20px;white-space:nowrap}
@@ -744,6 +745,7 @@ async function renderProfile(slug, initChanFilter){
   const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
   let FILTER = "all";
   let CHAN_FILTER = initChanFilter||null;
+  const SELECTED = new Set();  // post ids ticked for bulk actions
   const chanSection = `<div class="pcard" style="margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}">${PLATFORM_ICON[ch.platform]||"⌗"} ${esc(ch.name||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
@@ -768,12 +770,36 @@ async function renderProfile(slug, initChanFilter){
         <span class="chip" data-f="scheduled">📅 Scheduled <span class="n">${count("scheduled")}</span></span>
         <span class="chip" data-f="published">✓ Published <span class="n">${count("published")}</span></span>
       </div>
+      <div id="selbar"></div>
       <div class="rowc" id="list"></div></div>`;
+
+  function drawSelBar(){
+    const bar = $("#selbar"); if(!bar) return;
+    const visible = posts.filter(p=>(FILTER==="all"||STAGE_GROUP[p.status]===FILTER)
+      && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER))));
+    // prune selections no longer visible so the count is honest
+    [...SELECTED].forEach(id=>{ if(!visible.some(p=>p.id===id)) SELECTED.delete(id); });
+    if(!SELECTED.size){ bar.innerHTML=""; return; }
+    bar.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:9px 13px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.25);border-radius:11px">
+      <b style="font-size:13px">${SELECTED.size} selected</b>
+      <button class="btn" id="selAll" style="font-size:12px;padding:4px 10px">Select all ${visible.length}</button>
+      <button class="btn" id="selClear" style="font-size:12px;padding:4px 10px">Clear</button>
+      <button class="btn danger-btn" id="selDel" style="margin-left:auto;color:#c0392b">🗑 Delete ${SELECTED.size}</button></div>`;
+    $("#selAll").onclick=()=>{ visible.forEach(p=>SELECTED.add(p.id)); drawList(); };
+    $("#selClear").onclick=()=>{ SELECTED.clear(); drawList(); };
+    $("#selDel").onclick=async()=>{
+      if(!confirm(`Delete ${SELECTED.size} post${SELECTED.size>1?"s":""} and their written content?`)) return;
+      try{ const r=await api(`/api/posts/delete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids:[...SELECTED]})});
+        SELECTED.clear(); toast(`Deleted ✓ (${r.count})`); renderProfile(slug); renderRail(); }
+      catch(e){ toast("✗ "+e.message); }
+    };
+  }
 
   function drawList(){
     const list = posts.filter(p=>(FILTER==="all"||STAGE_GROUP[p.status]===FILTER)
       && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER))));
     const el = $("#list");
+    drawSelBar();
     if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
     el.innerHTML = list.map(p=>{
       const grp=STAGE_GROUP[p.status], pk=({ideas:"idea",drafts:"draft",scheduled:"sched",published:"ready",archived:"idea"})[grp]||"idea";
@@ -784,12 +810,16 @@ async function renderProfile(slug, initChanFilter){
       const pillarTag = p.pillar && p.pillar!==title ? `<span class="chan-chip" style="background:var(--sky-soft);color:var(--sky)">${esc(p.pillar)}</span>` : "";
       const chanChips = ((pillarTag?1:0)||(p.channels&&p.channels.length))
         ? `<div class="chan-chips">${pillarTag}${(p.channels||[]).map(c=>`<span class="chan-chip">${esc(c)}</span>`).join("")}</div>` : "";
-      return `<div class="post">
+      return `<div class="post${SELECTED.has(p.id)?" sel":""}">
+        <input type="checkbox" class="selbox" data-sel="${p.id}" ${SELECTED.has(p.id)?"checked":""} title="Select" style="margin:0 2px;width:16px;height:16px;flex:none;cursor:pointer">
         <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
         <div class="t" data-view="${p.id}" style="cursor:pointer">${esc(title)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
         ${n?`<button class="go" data-act="${p.id}">${n.label}</button>`:""}
         <button class="more" data-menu="${p.id}">Edit</button></div>`;
     }).join("");
+    el.querySelectorAll("[data-sel]").forEach(b=>b.onclick=e=>{ e.stopPropagation();
+      b.checked ? SELECTED.add(b.dataset.sel) : SELECTED.delete(b.dataset.sel);
+      b.closest(".post")?.classList.toggle("sel",b.checked); drawSelBar(); });
     el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>doNext(b.dataset.act));
     el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>rowMenu(b.dataset.menu));
     el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>showDetail(b.dataset.view));
