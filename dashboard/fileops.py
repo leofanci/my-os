@@ -168,33 +168,26 @@ def _parse_frontmatter(text):
     return fm, body
 
 
+def read_brief_spec(slug):
+    """The profile's brief spec: free-text requirements every post must meet
+    (e.g. caption length, hashtag count, format leanings). Injected into every
+    brief job for this profile. Authored file, not indexed."""
+    f = _profile_dir(slug) / "brief-spec.md"
+    return f.read_text(encoding="utf-8") if f.exists() else ""
+
+
 def read_profile(slug):
-    """Read profile.md and return name, topic, voice, and project."""
+    """Read profile.md and return name, topic, voice, project, and brief spec."""
     d = _profile_dir(slug)
     f = d / "profile.md"
     if not f.exists():
-        return {"slug": slug, "name": slug, "topic": "", "voice": ""}
+        return {"slug": slug, "name": slug, "topic": "", "voice": "",
+                "project": "", "brief_spec": ""}
     fm, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
     return {"slug": slug, "name": fm.get("name", slug),
             "topic": fm.get("topic", ""), "voice": body,
-            "project": fm.get("project", "")}
-
-
-def update_profile(slug, fields):
-    """Rewrite profile.md, preserving the project field."""
-    d = _profile_dir(slug)
-    f = d / "profile.md"
-    proj = ""
-    if f.exists():
-        fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
-        proj = fm.get("project", "")
-    name = (fields.get("name") or slug).strip()
-    topic = (fields.get("topic") or "").strip()
-    voice = (fields.get("voice") or "").strip()
-    md = f"---\nname: {name}\ntopic: {topic}\nproject: {proj}\n---\n{voice}\n"
-    f.write_text(md, encoding="utf-8")
-    reindex()
-    return {"slug": slug}
+            "project": fm.get("project", ""),
+            "brief_spec": read_brief_spec(slug)}
 
 
 def read_channel_guidelines(slug):
@@ -239,7 +232,7 @@ def read_detail(post_id):
     return {"slot": ctx["post"], "brief": brief, "profile_slug": ctx["profile_slug"]}
 
 
-_POST_FIELDS = ("date", "pillar", "working_title")
+_POST_FIELDS = ("date", "pillar", "working_title", "concept")
 
 
 def add_post(profile_slug, fields):
@@ -408,6 +401,25 @@ def create_profile(project_slug: str, slug: str, fields: dict) -> dict:
     (profile_dir / "profile.md").write_text(md, encoding="utf-8")
     reindex()
     return {"slug": slug, "project": project_slug}
+
+
+def update_profile(slug: str, fields: dict) -> dict:
+    """Rewrite profile.md frontmatter (name/topic) and body (voice), keep structure."""
+    profile_dir = _profile_dir(slug)  # raises if not found
+    f = profile_dir / "profile.md"
+    fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8")) if f.exists() else ({}, "")
+    name = (fields.get("name") or fm.get("name") or slug).strip()
+    topic = (fields.get("topic") if fields.get("topic") is not None else fm.get("topic", "")).strip()
+    project = fm.get("project", "")
+    voice = (fields.get("voice") if fields.get("voice") is not None else "").strip()
+    md = f"---\nname: {name}\ntopic: {topic}\nproject: {project}\n---\n{voice}\n"
+    f.write_text(md, encoding="utf-8")
+    # Brief spec lives in its own authored file (free text, not indexed).
+    if fields.get("brief_spec") is not None:
+        (profile_dir / "brief-spec.md").write_text(
+            fields["brief_spec"].strip() + "\n", encoding="utf-8")
+    reindex()
+    return {"slug": slug}
 
 
 def create_channel(profile_slug: str, slug: str, platform: str, handle: str = "") -> dict:

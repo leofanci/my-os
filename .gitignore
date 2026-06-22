@@ -1,4 +1,5 @@
 # Derived / disposable
+database/os.db
 database/data/os.db
 database/data/*.db-journal
 __pycache__/

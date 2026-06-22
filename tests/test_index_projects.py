@@ -52,5 +52,37 @@ class TestTreeWalk(unittest.TestCase):
             row = con.execute("SELECT product_slug, title FROM features").fetchone()
             self.assertEqual(row[0], "acme-app")
 
+    def test_post_carries_working_title_and_concept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._build(tmp)
+            prof = root / "projects" / "acme" / "profiles" / "demo"
+            write(prof / "content" / "plan-2026-07.json", json.dumps({"posts": [
+                {"id": "post-001", "date": "2026-07-01", "pillar": "curiosity",
+                 "working_title": "Why films matter", "concept": "open strong",
+                 "status": "planned", "channels": ["demo-tiktok"]}]}))
+            index.build(root)
+            con = sqlite3.connect(root / "database" / "data" / "os.db")
+            row = con.execute(
+                "SELECT working_title, concept FROM posts WHERE id='post-001'").fetchone()
+            self.assertEqual(row, ("Why films matter", "open strong"))
+
+    def test_unknown_channel_slug_is_pruned_not_fatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._build(tmp)
+            prof = root / "projects" / "acme" / "profiles" / "demo"
+            # A generated plan that names the platform instead of the channel slug
+            # must not brick the whole rebuild.
+            write(prof / "content" / "plan-bad.json", json.dumps({"posts": [
+                {"id": "post-002", "date": "2026-07-02", "pillar": "curiosity",
+                 "status": "planned", "channels": ["tiktok"]}]}))
+            index.build(root)  # must not raise
+            con = sqlite3.connect(root / "database" / "data" / "os.db")
+            self.assertIsNotNone(
+                con.execute("SELECT 1 FROM posts WHERE id='post-002'").fetchone())
+            self.assertEqual(
+                con.execute("SELECT COUNT(*) FROM post_channels WHERE post_id='post-002'").fetchone()[0], 0)
+
 if __name__ == "__main__":
     unittest.main()
