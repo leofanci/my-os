@@ -300,11 +300,19 @@ def collect_posts(root: Path):
                     brief_path = rel(brief_file, root) if brief_file.exists() else None
                     if status not in POST_STATUSES:
                         status = "briefed" if brief_path else "planned"
+                    # A brief file exists but the slot was never advanced past the
+                    # idea stage (e.g. a brief written by the CLI/agent that didn't
+                    # flip status). The artifact is the truth: show it as at least
+                    # 'briefed' so written posts don't masquerade as blank ideas.
+                    elif brief_path and status in ("planned", "approved_slot"):
+                        status = "briefed"
                     if pid in rows:
                         print(f"  warn: duplicate post id '{pid}' — keeping latest from {rel(plan, root)}")
                     rows[pid] = {
                         "id": pid, "profile_slug": profile_slug, "date": post.get("date"),
                         "pillar": post.get("pillar"),
+                        "working_title": post.get("working_title"),
+                        "concept": post.get("concept"),
                         "status": status, "version": first_int(post.get("version")) or 1,
                         "brief_path": brief_path,
                     }
@@ -459,6 +467,33 @@ def build(root: Path):
     activities = collect_activities(root)
     milestones = collect_milestones(root, slugs)
 
+    # Resilience: generated content (a plan-*.json) can reference a profile or
+    # channel slug that doesn't exist — typically the model naming a platform
+    # ('tiktok') instead of the real channel slug. Rather than refuse to boot
+    # the entire OS, drop those dangling references with a warning so everything
+    # else still indexes.
+    profile_slugs = {e["slug"] for e in entities if e["type"] == "profile"}
+    channel_slugs = {e["slug"] for e in entities if e["type"] == "channel"}
+    kept_posts = []
+    for p in posts:
+        if p["profile_slug"] in profile_slugs:
+            kept_posts.append(p)
+        else:
+            print(f"  warn: post '{p['id']}' references unknown profile "
+                  f"'{p['profile_slug']}' — skipping it")
+    posts = kept_posts
+    live_pids = {p["id"] for p in posts}
+    kept_pc = []
+    for pc in post_channels:
+        if pc["post_id"] not in live_pids:
+            continue
+        if pc["channel_slug"] in channel_slugs:
+            kept_pc.append(pc)
+        else:
+            print(f"  warn: post '{pc['post_id']}' references unknown channel "
+                  f"'{pc['channel_slug']}' — dropping that channel ref")
+    post_channels = kept_pc
+
     check_slugs(slugs, relationships, memos, experiments, posts, post_channels, features, activities, milestones)
 
     # wipe + recreate from schema
@@ -491,8 +526,8 @@ def build(root: Path):
         experiments,
     )
     cur.executemany(
-        "INSERT INTO posts (id,profile_slug,date,pillar,status,version,brief_path)"
-        " VALUES (:id,:profile_slug,:date,:pillar,:status,:version,:brief_path)",
+        "INSERT INTO posts (id,profile_slug,date,pillar,working_title,concept,status,version,brief_path)"
+        " VALUES (:id,:profile_slug,:date,:pillar,:working_title,:concept,:status,:version,:brief_path)",
         posts,
     )
     cur.executemany(

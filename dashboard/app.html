@@ -160,6 +160,9 @@
   .term-btn:hover{background:#fff;color:var(--ink)}
   /* tool-use activity chip in chat */
   .tool-chip{align-self:flex-start;font:600 10.5px/1.2 var(--body);background:var(--graphite-soft);color:var(--ink2);border:1px solid var(--hair);border-radius:12px;padding:5px 10px}
+  .tool-summary{cursor:pointer;opacity:.55;transition:opacity .15s}
+  .tool-summary:hover{opacity:.85}
+  .tool-detail{align-self:flex-start;font:500 10px/1.5 var(--body);color:var(--dim);max-width:92%;padding:0 4px}
   /* floating reopen pill shown when the chat is collapsed */
   .chat-reopen{position:fixed;top:22px;right:22px;z-index:25;border:1px solid var(--gline);background:var(--glass2);
     backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--ink2);border-radius:13px;padding:9px 13px;
@@ -186,8 +189,10 @@
   .ctx{align-self:flex-start;font:600 10px/1 var(--body);letter-spacing:.05em;text-transform:uppercase;
     background:rgba(255,255,255,.7);color:var(--ink2);padding:5px 11px;border-radius:20px;border:1px solid var(--gline)}
   .ctx b{color:var(--sky)}
-  .msg{max-width:92%;font-size:12.5px;line-height:1.55}
-  .msg.ai .b{background:rgba(255,255,255,.82);border:1px solid var(--gline);border-radius:17px 17px 17px 6px;padding:11px 13px}
+  .msg{max-width:92%;font-size:12.5px;line-height:1.6}
+  /* AI replies render as free-flowing text (no bubble) — only the user speaks in a bubble. */
+  .msg.ai{max-width:100%;align-self:stretch}
+  .msg.ai .b{background:none;border:0;padding:1px 2px;white-space:pre-wrap}
   .msg.ai .b b{color:var(--sky)}
   .msg.me{align-self:flex-end}
   .msg.me .b{background:var(--graphite);color:#fff;border-radius:17px 17px 6px;padding:10px 13px}
@@ -301,7 +306,7 @@
 const $ = s => document.querySelector(s);
 const esc = s => (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
-function toast(m){const t=$("#toast");t.textContent=m;t.style.opacity=1;setTimeout(()=>t.style.opacity=0,2400);}
+function toast(m,sticky){const t=$("#toast");t.textContent=m;t.style.opacity=1;clearTimeout(t._timer);if(!sticky)t._timer=setTimeout(()=>t.style.opacity=0,2400);}
 function modal(title, innerHTML, onsubmit, opts={}){
   const bg=document.createElement("div"); bg.className="modal-bg";
   const saveLabel = opts.saveLabel||"Save";
@@ -314,6 +319,7 @@ function modal(title, innerHTML, onsubmit, opts={}){
   bg.onclick=e=>{ if(e.target===bg) close(); };
   bg.querySelector("form").onsubmit=async e=>{ e.preventDefault();
     const data={}; bg.querySelectorAll("[name]").forEach(i=>data[i.name]=i.value);
+    if(opts.closeOnSubmit){ close(); try{ await onsubmit(data); }catch(err){ toast("✗ "+err.message); } return; }
     try{ await onsubmit(data); close(); }catch(err){ toast("✗ "+err.message); } };
   document.body.appendChild(bg);
   const f=bg.querySelector("input,select,textarea"); if(f) f.focus();
@@ -654,8 +660,8 @@ function openEvPopup(r){
   if(r.kind==="milestone"&&r.ref_id){
     acts.push({id:"edit",label:"Edit",primary:true,onclick:()=>modal("Edit milestone",
       `<label>Title</label><input name="title" value="${esc(r.title||"")}" required>
-       <label>Date</label><input name="date" value="${esc(r.date||"")}" placeholder="2026-08-01">
-       <label>End date <span style="font-weight:400;text-transform:none">(optional)</span></label><input name="date_end" value="${esc(r.date_end||"")}">`,
+       <label>Date</label><input name="date" type="date" value="${esc(r.date||"")}">
+       <label>End date <span style="font-weight:400;text-transform:none">(optional)</span></label><input name="date_end" type="date" value="${esc(r.date_end||"")}">`,
       async data=>{ await jpost(`/api/milestone/${r.ref_id}/update`, data); toast("Milestone updated ✓"); refreshViews(); },
       {saveLabel:"Save"})});
     acts.push({id:"del",label:"Delete",onclick:async()=>{
@@ -750,6 +756,7 @@ async function renderProfile(slug, initChanFilter){
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="setupBtn">⚙ Setup</button>
         <button class="btn" id="addIdea">＋ Add idea</button>
+        <button class="btn" id="writeAll">✍ Write all ideas</button>
         <button class="btn primary" id="genIdeas">✦ Generate ideas</button>
       </div></div>
     <div class="scroll">
@@ -771,17 +778,21 @@ async function renderProfile(slug, initChanFilter){
     el.innerHTML = list.map(p=>{
       const grp=STAGE_GROUP[p.status], pk=({ideas:"idea",drafts:"draft",scheduled:"sched",published:"ready",archived:"idea"})[grp]||"idea";
       const n=NEXT[p.status];
-      const sub = p.status==="planned"||p.status==="approved_slot" ? "Just an idea — not written yet" : (p.brief_path?"Written":"");
-      const chanChips = (p.channels&&p.channels.length)
-        ? `<div class="chan-chips">${p.channels.map(c=>`<span class="chan-chip">${esc(c)}</span>`).join("")}</div>` : "";
+      const title = p.working_title || p.pillar || p.id;
+      const isIdea = p.status==="planned"||p.status==="approved_slot";
+      const sub = isIdea ? (p.concept || "Just an idea — not written yet") : (p.brief_path?"Written — click to view":"");
+      const pillarTag = p.pillar && p.pillar!==title ? `<span class="chan-chip" style="background:var(--sky-soft);color:var(--sky)">${esc(p.pillar)}</span>` : "";
+      const chanChips = ((pillarTag?1:0)||(p.channels&&p.channels.length))
+        ? `<div class="chan-chips">${pillarTag}${(p.channels||[]).map(c=>`<span class="chan-chip">${esc(c)}</span>`).join("")}</div>` : "";
       return `<div class="post">
         <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
-        <div class="t">${esc(p.pillar||p.id)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
+        <div class="t" data-view="${p.id}" style="cursor:pointer">${esc(title)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
         ${n?`<button class="go" data-act="${p.id}">${n.label}</button>`:""}
         <button class="more" data-menu="${p.id}">Edit</button></div>`;
     }).join("");
     el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>doNext(b.dataset.act));
     el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>rowMenu(b.dataset.menu));
+    el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>showDetail(b.dataset.view));
   }
   function byId(id){ return posts.find(p=>p.id===id)||{}; }
   async function doNext(id){ const p=byId(id), n=NEXT[p.status]; if(!n) return;
@@ -789,13 +800,65 @@ async function renderProfile(slug, initChanFilter){
       else { await api(`/api/post/${id}/status`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:n.to})}); toast("✓ "+plainStatus(n.to)); }
       renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
   function rowMenu(id){ const p=byId(id);
-    modal("Edit idea", `<label>Date</label><input name="date" value="${esc(p.date||"")}">
-      <label>Pillar / idea</label><input name="pillar" value="${esc(p.pillar||"")}">
+    modal("Edit idea", `<label>Title</label><input name="working_title" value="${esc(p.working_title||"")}" placeholder="short internal label">
+      <label>Concept</label><textarea name="concept" rows="2" placeholder="what this post does and why">${esc(p.concept||"")}</textarea>
+      <label>Date</label><input name="date" type="date" value="${esc(p.date||"")}">
+      <label>Pillar</label><input name="pillar" value="${esc(p.pillar||"")}">
       <label>Channels (slugs, comma-separated)</label><input name="channels" value="${esc((p.channels||[]).join(", "))}">
       <p style="margin:14px 0 0"><button type="button" class="btn" id="delBtn" style="color:var(--ink)">Delete this post</button></p>`,
       async data=>{ await api(`/api/post/${id}/update`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}); toast("Saved ✓"); renderProfile(slug); });
     setTimeout(()=>{ const d=document.getElementById("delBtn"); if(d) d.onclick=async()=>{ if(!confirm("Delete this post and its written content?"))return;
       try{ await api(`/api/post/${id}/delete`,{method:"POST"}); document.querySelector(".modal-bg")?.remove(); toast("Deleted ✓"); renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message);} }; },0);
+  }
+  async function showDetail(id){
+    let detail; try{ detail = await api(`/api/post/${id}`); }catch(e){ return toast("✗ "+e.message); }
+    const slot = detail.slot||{}, brief = detail.brief||null;
+    const p = byId(id), n = NEXT[p.status];
+    const title = slot.working_title || slot.pillar || id;
+    const meta = [["Status",plainStatus(p.status)],["Date",slot.date],["Pillar",slot.pillar],
+                  ["Objective",slot.objective],["Channels",(slot.channels||[]).join(", ")]]
+      .filter(([,v])=>v).map(([k,v])=>`<span style="font-size:11px;color:var(--dim)"><b style="color:var(--ink2)">${esc(k)}:</b> ${esc(v)}</span>`).join("");
+    const sect = (h,b)=>`<div style="margin-top:16px"><div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">${esc(h)}</div>${b}</div>`;
+    let body = "";
+    if(slot.concept) body += sect("Concept",`<div style="font-size:13px;line-height:1.6">${esc(slot.concept)}</div>`);
+    if(brief && brief._error){ body += sect("Brief", `<div style="color:#c0392b;font-size:13px">${esc(brief._error)}</div>`); }
+    else if(brief){
+      if(brief.hook) body += sect("Hook",`<div style="font-size:14px;font-weight:600;line-height:1.5">${esc(brief.hook)}</div>`);
+      if(Array.isArray(brief.structure)&&brief.structure.length) body += sect("Structure",`<ol style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${brief.structure.map(s=>`<li>${esc(s)}</li>`).join("")}</ol>`);
+      if(brief.caption) body += sect("Caption",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:11px 13px">${esc(brief.caption)}</div>`);
+      if(brief.cta) body += sect("CTA",`<div style="font-size:13px;line-height:1.5">${esc(brief.cta)}</div>`);
+      if(Array.isArray(brief.hashtags)&&brief.hashtags.length) body += sect("Hashtags",`<div style="font-size:12px;color:var(--sky)">${esc(brief.hashtags.map(h=>h.startsWith("#")?h:"#"+h).join(" "))}</div>`);
+      const vb = brief.visual_brief;
+      if(vb&&typeof vb==="object"){
+        const rows=[["What it shows",vb.description],["Mood",vb.mood],["Format",vb.format_specs],
+                    ["Overlays",Array.isArray(vb.text_overlays)?vb.text_overlays.join(" · "):vb.text_overlays],
+                    ["Gen prompt",vb.genai_prompt_draft]]
+          .filter(([,v])=>v).map(([k,v])=>`<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(k)}:</b> ${esc(v)}</div>`).join("");
+        if(rows) body += sect("Visual brief",rows);
+      }
+      if(brief.notes_for_human) body += sect("⚑ For human",`<div style="font-size:12.5px;line-height:1.55;color:#b9770e">${esc(brief.notes_for_human)}</div>`);
+    } else {
+      body += `<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.brief?` — click <b>${esc(n.label)}</b> to generate the full post.`:"."}</div>`;
+    }
+    const bg=document.createElement("div"); bg.className="modal-bg";
+    bg.innerHTML=`<div class="modal" style="max-width:620px;max-height:86vh;overflow:auto">
+      <h3 style="margin-bottom:4px">${esc(title)}</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px">${meta}</div>
+      ${body}
+      <div class="actions" style="margin-top:20px">
+        <button type="button" class="btn danger-btn" data-del style="margin-right:auto;color:#c0392b">Delete</button>
+        ${n?`<button type="button" class="btn primary" data-next>${esc(n.label)}</button>`:""}
+        <button type="button" class="btn" data-edit>Edit</button>
+        <button type="button" class="btn" data-x>Close</button>
+      </div></div>`;
+    const close=()=>bg.remove();
+    bg.onclick=e=>{ if(e.target===bg) close(); };
+    bg.querySelector("[data-x]").onclick=close;
+    bg.querySelector("[data-edit]").onclick=()=>{ close(); rowMenu(id); };
+    const nb=bg.querySelector("[data-next]"); if(nb) nb.onclick=()=>{ close(); doNext(id); };
+    bg.querySelector("[data-del]").onclick=async()=>{ if(!confirm("Delete this post and its written content?"))return;
+      try{ await api(`/api/post/${id}/delete`,{method:"POST"}); close(); toast("Deleted ✓"); renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message);} };
+    document.body.appendChild(bg);
   }
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f;
@@ -828,18 +891,59 @@ async function renderProfile(slug, initChanFilter){
         catch(e){ toast("✗ "+e.message); } };
     },0);
   });
+  $("#writeAll").onclick=()=>writeAllIdeas(slug);
   $("#addChanBtn").onclick=e=>{ e.stopPropagation(); openNewChannel(slug); };
   $("#setupBtn").onclick=()=>selectProfileSetup(slug);
-  $("#addIdea").onclick=()=>modal("Add idea", `<label>Date</label><input name="date" placeholder="2026-07-01">
-    <label>Pillar / idea</label><input name="pillar" placeholder="e.g. Story Craft">
+  $("#addIdea").onclick=()=>modal("Add idea", `<label>Title</label><input name="working_title" placeholder="short internal label">
+    <label>Concept</label><textarea name="concept" rows="2" placeholder="what this post does and why"></textarea>
+    <label>Date</label><input name="date" type="date">
+    <label>Pillar</label><input name="pillar" placeholder="e.g. Story Craft">
     <label>Channels (slugs, comma-separated)</label><input name="channels" placeholder="${channels.map(c=>c.slug).join(", ")||"e.g. my-profile-tiktok"}">`,
     async data=>{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}); toast("Idea added ✓"); renderProfile(slug); renderRail(); });
-  $("#genIdeas").onclick=()=>modal("Generate ideas (claude -p)", `<label>Period</label><input name="period" placeholder="2026-07-01 to 2026-07-14">
+  $("#genIdeas").onclick=()=>{
+    const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+    const start=new Date(), end=new Date(Date.now()+14*864e5);
+    modal("Generate ideas (claude -p)", `<label>Period (start)</label><input name="period_start" type="date" value="${isoDay(start)}" required>
+    <label>Period (end)</label><input name="period_end" type="date" value="${isoDay(end)}" required>
     <label>Platforms</label><input name="platforms" value="${esc(channels.map(c=>c.platform).join(","))}" placeholder="tiktok,instagram">
     <label>Cadence (per platform / week)</label><input name="cadence" placeholder="3">
     <label>Focus (optional)</label><input name="focus" placeholder="push the launch">`,
-    async data=>{ toast("Generating via claude -p… (10–30s)"); await api(`/api/profile/${slug}/plan`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)}); toast("Ideas generated ✓"); renderProfile(slug); renderRail(); });
+    async data=>{ const period=`${data.period_start} to ${data.period_end}`;
+      const payload={period, platforms:data.platforms, cadence:data.cadence, focus:data.focus};
+      toast("⏳ Generating ideas via claude -p… (10–30s)", true);
+      await api(`/api/profile/${slug}/plan`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+      toast("Ideas generated ✓"); renderProfile(slug); renderRail(); },
+    {closeOnSubmit:true});
+  };
   drawList();
+}
+
+// Write every idea-stage post into a full brief, ONE AT A TIME, refreshing the
+// list after each so drafts appear as they land (instead of all at the end).
+// Each brief is a Sonnet `claude -p` job (~10-15s); the endpoint re-indexes per
+// call, so a re-render reflects the new Draft immediately.
+let _writingAll = false;
+async function writeAllIdeas(slug){
+  if(_writingAll) return;
+  const isIdea = p => p.status==="planned" || p.status==="approved_slot";
+  let done = 0;
+  _writingAll = true;
+  try{
+    while(true){
+      const posts = await api(`/api/profile/${slug}/posts`);
+      const left = posts.filter(isIdea);
+      const next = left[0];
+      if(!next){ toast(done? `All ideas written ✓ (${done})` : "No ideas to write — generate some first"); break; }
+      toast(`✍ Writing briefs… ${left.length} left (Sonnet, ~15s each)`, true);
+      try{ await api(`/api/post/${next.id}/brief`,{method:"POST"}); }
+      catch(e){ toast("✗ stopped: "+e.message); break; }
+      done++;
+      await renderProfile(slug);     // the just-written post now shows as a Draft
+    }
+  } finally {
+    _writingAll = false;
+    renderRail();
+  }
 }
 
 function selectProfileSetup(slug){
@@ -877,12 +981,15 @@ async function renderProfileSetup(slug){
         </div>
         <label style="display:block;font-size:11px;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Brand voice & tone</label>
         <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Describe how this brand speaks — personality, tone, things to always or never say, example phrases. This context is injected into every AI generation for this profile.</p>
-        <textarea id="ps-voice" style="width:100%;min-height:480px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.voice||"")}</textarea>
+        <textarea id="ps-voice" style="width:100%;min-height:340px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.voice||"")}</textarea>
+        <label style="display:block;font-size:11px;color:var(--dim);margin:26px 0 6px;text-transform:uppercase;letter-spacing:.06em">Post brief spec</label>
+        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">What every post for this profile must produce — e.g. caption length, hashtag count, format leanings, overlay style. Injected as hard requirements into every "write it" brief generation.</p>
+        <textarea id="ps-brief" placeholder="e.g. Captions 80–150 words, punchy first line. Max 8 hashtags. Prefer carousels (5–7 slides) with bold text overlays. Always end with a question CTA." style="width:100%;min-height:200px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.brief_spec||"")}</textarea>
       </div>
     </div>`;
   $("#backToProfile").onclick = ()=>selectProfile(slug);
   $("#saveProfBtn").onclick = async()=>{
-    const data={name:$("#ps-name").value, topic:$("#ps-topic").value, voice:$("#ps-voice").value};
+    const data={name:$("#ps-name").value, topic:$("#ps-topic").value, voice:$("#ps-voice").value, brief_spec:$("#ps-brief").value};
     try{ await jpost(`/api/profile/${slug}/update`,data); toast("Saved ✓"); renderRail(); }
     catch(e){ toast("✗ "+e.message); }
   };
@@ -1124,11 +1231,43 @@ async function renderChannelGuidelines(slug){
     return div.querySelector(".b");
   }
 
-  function addChip(text){
-    const c = document.createElement("div");
-    c.className = "tool-chip"; c.textContent = text;
-    stream.appendChild(c);
+  // Tool activity for the in-flight turn collapses into ONE quiet line that
+  // sits ABOVE the answer (never a trailing stack of Bash/Read cards). It ticks
+  // live while working, then becomes a click-to-expand "N steps" summary.
+  let stepLabels = [], stepEl = null, stepAnchor = null;
+
+  function startTurnSteps(anchor){ stepLabels = []; stepEl = null; stepAnchor = anchor; }
+
+  function addStep(text){
+    stepLabels.push(text);
+    if (!stepEl){
+      stepEl = document.createElement("div");
+      stepEl.className = "tool-chip tool-summary";
+      stream.insertBefore(stepEl, stepAnchor);   // keep it above the free-text answer
+    }
+    const n = stepLabels.length;
+    stepEl.textContent = `⚙ working… ${n} step${n > 1 ? "s" : ""}`;
     stream.scrollTop = stream.scrollHeight;
+  }
+
+  function finalizeSteps(){
+    if (!stepEl) return;
+    const labels = stepLabels.slice();
+    let detail = null;
+    const paint = () => stepEl.textContent = detail
+      ? "⚙ hide steps"
+      : `⚙ ${labels.length} step${labels.length > 1 ? "s" : ""}`;
+    stepEl.onclick = () => {
+      if (detail) { detail.remove(); detail = null; }
+      else {
+        detail = document.createElement("div");
+        detail.className = "tool-detail";
+        detail.textContent = labels.join("  ·  ");
+        stepEl.after(detail);
+      }
+      paint();
+    };
+    paint();
   }
 
   function buildContext(text){
@@ -1170,6 +1309,8 @@ async function renderChannelGuidelines(slug){
     mentions = [];
 
     const bubble = addMsg("assistant", ""); bubble.textContent = ""; let full = "";
+    startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
+    let pendingBreak = false;
 
     try {
       const resp = await fetch("/api/ask", {
@@ -1198,8 +1339,14 @@ async function renderChannelGuidelines(slug){
           try {
             const obj = JSON.parse(raw);
             if (obj.error) { bubble.textContent = "Error: " + obj.error; return; }
-            if (obj.delta) { full += obj.delta; bubble.textContent = full; stream.scrollTop = stream.scrollHeight; }
-            if (obj.tool)  { addChip("⚙ " + obj.tool); }
+            if (obj.delta) {
+              // A tool call ran between two narration segments — start the next
+              // one on a fresh line so thoughts don't run together ("week.14").
+              if (pendingBreak && full && !full.endsWith("\n")) full += "\n";
+              pendingBreak = false;
+              full += obj.delta; bubble.textContent = full; stream.scrollTop = stream.scrollHeight;
+            }
+            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
           } catch {}
         }
       }
@@ -1210,6 +1357,7 @@ async function renderChannelGuidelines(slug){
       bubble.textContent = "Error: " + e.message;
       history.pop(); statusEl.textContent = "Error";
     } finally {
+      finalizeSteps();                // turn the live steps line into a quiet summary
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
     }

@@ -112,6 +112,15 @@ def _build_parser():
     p.set_defaults(_run=lambda a: fileops.set_status(a.id, a.status))
 
     # edit (rename) commands — the slug stays fixed; metadata/name are editable.
+
+    p = sub.add_parser("update-profile")
+    p.add_argument("--slug", required=True)
+    p.add_argument("--name")
+    p.add_argument("--topic")
+    p.add_argument("--voice")
+    p.set_defaults(_run=lambda a: fileops.update_profile(
+        a.slug, _fields(a, ["name", "topic", "voice"])))
+
     p = sub.add_parser("update-project")
     p.add_argument("--slug", required=True)
     p.add_argument("--name")

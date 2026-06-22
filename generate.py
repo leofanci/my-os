@@ -44,6 +44,12 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROMPTS = HERE / "prompts"
 
+# Content jobs are bounded, schema-constrained generations — Sonnet does them
+# well and is far faster/cheaper than the user's interactive default (which may
+# be Opus at high effort). Pinning the model here is what keeps a 14-brief batch
+# from taking ~15 minutes. Override with --model.
+DEFAULT_MODEL = "sonnet"
+
 
 class JobError(Exception):
     """A job that could not be completed (after the single retry)."""
@@ -52,10 +58,13 @@ class JobError(Exception):
 # --------------------------------------------------------------------------- #
 # claude invocation + output handling (split out so they're unit-testable)
 # --------------------------------------------------------------------------- #
-def run_claude(prompt: str, stdin_text: str) -> str:
+def run_claude(prompt: str, stdin_text: str, model: str = DEFAULT_MODEL) -> str:
     """Invoke `claude -p ... --output-format json`, return the raw stdout."""
+    cmd = ["claude", "-p", prompt, "--output-format", "json"]
+    if model:
+        cmd += ["--model", model]
     proc = subprocess.run(
-        ["claude", "-p", prompt, "--output-format", "json"],
+        cmd,
         input=stdin_text,
         capture_output=True,
         text=True,
@@ -135,11 +144,11 @@ def validate_brief(obj, slot_id: str) -> list:
 # --------------------------------------------------------------------------- #
 # orchestration: run once, retry once on parse/validation failure, then fail
 # --------------------------------------------------------------------------- #
-def run_job(prompt: str, voice_text: str, validate) -> dict:
+def run_job(prompt: str, voice_text: str, validate, model: str = DEFAULT_MODEL) -> dict:
     attempt_prompt = prompt
     last_err = None
     for attempt in (1, 2):
-        stdout = run_claude(attempt_prompt, voice_text)
+        stdout = run_claude(attempt_prompt, voice_text, model)
         result_text = extract_result(stdout)
         try:
             obj = parse_model_json(result_text)
@@ -284,6 +293,23 @@ def recent_history(content_dir: Path, limit: int = 20) -> str:
 # --------------------------------------------------------------------------- #
 # job builders
 # --------------------------------------------------------------------------- #
+def channel_slug_map(profile_dir: Path) -> dict:
+    """Map platform name -> channel slug for a profile (e.g. 'tiktok' ->
+    'movie-and-talk-tiktok'), so a generated plan that names channels by
+    platform can be normalized to the real slugs the indexer requires.
+    Assumes one channel per platform."""
+    out = {}
+    channels_dir = profile_dir / "channels"
+    if channels_dir.is_dir():
+        for channel_path in sorted(channels_dir.iterdir()):
+            channel_md = channel_path / "channel.md"
+            if channel_path.is_dir() and channel_md.exists():
+                m = re.search(r"^platform:\s*(\S+)", channel_md.read_text(encoding="utf-8"), re.MULTILINE)
+                if m:
+                    out[m.group(1).lower().rstrip("\"'")] = channel_path.name
+    return out
+
+
 def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focus):
     profile_dir = find_profile_dir(root, profile_slug)
     profile_md = profile_dir / "profile.md"
@@ -309,6 +335,22 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         f"{recent_history(content_dir)}\n"
     )
     obj = run_job(base + params, voice_text, validate_plan)
+
+    # Normalize channel refs: the model often emits platform names ('tiktok')
+    # instead of real channel slugs ('movie-and-talk-tiktok'). Remap so the
+    # strict indexer accepts the plan and the server can start.
+    cmap = channel_slug_map(profile_dir)
+    valid = set(cmap.values())
+    for post in obj.get("posts", []):
+        post["channels"] = [
+            ch if ch in valid else cmap.get(str(ch).lower(), ch)
+            for ch in post.get("channels", [])
+        ]
+        # A fresh plan is a batch of ideas — nothing has been written or reviewed
+        # yet. The model sometimes emits an advanced status ('approved',
+        # 'scheduled'); force every new slot back to 'planned' so the pipeline
+        # state machine starts from the front.
+        post["status"] = "planned"
 
     fname = "plan-" + re.sub(r"[^0-9a-zA-Z]+", "-", period).strip("-") + ".json"
     out = content_dir / fname
@@ -348,6 +390,11 @@ def do_brief(root: Path, profile_slug: str, post_id: str):
     # VOICE CASCADE: project + profile + channel guidelines for the relevant platform
     voice_text = build_voice_cascade(profile_dir, [plat] if plat else None)
 
+    # Per-profile brief spec: free-text requirements (caption length, hashtag
+    # count, format leanings) that every post for this profile must honor.
+    brief_spec_file = profile_dir / "brief-spec.md"
+    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
+
     base = (PROMPTS / "brief.txt").read_text(encoding="utf-8")
     params = (
         "\n\n--- APPROVED SLOT ---\n"
@@ -355,6 +402,11 @@ def do_brief(root: Path, profile_slug: str, post_id: str):
         f"\n--- PLATFORM CONSTRAINTS ({plat}) ---\n"
         f"{json.dumps(plat_cfg, indent=2, ensure_ascii=False)}\n"
     )
+    if brief_spec:
+        params += (
+            "\n--- PROFILE BRIEF SPEC (hard requirements for every post) ---\n"
+            f"{brief_spec}\n"
+        )
     obj = run_job(base + params, voice_text,
                   lambda o: validate_brief(o, post_id))
 

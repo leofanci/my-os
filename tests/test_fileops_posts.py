@@ -31,6 +31,28 @@ class T(unittest.TestCase):
         fileops.delete_post(pid)
         self.assertEqual(db.profile_posts("demo"), [])
 
+    def test_working_title_and_concept_surface(self):
+        fileops.add_post("demo", {"working_title": "Idea A",
+                                  "concept": "why this now", "channels": "demo-tiktok"})
+        post = db.profile_posts("demo")[0]
+        self.assertEqual(post["working_title"], "Idea A")
+        self.assertEqual(post["concept"], "why this now")
+
+    def test_delete_works_at_scheduled_stage(self):
+        # Deletion must work at any phase, not just on fresh ideas.
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved", "scheduled"):
+            fileops.set_status(pid, to)
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "scheduled")
+        fileops.delete_post(pid)
+        self.assertEqual(db.profile_posts("demo"), [])
+
+    def test_brief_spec_roundtrip(self):
+        fileops.update_profile("demo", {"name": "Demo", "brief_spec": "Captions under 100 words."})
+        self.assertEqual(fileops.read_profile("demo")["brief_spec"].strip(),
+                         "Captions under 100 words.")
+
     def test_add_unknown_profile(self):
         with self.assertRaises(fileops.ActionError):
             fileops.add_post("nope", {})

@@ -49,15 +49,17 @@ CREATE TABLE experiments (
 );
 
 CREATE TABLE posts (
-  id           TEXT PRIMARY KEY,
-  profile_slug TEXT NOT NULL REFERENCES entities(slug),
-  date         TEXT,
-  pillar       TEXT,
-  status       TEXT NOT NULL CHECK (status IN
+  id            TEXT PRIMARY KEY,
+  profile_slug  TEXT NOT NULL REFERENCES entities(slug),
+  date          TEXT,
+  pillar        TEXT,
+  working_title TEXT,
+  concept       TEXT,
+  status        TEXT NOT NULL CHECK (status IN
                  ('planned','approved_slot','briefed','approved',
                   'scheduled','published','rejected')),
-  version      INTEGER NOT NULL DEFAULT 1,
-  brief_path   TEXT
+  version       INTEGER NOT NULL DEFAULT 1,
+  brief_path    TEXT
 );
 CREATE INDEX idx_posts_profile_date ON posts(profile_slug, date);
 
@@ -113,7 +115,7 @@ CREATE VIEW timeline AS
   FROM experiments x LEFT JOIN entities e ON e.slug = x.entity_slug
   UNION ALL
   SELECT p.date, NULL, p.profile_slug, 'post',
-         COALESCE(p.pillar, ''), p.status, e.priority, e.hours_per_week, p.id
+         COALESCE(p.working_title, p.pillar, ''), p.status, e.priority, e.hours_per_week, p.id
   FROM posts p LEFT JOIN entities e ON e.slug = p.profile_slug
   UNION ALL
   SELECT COALESCE(f.shipped_date, f.target_date), NULL, f.product_slug, 'feature',

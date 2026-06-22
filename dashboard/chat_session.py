@@ -39,12 +39,18 @@ def parse_event(obj):
 ALLOWED_TOOLS = "Bash(python -m dashboard.osctl:*) Read Grep Glob"
 DISALLOWED_TOOLS = "Write Edit"
 
+# The dashboard chat agent ALWAYS runs on this model — independent of the user's
+# interactive `/model` default, which only affects the full terminal. Change it
+# here (e.g. "haiku" for speed, "opus" for depth) if ever needed.
+CHAT_MODEL = "sonnet"
+
 
 class ChatSession:
-    def __init__(self, repo_dir, rail, claude_bin="claude", session_id=None):
+    def __init__(self, repo_dir, rail, claude_bin="claude", session_id=None, model=CHAT_MODEL):
         self.repo_dir = repo_dir
         self.rail = rail
         self.claude_bin = claude_bin
+        self.model = model
         self.session_id = session_id or str(uuid.uuid4())
         self._started = False
         self._proc = None  # the in-flight `claude -p` turn, if any
@@ -54,7 +60,7 @@ class ChatSession:
                "--output-format", "stream-json",
                "--include-partial-messages",
                "--verbose",
-               "--model", "sonnet",  # always the latest/recommended Sonnet
+               "--model", self.model,  # see CHAT_MODEL — chat is always Sonnet
                "--add-dir", self.repo_dir,
                "--append-system-prompt", self.rail,
                "--allowedTools", ALLOWED_TOOLS,

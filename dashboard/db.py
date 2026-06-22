@@ -37,7 +37,7 @@ def timeline():
 def posts():
     return _rows(
         "SELECT p.id, p.profile_slug, e.name AS profile_name, p.date,"
-        "       p.pillar, p.status, p.version, p.brief_path"
+        "       p.pillar, p.working_title, p.concept, p.status, p.version, p.brief_path"
         " FROM posts p LEFT JOIN entities e ON e.slug = p.profile_slug"
         " ORDER BY (p.date IS NULL), p.date"
     )
@@ -153,7 +153,8 @@ def tree():
 def profile_posts(slug):
     """All posts for one profile, with channels list attached to each post."""
     rows = _rows(
-        "SELECT id, profile_slug, date, pillar, status, version, brief_path"
+        "SELECT id, profile_slug, date, pillar, working_title, concept,"
+        "       status, version, brief_path"
         " FROM posts WHERE profile_slug = ?"
         " ORDER BY (date IS NULL), date",
         (slug,),
