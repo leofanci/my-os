@@ -317,6 +317,35 @@ def delete_post(post_id):
     return {"id": post_id, "deleted": True}
 
 
+def delete_posts(post_ids):
+    """Delete several slots in one pass (one re-index). Unknown ids are skipped.
+
+    Touches each plan file at most once so a multi-select delete is a single
+    write + rebuild rather than N of them."""
+    wanted = {str(i) for i in (post_ids or [])}
+    if not wanted:
+        return {"deleted": [], "count": 0}
+    deleted = []
+    for plan in sorted(ROOT.glob("projects/*/profiles/*/content/plan-*.json")):
+        try:
+            data = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        posts = data.get("posts", []) if isinstance(data, dict) else []
+        hit = [p for p in posts if p.get("id") in wanted]
+        if not hit:
+            continue
+        data["posts"] = [p for p in posts if p.get("id") not in wanted]
+        for p in hit:
+            brief = plan.parent / "briefs" / f"{p.get('id')}.json"
+            if brief.exists():
+                brief.unlink()
+            deleted.append(p.get("id"))
+        plan.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    reindex()
+    return {"deleted": deleted, "count": len(deleted)}
+
+
 def _slugify(name: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
 
