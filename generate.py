@@ -125,19 +125,23 @@ def validate_plan(obj) -> list:
     return errs
 
 
-def validate_brief(obj, slot_id: str) -> list:
+def validate_revise_idea(obj) -> list:
     errs = []
     if not isinstance(obj, dict):
+        return ["revised slot is not a JSON object"]
+    if not obj.get("id"):
+        errs.append("missing 'id'")
+    return errs
+
+
+def validate_brief(obj, slot_id: str) -> list:
+    if not isinstance(obj, dict):
         return ["brief is not a JSON object"]
+    errs = []
     if obj.get("id") and obj["id"] != slot_id:
         errs.append(f"brief id '{obj.get('id')}' != slot id '{slot_id}'")
-    for k in ("channels", "hook", "caption", "cta"):
-        if not obj.get(k):
-            errs.append(f"missing '{k}'")
-    if not isinstance(obj.get("structure"), list) or not obj["structure"]:
-        errs.append("'structure' must be a non-empty array")
-    if not isinstance(obj.get("visual_brief"), dict):
-        errs.append("'visual_brief' must be an object")
+    if not obj.get("channels"):
+        errs.append("missing 'channels'")
     return errs
 
 
@@ -360,7 +364,7 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         ]
         # A fresh plan is a batch of ideas — nothing has been written or reviewed
         # yet. The model sometimes emits an advanced status ('approved',
-        # 'scheduled'); force every new slot back to 'planned' so the pipeline
+        # 'published'); force every new slot back to 'planned' so the pipeline
         # state machine starts from the front.
         post["status"] = "planned"
 
@@ -407,18 +411,22 @@ def do_brief(root: Path, profile_slug: str, post_id: str):
     brief_spec_file = profile_dir / "brief-spec.md"
     brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
 
-    base = (PROMPTS / "brief.txt").read_text(encoding="utf-8")
+    brief_spec_block = (
+        "--- PROFILE BRIEF SPEC (per-field rules — override defaults below) ---\n"
+        f"{brief_spec}\n"
+        "--- END PROFILE BRIEF SPEC ---"
+        if brief_spec else
+        "(no per-field overrides — use your best judgment for the content type and platform)"
+    )
+    base = (PROMPTS / "brief.txt").read_text(encoding="utf-8").replace(
+        "{{PROFILE_BRIEF_SPEC}}", brief_spec_block
+    )
     params = (
         "\n\n--- APPROVED SLOT ---\n"
         f"{json.dumps(slot, indent=2, ensure_ascii=False)}\n"
         f"\n--- PLATFORM CONSTRAINTS ({plat}) ---\n"
         f"{json.dumps(plat_cfg, indent=2, ensure_ascii=False)}\n"
     )
-    if brief_spec:
-        params += (
-            "\n--- PROFILE BRIEF SPEC (hard requirements for every post) ---\n"
-            f"{brief_spec}\n"
-        )
     obj = run_job(base + params, voice_text,
                   lambda o: validate_brief(o, post_id))
 
@@ -428,6 +436,73 @@ def do_brief(root: Path, profile_slug: str, post_id: str):
     out.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"wrote {out}")
     print("Next: re-index so posts.status picks up the new brief.")
+
+
+def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
+    """Revise an existing slot (idea) or brief (draft) using a user instruction.
+
+    - Ideas (no brief file): updates slot fields in the plan-*.json in place.
+    - Drafts (brief file exists): overwrites the brief JSON and bumps nothing
+      (fileops handles the version bump after calling this).
+    """
+    profile_dir = find_profile_dir(root, profile_slug)
+    content_dir = profile_dir / "content"
+    slot = find_slot(content_dir, post_id)
+    if slot is None:
+        raise JobError(f"slot '{post_id}' not found in any plan-*.json under {content_dir}")
+
+    brief_file = content_dir / "briefs" / f"{post_id}.json"
+    is_draft = brief_file.exists()
+
+    constraints = json.loads((PROMPTS / "platform-constraints.json").read_text(encoding="utf-8"))
+
+    if is_draft:
+        current = json.loads(brief_file.read_text(encoding="utf-8"))
+        plat = current.get("platform") or (slot.get("channels") or [""])[0]
+    else:
+        current = slot
+        plat = slot.get("platform") or (slot.get("channels") or [""])[0]
+
+    plat_cfg = constraints.get(plat, {}) if plat else {}
+    voice_text = build_voice_cascade(profile_dir, [plat] if plat else None)
+
+    brief_spec_file = profile_dir / "brief-spec.md"
+    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
+
+    kind = "BRIEF" if is_draft else "SLOT"
+    base = (PROMPTS / "revise.txt").read_text(encoding="utf-8")
+    params = (
+        f"\n\n--- CURRENT {kind} ---\n"
+        f"{json.dumps(current, indent=2, ensure_ascii=False)}\n"
+        f"\n--- REVISION INSTRUCTION ---\n{instruction}\n"
+        f"\n--- PLATFORM CONSTRAINTS ({plat}) ---\n"
+        f"{json.dumps(plat_cfg, indent=2, ensure_ascii=False)}\n"
+    )
+    if brief_spec:
+        params += f"\n--- PROFILE BRIEF SPEC ---\n{brief_spec}\n"
+
+    validate = (lambda o: validate_brief(o, post_id)) if is_draft else validate_revise_idea
+    obj = run_job(base + params, voice_text, validate)
+
+    if is_draft:
+        brief_file.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"revised brief for {post_id}")
+    else:
+        # Merge revised fields back into the plan file slot in place.
+        for plan in sorted(content_dir.glob("plan-*.json")):
+            try:
+                data = json.loads(plan.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            for p in data.get("posts", []) if isinstance(data, dict) else []:
+                if p.get("id") == post_id:
+                    for k, v in obj.items():
+                        if k != "id":
+                            p[k] = v
+                    plan.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                    print(f"revised slot for {post_id}")
+                    return
+        raise JobError(f"could not write back slot '{post_id}' to any plan file")
 
 
 def do_refine_guidelines(root: Path, channel_slug: str, raw_text: str) -> str:
@@ -477,6 +552,11 @@ def main():
     pb.add_argument("profile", help="profile slug")
     pb.add_argument("post_id", help="slot id from plan-*.json")
 
+    pv = sub.add_parser("revise", help="revise an existing slot or brief with an instruction")
+    pv.add_argument("profile", help="profile slug")
+    pv.add_argument("post_id", help="slot id")
+    pv.add_argument("--instruction", required=True, help='e.g. "punchier hook, caption under 200 chars"')
+
     pr = sub.add_parser("refine-guidelines",
                         help="read rough guideline notes from stdin, print refined markdown")
     pr.add_argument("channel", help="channel slug (resolves under projects/*/profiles/*/channels/<slug>/)")
@@ -489,6 +569,8 @@ def main():
             do_plan(root, args.profile, args.period, platforms, args.cadence, args.focus)
         elif args.job == "brief":
             do_brief(root, args.profile, args.post_id)
+        elif args.job == "revise":
+            do_revise(root, args.profile, args.post_id, args.instruction)
         else:  # refine-guidelines
             sys.stdout.write(do_refine_guidelines(root, args.channel, sys.stdin.read()))
     except JobError as exc:

@@ -43,7 +43,7 @@ EXPERIMENT_STATUSES = {"planned", "running", "done"}
 EXPERIMENT_DECISIONS = {"persist", "pivot", "kill"}
 POST_STATUSES = {
     "planned", "approved_slot", "briefed", "approved",
-    "scheduled", "published", "rejected",
+    "published", "rejected",
 }
 ACTIVITY_STATUSES = {"planned", "running", "blocked", "done"}
 PRIORITIES = {"critical", "high", "normal", "low"}

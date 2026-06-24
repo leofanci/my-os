@@ -44,7 +44,7 @@ class DoPlanTest(unittest.TestCase):
         generate.run_job = lambda *a, **k: {
             "period": "p", "profile": "demo",
             "posts": [{"id": "draft-001", "date": "2026-07-01", "pillar": "curiosity",
-                       "channels": ["tiktok"], "status": "scheduled",
+                       "channels": ["tiktok"], "status": "approved",
                        "working_title": "T", "concept": "C"}],
         }
         generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None)

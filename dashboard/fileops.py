@@ -7,7 +7,7 @@ future server migration mechanical.
 
 Pipeline status state machine (lives in the plan file's post object, mirrored to
 posts.status on re-index):
-    planned -> approved_slot -> briefed -> approved -> scheduled -> published
+    planned -> approved_slot -> briefed -> approved -> published
     (rejected at any review point; rejected can reopen to planned)
 
 Content lives under:
@@ -36,8 +36,7 @@ ALLOWED_TRANSITIONS = {
     "planned":       {"approved_slot", "rejected"},
     "approved_slot": {"briefed", "rejected", "planned"},
     "briefed":       {"approved", "rejected", "approved_slot"},
-    "approved":      {"scheduled", "rejected"},
-    "scheduled":     {"published", "rejected"},
+    "approved":      {"published", "rejected"},
     "published":     set(),
     "rejected":      {"planned"},
 }
@@ -169,6 +168,36 @@ def generate_brief(post_id):
     _write_plan(ctx)
     reindex()
     return {"id": post_id, "status": "briefed", "stdout": res.stdout.strip()}
+
+
+def revise_post(post_id, instruction):
+    """Revise a slot (idea) or brief (draft) in place via the AI revise job.
+
+    For drafts the brief file is overwritten and the plan-file version is bumped.
+    For ideas the slot fields are updated directly in the plan file.
+    """
+    if not instruction or not instruction.strip():
+        raise ActionError("instruction is required")
+    ctx = find_post(post_id)
+    brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
+    is_draft = brief_file.exists()
+
+    res = subprocess.run(
+        [sys.executable, str(ROOT / "generate.py"),
+         "--workspace", str(ROOT), "revise", ctx["profile_slug"], post_id,
+         "--instruction", instruction],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        raise ActionError(f"revise job failed: {(res.stderr or res.stdout).strip()[:800]}")
+
+    if is_draft:
+        ctx = find_post(post_id)
+        ctx["post"]["version"] = int(ctx["post"].get("version") or 1) + 1
+        _write_plan(ctx)
+
+    reindex()
+    return {"id": post_id, "is_draft": is_draft, "stdout": res.stdout.strip()}
 
 
 def _parse_frontmatter(text):

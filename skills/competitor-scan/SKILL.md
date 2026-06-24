@@ -16,6 +16,10 @@ otherwise reason from knowledge and label uncertainty explicitly.
    apparent strengths, exploitable weaknesses, what their existence PROVES about
    the market (validation vs. saturation).
 3. **Gap analysis**: underserved segments, unclaimed positioning angles, pricing gaps.
+   For any competitor with an App Store / Play Store presence: scan 1-star reviews
+   (what users hate most, unmet needs) and 3-star reviews (what's tolerated but
+   unsatisfying) — these are the most unfiltered signal of exploitable weakness.
+   Label inferred gaps vs. directly evidenced ones.
 4. **Strategic implications**: 2-3 options for how to play it (avoid/flank/attack)
    with pros/cons, one recommendation.
 

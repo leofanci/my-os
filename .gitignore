@@ -21,3 +21,4 @@ dashboard/server.log
 # User project content — keep the folder structure, not the private data
 /projects/*
 !/projects/.gitkeep
+.tokensave
