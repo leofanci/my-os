@@ -7,34 +7,24 @@ the user message above. The user message contains the VOICE CASCADE:
 Expand the SINGLE approved plan slot in the parameters block below into a full,
 ready-to-produce content brief.
 
-Rules:
-- Stay inside the project and profile voice, pillars, and visual mood from the voice cascade.
-- Honor the channel guidelines for the targeted channel(s).
-- Honor the platform constraints block (format norms, character limits).
-- The CTA must be one of the profile's allowed CTAs if the profile voice lists any.
-- Flag anything that needs a human (fact-check, real photo, legal) in notes_for_human.
+The PROFILE BRIEF SPEC below is the authority on what your output must contain.
+It defines every field, its format, its content rules, and its length.
+Follow it exactly. Do not add fields it does not mention. Do not drop fields it requires.
 
-Respond with ONLY valid JSON matching this schema. No markdown code fences, no
-prose before or after — the first character of your reply must be '{'.
+{{PROFILE_BRIEF_SPEC}}
 
-{
-  "id": "<the slot id>",
-  "channels": ["<channel-slug>", "..."],
-  "platform": "<primary platform>",
-  "format": "reel | carousel | single_image | text | thread | short | story",
-  "objective": "<from the slot>",
-  "pillar": "<from the slot>",
-  "hook": "the first line / first 2 seconds — the scroll-stopper",
-  "structure": ["beat 1: ...", "beat 2: ...", "beat 3: ..."],
-  "caption": "full ready-to-post caption text",
-  "cta": "exact CTA line",
-  "hashtags": ["..."],
-  "visual_brief": {
-    "description": "what the visual shows, scene by scene if video",
-    "mood": "from profile voice visual mood",
-    "format_specs": "9:16 video ~30s | 4:5 carousel 5 slides | etc.",
-    "text_overlays": ["overlay 1", "overlay 2"],
-    "genai_prompt_draft": "a first-pass prompt for a future image/video gen tool"
-  },
-  "notes_for_human": "anything to flag, or empty string"
-}
+Respond with ONLY valid JSON. No markdown code fences, no prose before or after —
+the first character of your reply must be '{'.
+
+Always include these identity fields (merge them into the root JSON object):
+- "id": the slot id
+- "channels": array of channel slugs from the slot
+- "platform": primary platform from the slot
+- "format": reel | carousel | single_image | text | thread | short | story
+- "objective": from the slot
+- "pillar": from the slot
+
+All remaining fields come from the PROFILE BRIEF SPEC above — output exactly those, nothing else.
+
+Stay inside the project and profile voice and honor the channel guidelines and
+platform constraints. Everything else is dictated by the PROFILE BRIEF SPEC.

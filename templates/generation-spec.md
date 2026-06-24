@@ -103,7 +103,7 @@ Today it's documentation for you; later a tool consumes it directly.
    "Respond ONLY with valid JSON matching this schema. No markdown fences."
 2. **Validate before storing.** Parse the JSON; if invalid, retry once with
    the parse error appended. If it fails twice, mark the job failed.
-3. **Statuses:** `planned → approved_slot → briefed → approved → scheduled → published`
+3. **Statuses:** `planned → approved_slot → briefed → approved → published`
    (and `rejected` at any review point). Edits in the dashboard create a new
    version, never overwrite — keeps a history of what you changed, which
    later becomes feedback for improving prompts.
@@ -133,7 +133,7 @@ CREATE TABLE posts (
   pillar       TEXT,
   status       TEXT NOT NULL CHECK (status IN
                  ('planned','approved_slot','briefed','approved',
-                  'scheduled','published','rejected')),
+                  'published','rejected')),
   version      INTEGER NOT NULL DEFAULT 1,
   brief_path   TEXT                              -- pointer to the brief JSON file
 );

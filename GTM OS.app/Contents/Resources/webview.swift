@@ -66,6 +66,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         }
     }
 
+    // WKWebView routes window.alert/confirm/prompt to these delegate methods.
+    // Without them the calls are no-ops: alert() does nothing, and crucially
+    // confirm() returns FALSE — so every `if(!confirm(...)) return;` guard in the
+    // dashboard (all the delete buttons) silently aborts. Wire them to native
+    // panels so confirmations actually work.
+    func webView(_ webView: WKWebView,
+                 runJavaScriptAlertPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping () -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        if let win = webView.window {
+            alert.beginSheetModal(for: win) { _ in completionHandler() }
+        } else { alert.runModal(); completionHandler() }
+    }
+
+    func webView(_ webView: WKWebView,
+                 runJavaScriptConfirmPanelWithMessage message: String,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (Bool) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        if let win = webView.window {
+            alert.beginSheetModal(for: win) { resp in
+                completionHandler(resp == .alertFirstButtonReturn)
+            }
+        } else {
+            completionHandler(alert.runModal() == .alertFirstButtonReturn)
+        }
+    }
+
+    func webView(_ webView: WKWebView,
+                 runJavaScriptTextInputPanelWithPrompt prompt: String,
+                 defaultText: String?,
+                 initiatedByFrame frame: WKFrameInfo,
+                 completionHandler: @escaping (String?) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        let finish: (NSApplication.ModalResponse) -> Void = { resp in
+            completionHandler(resp == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
+        if let win = webView.window {
+            alert.beginSheetModal(for: win, completionHandler: finish)
+        } else { finish(alert.runModal()) }
+    }
+
     // A code-built Cocoa app installs no menu by default, which leaves the
     // standard Cmd-C/V/X/A/Z (and Cmd-Q) shortcuts dead everywhere, including
     // inside the webview. Wire up minimal App + Edit menus so they work.

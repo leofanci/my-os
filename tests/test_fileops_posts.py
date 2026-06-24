@@ -38,13 +38,13 @@ class T(unittest.TestCase):
         self.assertEqual(post["working_title"], "Idea A")
         self.assertEqual(post["concept"], "why this now")
 
-    def test_delete_works_at_scheduled_stage(self):
+    def test_delete_works_at_approved_stage(self):
         # Deletion must work at any phase, not just on fresh ideas.
         fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
         pid = db.profile_posts("demo")[0]["id"]
-        for to in ("approved_slot", "briefed", "approved", "scheduled"):
+        for to in ("approved_slot", "briefed", "approved"):
             fileops.set_status(pid, to)
-        self.assertEqual(db.profile_posts("demo")[0]["status"], "scheduled")
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "approved")
         fileops.delete_post(pid)
         self.assertEqual(db.profile_posts("demo"), [])
 

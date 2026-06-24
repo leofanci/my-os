@@ -35,9 +35,9 @@ def parse_event(obj):
     return (None, None)
 
 
-# Allowlist: the agent may run osctl + read-only tools, nothing else.
-ALLOWED_TOOLS = "Bash(python -m dashboard.osctl:*) Read Grep Glob"
-DISALLOWED_TOOLS = "Write Edit"
+# Chat agent runs osctl only — no file exploration needed or wanted.
+ALLOWED_TOOLS = "Bash(python -m dashboard.osctl:*)"
+DISALLOWED_TOOLS = "Write Edit Read Grep Glob"
 
 # The dashboard chat agent ALWAYS runs on this model — independent of the user's
 # interactive `/model` default, which only affects the full terminal. Change it

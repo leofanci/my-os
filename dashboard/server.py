@@ -38,9 +38,15 @@ RAIL = (
     "(e.g. create-project, create-profile, create-channel, add-post, "
     "create-activity, create-milestone, mark-done, update-post, set-status, "
     "update-project, update-channel, update-milestone). "
-    "Never write or edit files directly. After acting, confirm briefly what you changed. "
+    "Never write or edit files directly. "
+    "After acting, confirm in one short sentence what changed. "
+    "Never repeat, quote, or paste back content you created (briefs, posts, plans, etc.) — user reads it directly in the dashboard. "
     "The current GTM OS state is provided to you at the start of each turn — do "
-    "not explore with Read/Grep/Glob to discover existing structure; act directly."
+    "not explore with Read/Grep/Glob to discover existing structure; act directly. "
+    "IMPORTANT: update-profile accepts TWO distinct text fields — use --voice for "
+    "brand voice & tone, and --brief-spec for post brief spec (output format rules). "
+    "Never merge them: if the user provides both, pass each to its own flag. "
+    "If updating only one, omit the other flag entirely."
 )
 
 
@@ -215,6 +221,11 @@ class Handler(BaseHTTPRequestHandler):
             threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
             return
 
+        if path in ("/app.css", "/app.js"):
+            f = HERE / path.lstrip("/")
+            ctype = "text/css" if path.endswith(".css") else "application/javascript"
+            return self._send(200, f.read_bytes(), ctype)
+
         if path.startswith("/vendor/"):
             f = (HERE / path.lstrip("/")).resolve()
             if f.is_file() and str(f).startswith(str(HERE / "vendor")):
@@ -228,6 +239,9 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": "os.db not found — run index.py first"})
 
         try:
+            if path == "/api/chat-session":
+                sid = _CHAT.session_id if _CHAT is not None else None
+                return self._send(200, {"session_id": sid})
             if path == "/api/timeline":
                 return self._send(200, db.timeline())
             if path == "/api/tree":
@@ -290,6 +304,10 @@ class Handler(BaseHTTPRequestHandler):
                 post_id = path[len("/api/post/"):-len("/brief")]
                 result = fileops.generate_brief(post_id)
                 return self._send(200, {"ok": True, **result})
+            if path.startswith("/api/post/") and path.endswith("/revise"):
+                post_id = path[len("/api/post/"):-len("/revise")]
+                result = fileops.revise_post(post_id, body.get("instruction", ""))
+                return self._send(200, {"ok": True, **result})
             if path.startswith("/api/channel/") and path.endswith("/guidelines/refine"):
                 slug = path[len("/api/channel/"):-len("/guidelines/refine")]
                 return self._send(200, {"ok": True, **fileops.refine_guidelines(slug, body.get("text", ""))})
@@ -338,6 +356,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path == "/api/chat-reset":
+                global _CHAT
+                if _CHAT is not None:
+                    _CHAT.close()
+                    _CHAT = None
+                return self._send(200, {"ok": True})
         except fileops.ActionError as exc:
             return self._send(400, {"ok": False, "error": str(exc)})
         except Exception as exc:  # noqa: BLE001

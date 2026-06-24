@@ -118,8 +118,9 @@ def _build_parser():
     p.add_argument("--name")
     p.add_argument("--topic")
     p.add_argument("--voice")
+    p.add_argument("--brief-spec")
     p.set_defaults(_run=lambda a: fileops.update_profile(
-        a.slug, _fields(a, ["name", "topic", "voice"])))
+        a.slug, _fields(a, ["name", "topic", "voice", "brief_spec"])))
 
     p = sub.add_parser("update-project")
     p.add_argument("--slug", required=True)
