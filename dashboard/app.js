@@ -1067,6 +1067,29 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     termSock.onclose = () => { if (term) term.write("\r\n[session ended — toggle the terminal to reconnect]\r\n"); };
     term.onData(d => { if (termSock && termSock.readyState === 1) termSock.send(d); });
     window.addEventListener("resize", () => { if (termFit) { termFit.fit(); sendResize(); } });
+    term.attachCustomKeyEventHandler(e => {
+      if (e.type !== "keydown" || !e.metaKey || e.key !== "v") return true;
+      (async () => {
+        try {
+          const items = await navigator.clipboard.read();
+          const imgItem = items.find(i => i.types.some(t => t.startsWith("image/")));
+          if (imgItem) {
+            const imgType = imgItem.types.find(t => t.startsWith("image/"));
+            const blob = await imgItem.getType(imgType);
+            const b64 = await new Promise(res => {
+              const r = new FileReader(); r.onload = () => res(r.result.split(",")[1]); r.readAsDataURL(blob);
+            });
+            const ext = imgType.split("/")[1] || "png";
+            const { path } = await jpost("/api/upload-temp", { data: b64, ext });
+            if (termSock && termSock.readyState === 1) termSock.send(path);
+            return;
+          }
+        } catch {}
+        const text = await navigator.clipboard.readText().catch(() => "");
+        if (text && termSock && termSock.readyState === 1) termSock.send(text);
+      })();
+      return false;
+    });
   }
   function sendResize(){
     if (termSock && termSock.readyState === 1 && term)
