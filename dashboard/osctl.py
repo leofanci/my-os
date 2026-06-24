@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root
-from dashboard import fileops  # noqa: E402
+from dashboard import db, fileops  # noqa: E402
 
 
 def _emit(obj, ok=True):
@@ -27,6 +27,18 @@ def _fields(args, keys):
 def _build_parser():
     parser = argparse.ArgumentParser(prog="osctl", description="GTM OS mutation CLI")
     sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("tree", help="Print current project/profile/channel structure")
+    def _tree(a):
+        lines = []
+        for proj in db.tree():
+            lines.append(f"{proj['slug']} ({proj.get('kind') or proj.get('type')})")
+            for prof in proj.get("profiles", []):
+                lines.append(f"  profile {prof['slug']} \"{prof['name']}\"")
+                for ch in prof.get("channels", []):
+                    lines.append(f"    channel {ch['slug']} ({ch.get('platform')})")
+        return {"tree": "\n".join(lines) if lines else "(no projects yet)"}
+    p.set_defaults(_run=_tree)
 
     p = sub.add_parser("create-project")
     p.add_argument("--slug", required=True)

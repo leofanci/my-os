@@ -11,11 +11,13 @@ Run:  python3 dashboard/server.py [--port 8765]
 """
 
 import argparse
+import base64
 import json
 import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -116,13 +118,12 @@ class Handler(BaseHTTPRequestHandler):
         if context:
             text = f"{context}\n\n{text}"
 
-        # Hand the agent the current structure up front so it acts instead of
-        # foraging for the data model with Read/Grep/Glob each turn.
         try:
             snapshot = state_snapshot(db.tree())
             text = f"{snapshot}\n\n{text}"
-        except Exception:  # noqa: BLE001 — never block a turn on snapshot failure
+        except Exception:  # noqa: BLE001
             pass
+
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -356,6 +357,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path == "/api/upload-temp":
+                data = base64.b64decode(body.get("data", ""))
+                ext = (body.get("ext", "png") or "png").lstrip(".")
+                fd, fpath = tempfile.mkstemp(suffix=f".{ext}", prefix="gtmos_img_")
+                with os.fdopen(fd, "wb") as f:
+                    f.write(data)
+                return self._send(200, {"path": fpath})
             if path == "/api/chat-reset":
                 global _CHAT
                 if _CHAT is not None:
