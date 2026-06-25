@@ -225,7 +225,14 @@ class Handler(BaseHTTPRequestHandler):
         if path in ("/app.css", "/app.js"):
             f = HERE / path.lstrip("/")
             ctype = "text/css" if path.endswith(".css") else "application/javascript"
-            return self._send(200, f.read_bytes(), ctype)
+            data = f.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
 
         if path.startswith("/vendor/"):
             f = (HERE / path.lstrip("/")).resolve()

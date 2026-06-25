@@ -639,10 +639,14 @@ function renderBriefBody(slot, brief, n){
     const vb=brief.visual_brief;
     if(vb&&typeof vb==="object"){
       const rows=[["What it shows",vb.description],["Mood",vb.mood],["Format",vb.format_specs],
-                  ["Overlays",Array.isArray(vb.text_overlays)?vb.text_overlays.join(" · "):vb.text_overlays],
-                  ["Gen prompt",vb.genai_prompt_draft]]
+                  ["Overlays",Array.isArray(vb.text_overlays)?vb.text_overlays.join(" · "):vb.text_overlays]]
         .filter(([,v])=>v).map(([k,v])=>`<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(k)}:</b> ${esc(v)}</div>`).join("");
-      if(rows) body+=briefSect("Visual brief",rows);
+      let gpHtml="";
+      if(vb.genai_prompt_draft){
+        const prompts=Array.isArray(vb.genai_prompt_draft)?vb.genai_prompt_draft:[vb.genai_prompt_draft];
+        gpHtml=`<div style="margin-top:6px"><b style="font-size:12.5px;color:var(--ink2)">Gen prompts:</b>${prompts.map((p,i)=>`<div style="margin-top:6px;padding:8px 10px;background:rgba(0,0,0,.04);border-radius:8px;font-size:11.5px;line-height:1.55;white-space:pre-wrap"><span style="color:var(--dim);font-weight:700">${i+1}.</span> ${esc(p)}</div>`).join("")}</div>`;
+      }
+      if(rows||gpHtml) body+=briefSect("Visual brief",rows+gpHtml);
     }
     if(brief.notes_for_human) body+=briefSect("⚑ For human",`<div style="font-size:12.5px;line-height:1.55;color:#b9770e">${esc(brief.notes_for_human)}</div>`);
   } else {
