@@ -632,6 +632,8 @@ function renderBriefBody(slot, brief, n){
   if(brief&&brief._error) body+=briefSect("Brief",`<div style="color:#c0392b;font-size:13px">${esc(brief._error)}</div>`);
   else if(brief){
     if(brief.hook) body+=briefSect("Hook",`<div style="font-size:14px;font-weight:600;line-height:1.5">${esc(brief.hook)}</div>`);
+    if(brief.catchy_title) body+=briefSect("Catchy title",`<div style="font-size:14px;font-weight:600;line-height:1.5;color:var(--sky)">${esc(brief.catchy_title)}</div>`);
+    if(Array.isArray(brief.slides)&&brief.slides.length) body+=briefSect("Slide overlays",`<div style="display:flex;flex-direction:column;gap:6px">${brief.slides.map(s=>`<div style="display:flex;gap:8px;align-items:baseline"><span style="font-size:11px;font-weight:700;color:var(--dim);min-width:22px">${s.slide}</span><span style="font-size:12.5px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;flex:1">${esc(s.overlay)}</span></div>`).join("")}</div>`);
     if(Array.isArray(brief.structure)&&brief.structure.length) body+=briefSect("Structure",`<ol style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${brief.structure.map(s=>`<li>${esc(s)}</li>`).join("")}</ol>`);
     if(brief.caption) body+=briefSect("Caption",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:11px 13px">${esc(brief.caption)}</div>`);
     if(brief.cta) body+=briefSect("CTA",`<div style="font-size:13px;line-height:1.5">${esc(brief.cta)}</div>`);
