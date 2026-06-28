@@ -334,6 +334,24 @@ def update_post(post_id, fields):
     return {"id": post_id}
 
 
+
+_BRIEF_FIELDS = ('caption', 'hook', 'catchy_title', 'cover_overlay')
+
+
+def patch_brief(post_id, fields):
+    """Update free-text fields in a post's brief JSON, then re-index."""
+    ctx = find_post(post_id)
+    brief_file = ctx['plan'].parent / 'briefs' / f'{post_id}.json'
+    if not brief_file.exists():
+        raise ActionError(f'no brief found for post "{post_id}"')
+    brief = json.loads(brief_file.read_text(encoding='utf-8'))
+    for k in _BRIEF_FIELDS:
+        if k in fields and fields[k] is not None:
+            brief[k] = fields[k].strip()
+    brief_file.write_text(json.dumps(brief, indent=2, ensure_ascii=False), encoding='utf-8')
+    reindex()
+    return {'id': post_id}
+
 def delete_post(post_id):
     """Remove a slot (and its brief file, if any), then re-index."""
     ctx = find_post(post_id)
@@ -520,11 +538,14 @@ def update_channel(slug: str, fields: dict) -> dict:
     raw_handle = fields.get("handle") if fields.get("handle") is not None else fm.get("handle", "")
     handle = (raw_handle or "").strip()
     name = (fields.get("name") or fm.get("name") or "").strip()
+    bio = (fields.get("bio") or fm.get("bio") or "").strip()
     lines = [f"platform: {platform}"]
     if handle:
         lines.append(f"handle: {handle}")
     if name:
         lines.append(f"name: {name}")
+    if bio:
+        lines.append(f"bio: {bio}")
     md = "---\n" + "\n".join(lines) + "\n---\n" + (f"{body}\n" if body else "")
     f.write_text(md, encoding="utf-8")
     reindex()

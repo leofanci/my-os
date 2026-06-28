@@ -149,8 +149,9 @@ def _build_parser():
     p.add_argument("--platform")
     p.add_argument("--handle")
     p.add_argument("--name")
+    p.add_argument("--bio")
     p.set_defaults(_run=lambda a: fileops.update_channel(
-        a.slug, _fields(a, ["platform", "handle", "name"])))
+        a.slug, _fields(a, ["platform", "handle", "name", "bio"])))
 
     p = sub.add_parser("update-milestone")
     p.add_argument("--id", required=True, dest="id")
@@ -164,6 +165,15 @@ def _build_parser():
     p.add_argument("--priority")
     p.set_defaults(_run=lambda a: fileops.update_milestone(a.id, _fields(
         a, ["title", "date", "date_end", "type", "entity", "entity_type", "notes", "priority"])))
+
+    p = sub.add_parser('patch-brief')
+    p.add_argument('--id', required=True, dest='id')
+    p.add_argument('--caption')
+    p.add_argument('--hook')
+    p.add_argument('--catchy-title', dest='catchy_title')
+    p.add_argument('--cover-overlay', dest='cover_overlay')
+    p.set_defaults(_run=lambda a: fileops.patch_brief(
+        a.id, _fields(a, ['caption', 'hook', 'catchy_title', 'cover_overlay'])))
 
     return parser
 
