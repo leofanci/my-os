@@ -46,6 +46,10 @@ ALLOWED_TOOLS = [
     "Bash(python -m dashboard.osctl:*)",
 ]
 
+# Reset session after this many turns to prevent unbounded context growth.
+# State snapshot injected every turn provides continuity — agent re-orients fast.
+MAX_TURNS = 20
+
 # The dashboard chat agent ALWAYS runs on this model — independent of the user's
 # interactive `/model` default, which only affects the full terminal. Change it
 # here (e.g. "haiku" for speed, "opus" for depth) if ever needed.
@@ -61,6 +65,7 @@ class ChatSession:
         self.session_id = session_id or str(uuid.uuid4())
         self._started = False
         self._proc = None  # the in-flight `claude -p` turn, if any
+        self._turn_count = 0
 
     def _base_cmd(self):
         # Lean per-turn context: the dashboard chat only needs Bash→osctl, so we
@@ -96,7 +101,13 @@ class ChatSession:
 
     def ask(self, text):
         """Run one turn; yield (kind, payload) events. Each turn is its own
-        `claude -p` invocation, resumed by session id so context persists."""
+        `claude -p` invocation, resumed by session id so context persists.
+        Auto-compacts after MAX_TURNS — state snapshot injected every turn
+        gives the agent enough continuity to re-orient immediately."""
+        if self._turn_count >= MAX_TURNS:
+            self.session_id = str(uuid.uuid4())
+            self._started = False
+            self._turn_count = 0
         proc = subprocess.Popen(
             self._base_cmd(), cwd=self.repo_dir,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -120,6 +131,8 @@ class ChatSession:
             proc.wait()
             if proc.returncode not in (0, None):
                 yield ("error", (proc.stderr.read() or "")[:500])
+            else:
+                self._turn_count += 1
         finally:
             for stream in (proc.stdout, proc.stderr):
                 try:

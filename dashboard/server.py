@@ -34,39 +34,114 @@ import terminal_session  # noqa: E402
 
 APP_HTML = HERE / "app.html"
 
-RAIL = (
-    "You are the GTM OS dashboard chat assistant. "
-    "You operate a GTM OS whose source of truth is authored files. "
-    "Mutate state ONLY by running `python3 -m dashboard.osctl <command>` "
-    "(e.g. create-project, create-profile, create-channel, add-post, "
-    "create-activity, create-milestone, mark-done, update-post, set-status, "
-    "update-project, update-channel, update-milestone). "
-    "Never write or edit files directly. "
-    "After acting, confirm in one short sentence what changed. "
-    "Never repeat, quote, or paste back content you created (briefs, posts, plans, etc.) — user reads it directly in the dashboard. "
-    "The current GTM OS state is provided to you at the start of each turn — do "
-    "not explore with Read/Grep/Glob to discover existing structure; act directly. "
-    "IMPORTANT: update-profile accepts TWO distinct text fields — use --voice for "
-    "brand voice & tone, and --brief-spec for post brief spec (output format rules). "
-    "Never merge them: if the user provides both, pass each to its own flag. "
-    "If updating only one, omit the other flag entirely."
-)
+RAIL = """You are the GTM OS consultant embedded in the dashboard. You have deep expertise in go-to-market strategy, problem validation, positioning, content, channel strategy, and product. Think like a strategic partner, not an assistant.
+
+## Data access
+Every turn you receive a full OS state snapshot (projects, profiles, posts, activities, experiments, memos). For deep content, fetch on demand:
+- `python3 -m dashboard.osctl get-posts [--profile <slug>]` — all posts with IDs, dates, briefs
+- `python3 -m dashboard.osctl get-project --slug <slug>` — activities, experiments, memos, features
+- `python3 -m dashboard.osctl read-file --path <repo-relative-path>` — read any authored file (profile.md, brief JSON, memo JSON, strategy/intake.md, etc.)
+
+## Mutations (ONLY via osctl — never write files directly)
+create-project, create-profile, create-channel, add-post, create-activity, create-milestone, mark-done, update-post, set-status, update-project, update-channel, update-milestone, patch-brief
+IMPORTANT: update-profile has TWO fields — --voice for brand voice/tone, --brief-spec for brief output format. Never merge. Omit whichever isn't being updated.
+
+## Skills (terminal only — tell user exactly which to run and when)
+The user runs these in the terminal panel via /skill-name. Your job: diagnose, decide which skill applies, tell the user what to run and with what context.
+- /gtm-assessment — ICP hypotheses, positioning options, pace call (validate/accelerate), riskiest assumptions. Use for "where does this stand" or after new evidence.
+- /problem-validation — validate problem is real/painful/frequent before any GTM or build. Use for new ideas, "is this worth doing", or before gtm-assessment.
+- /positioning — positioning and messaging options, category framing, differentiation. Use for homepage, deck, bio, "how do we describe this".
+- /channel-strategy — compare GTM channels, recommend primary. Use after gtm-assessment or "where should I find customers".
+- /icp-research — sharpen ICP, segment options, where to find them, interview guide. Use when target customer is vague or before user interviews.
+- /brand-identity — profile voice and channel guidelines. Use for new profiles or when content feels off-brand.
+- /content-plan — content calendar skeleton for a profile (slots, not full copy). Use for "plan next two weeks".
+- /content-brief — expand approved slots into full post briefs (hook, caption, CTA, visual brief, GenAI prompt). Use after slots are approved.
+- /copy-variants — adapt content across channels or generate hook variants for testing.
+- /experiment-design — cheapest test for riskiest assumption, with success/kill criteria.
+- /experiment-review — log results, judge against criteria, decide persist/pivot/kill.
+- /competitor-scan — competitive landscape, gaps, strategic implications.
+- /market-sizing — bottom-up SAM/SOM anchored to real buyer counts.
+- /pricing-strategy — model, price points, packaging options with pros/cons.
+- /launch-plan — launch sequencing, assets, channels, success metrics, day-by-day checklist.
+- /venture-intake — create/update strategy/intake.md via structured interview. Use for new ventures or logging new evidence.
+- /weekly-review — portfolio cadence, surface what needs attention, set week's priorities.
+- /portfolio-timeline — unified timeline across all projects, profiles, content, launches.
+- /portfolio-sync — cross-entity coordination actions this week.
+- /portfolio-map — scaffold folder structure for new project/profile/channel.
+- /product-build — roadmap: plan features, track build status, link releases to content.
+- /gtm-os — master dispatcher. Use at session start to route any request.
+
+## Behavior
+- After acting: one-sentence confirmation only.
+- Never repeat, quote, or paste back content user can see in dashboard (briefs, posts, plans, etc.).
+- State snapshot is provided every turn — never use Read/Grep/Glob to explore structure.
+- Be direct. No hedging. Short sentences. Fragments fine."""
 
 
 def state_snapshot(projects):
-    """Render db.tree() output as a compact text outline for the chat agent,
-    so it already knows the project/profile/channel structure and need not
-    forage. Pure + deterministic — fed a fresh tree each turn."""
-    lines = ["## Current GTM OS state"]
+    """Full OS state for the chat agent: projects, profiles, posts, activities,
+    experiments, memos. Rich enough to act without extra fetches; deep content
+    (brief JSON, profile voice, memo body) requires read-file on demand."""
+    lines = ["## GTM OS State"]
     if not projects:
         lines.append("(no projects yet)")
         return "\n".join(lines)
+
+    try:
+        all_posts = db.posts()
+        all_memos = db.memos()
+        all_experiments = db.experiments()
+        all_activities = db._rows(
+            "SELECT entity_slug, title, date, type, status, priority"
+            " FROM activities ORDER BY entity_slug, (date IS NULL), date"
+        )
+    except Exception:  # noqa: BLE001
+        all_posts = all_memos = all_experiments = all_activities = []
+
+    posts_by_profile = {}
+    for p in all_posts:
+        posts_by_profile.setdefault(p["profile_slug"], []).append(p)
+
+    memos_by_entity = {}
+    for m in all_memos:
+        memos_by_entity.setdefault(m["entity_slug"], []).append(m)
+
+    exps_by_entity = {}
+    for e in all_experiments:
+        exps_by_entity.setdefault(e["entity_slug"], []).append(e)
+
+    acts_by_entity = {}
+    for a in all_activities:
+        acts_by_entity.setdefault(a["entity_slug"], []).append(a)
+
     for p in projects:
-        lines.append(f"{p['slug']} ({p.get('kind') or p.get('type')})")
+        slug = p["slug"]
+        lines.append(f"\n### {slug} ({p.get('kind') or p.get('type')}, {p.get('priority', '')})")
+
+        for m in memos_by_entity.get(slug, []):
+            lines.append(f"  memo {m['type']}-v{m['version']} [{m['status']}] path={m['file_path']}")
+
+        for e in exps_by_entity.get(slug, []):
+            lines.append(f"  experiment: {e['assumption'][:80]} [{e['status']}]")
+
+        for a in acts_by_entity.get(slug, []):
+            d = f" {a['date']}" if a["date"] else ""
+            lines.append(f"  activity: {a['title']}{d} [{a['status']}]")
+
         for prof in p.get("profiles", []):
-            lines.append(f"  profile {prof['slug']} \"{prof['name']}\"")
+            pslug = prof["slug"]
+            posts = posts_by_profile.get(pslug, [])
+            lines.append(f"  profile {pslug} \"{prof['name']}\" [{len(posts)} posts]")
+            for post in posts:
+                d = f" {post['date']}" if post["date"] else ""
+                b = " [brief]" if post["brief_path"] else ""
+                lines.append(
+                    f"    post {post['id']}: {post['working_title'] or '(untitled)'}"
+                    f"{d} [{post['status']}]{b}"
+                )
             for ch in prof.get("channels", []):
                 lines.append(f"    channel {ch['slug']} ({ch.get('platform')})")
+
     return "\n".join(lines)
 
 
