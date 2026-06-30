@@ -1324,18 +1324,43 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     paint();
   }
 
-  function buildContext(text){
+  async function buildContext(text){
     const title = document.querySelector(".title");
     const crumbs = document.querySelector(".crumbs");
     let ctx = "";
     if (crumbs) ctx += "Current view: " + crumbs.textContent + "\n";
     if (title)  ctx += "Section: " + title.textContent + "\n";
-    // resolve @-mentions still present in the message to exact entity slugs
+    // resolve @-mentions still present in the message
     const refs = mentions.filter(m => text.includes(m.token));
-    if (refs.length) {
-      ctx += "\n## Referenced entities\n" + refs.map(m =>
+    // non-post mentions: identity only, as before
+    const entRefs = refs.filter(m => m.type !== "post");
+    if (entRefs.length) {
+      ctx += "\n## Referenced entities\n" + entRefs.map(m =>
         `- ${m.type} "${m.name}" (slug: ${m.slug})`
       ).join("\n") + "\n";
+    }
+    // post mentions: inline full slot+brief. Dedupe (incl. the open post) and cap.
+    const seen = new Set(CURRENT_POST ? [CURRENT_POST.id] : []);
+    const postRefs = [];
+    for (const m of refs) {
+      if (m.type !== "post" || seen.has(m.slug)) continue;
+      seen.add(m.slug); postRefs.push(m);
+    }
+    const CAP = 5;
+    for (const m of postRefs.slice(0, CAP)) {
+      let body;
+      try {
+        const d = await api("/api/post/" + m.slug);
+        body = "Full content:\n```json\n"
+             + JSON.stringify({ slot: d.slot, brief: d.brief }, null, 2)
+             + "\n```\n";
+      } catch {
+        body = "(could not load content)\n";
+      }
+      ctx += `\n## Referenced post (id: ${m.slug})\n` + body;
+    }
+    for (const m of postRefs.slice(CAP)) {
+      ctx += `\n## Referenced post (id: ${m.slug})\n${m.name}\n`;
     }
     // The post the user is looking at, in full — so the chat can actually read
     // its caption/slides (the state snapshot only carries the project tree).
@@ -1366,7 +1391,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     history.push({ role: "user", content: text });
     addMsg("user", text + fileNote);
 
-    const ctx = buildContext(text);
+    const ctx = await buildContext(text);
     attachedFiles = []; renderAttachments();
     mentions = [];
 
