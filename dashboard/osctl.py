@@ -175,6 +175,36 @@ def _build_parser():
     p.set_defaults(_run=lambda a: fileops.patch_brief(
         a.id, _fields(a, ['caption', 'hook', 'catchy_title', 'cover_overlay'])))
 
+    # --- read commands (no mutations) ---
+
+    p = sub.add_parser("get-posts", help="List posts, optionally filtered by profile")
+    p.add_argument("--profile", default=None)
+    def _get_posts(a):
+        rows = db.profile_posts(a.profile) if a.profile else db.posts()
+        return {"posts": rows}
+    p.set_defaults(_run=_get_posts)
+
+    p = sub.add_parser("get-project", help="Full project data: activities, memos, experiments, features")
+    p.add_argument("--slug", required=True)
+    def _get_project(a):
+        data = db.project(a.slug)
+        if data is None:
+            raise fileops.ActionError(f"project '{a.slug}' not found")
+        return {"project": data}
+    p.set_defaults(_run=_get_project)
+
+    p = sub.add_parser("read-file", help="Read any authored file by repo-relative path")
+    p.add_argument("--path", required=True)
+    def _read_file(a):
+        repo_root = Path(__file__).resolve().parent.parent
+        target = (repo_root / a.path).resolve()
+        if not str(target).startswith(str(repo_root)):
+            raise fileops.ActionError("path outside repo")
+        if not target.exists():
+            raise fileops.ActionError(f"file not found: {a.path}")
+        return {"path": a.path, "content": target.read_text(encoding="utf-8")}
+    p.set_defaults(_run=_read_file)
+
     return parser
 
 
