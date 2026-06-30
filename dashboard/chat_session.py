@@ -1,9 +1,10 @@
 """chat_session.py — one persistent Claude Code session for the dashboard run.
 
-Runs `claude` in stream-json mode with a permission allowlist limited to the
-osctl CLI + read tools, so the agent can ONLY mutate state via
-`python -m dashboard.osctl`. Parses stream-json events into simple
-(kind, payload) tuples for the SSE layer.
+Runs `claude` in stream-json mode loading ONLY the Bash tool, restricted to the
+osctl CLI, so the agent can ONLY mutate state via `python -m dashboard.osctl`.
+The harness is run lean (no MCP, skills, hooks, CLAUDE.md, or default system
+prompt) to keep per-turn context small — see _base_cmd for the flags. Parses
+stream-json events into simple (kind, payload) tuples for the SSE layer.
 
 The event field paths below were confirmed against claude 2.1.179
 (`--output-format stream-json --include-partial-messages --verbose`): text
@@ -36,8 +37,14 @@ def parse_event(obj):
 
 
 # Chat agent runs osctl only — no file exploration needed or wanted.
-ALLOWED_TOOLS = "Bash(python -m dashboard.osctl:*)"
-DISALLOWED_TOOLS = "Write Edit Read Grep Glob"
+# Only the Bash tool is loaded (--tools Bash), and it is restricted to osctl.
+# Both `python3` (what the model actually invokes on macOS) and bare `python`
+# are allowed so the command auto-approves without a permission prompt. Passed
+# as separate --allowedTools args (see _base_cmd) — do not join with spaces.
+ALLOWED_TOOLS = [
+    "Bash(python3 -m dashboard.osctl:*)",
+    "Bash(python -m dashboard.osctl:*)",
+]
 
 # The dashboard chat agent ALWAYS runs on this model — independent of the user's
 # interactive `/model` default, which only affects the full terminal. Change it
@@ -56,15 +63,30 @@ class ChatSession:
         self._proc = None  # the in-flight `claude -p` turn, if any
 
     def _base_cmd(self):
+        # Lean per-turn context: the dashboard chat only needs Bash→osctl, so we
+        # strip everything the full Claude Code harness would otherwise load each
+        # turn (≈24k→≈4k tokens). Measured levers, biggest first:
+        #   --system-prompt        REPLACES Claude Code's default prompt with our
+        #                          self-contained RAIL (was --append-system-prompt,
+        #                          which kept the ~10k default on top).
+        #   --tools Bash           load ONLY the Bash tool schema (no Read/Edit/…).
+        #   --strict-mcp-config    no --mcp-config given ⇒ zero MCP servers/tools.
+        #   --disable-slash-commands  skip all skills.
+        #   --setting-sources ""   skip user/project/local settings ⇒ no hooks,
+        #                          no auto-memory, no CLAUDE.md injection.
+        # NB: do NOT use --bare here — it forces ANTHROPIC_API_KEY and ignores the
+        # subscription OAuth login. The flags above keep OAuth intact.
         cmd = [self.claude_bin, "-p",
                "--output-format", "stream-json",
                "--include-partial-messages",
                "--verbose",
                "--model", self.model,  # see CHAT_MODEL — chat is always Sonnet
-               "--add-dir", self.repo_dir,
-               "--append-system-prompt", self.rail,
-               "--allowedTools", ALLOWED_TOOLS,
-               "--disallowedTools", DISALLOWED_TOOLS,
+               "--system-prompt", self.rail,
+               "--tools", "Bash",
+               "--allowedTools", *ALLOWED_TOOLS,
+               "--strict-mcp-config",
+               "--disable-slash-commands",
+               "--setting-sources", "",
                "--permission-mode", "default"]
         if self._started:
             cmd += ["--resume", self.session_id]
