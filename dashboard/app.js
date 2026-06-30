@@ -40,6 +40,7 @@ const ROUTES = [
 ];
 function parseRoute(hash){
   const path = (hash||"#/calendar").replace(/^#/,"").replace(/\?.*$/,"");
+  CURRENT_POST = null;   // renderPostDetail re-sets this when on a post route
   const ex = _NAV_EXTRAS; _NAV_EXTRAS = {};
   for(const [re, fn] of ROUTES){
     const m = path.match(re);
@@ -86,6 +87,11 @@ const SECTIONS = [
 ];
 let STATE = {view:"calendar", project:null, section:null, profile:null, channelGuidelines:null};
 let _TREE = [];
+let _POSTS = [];   // flat post index for @-mentions, refreshed in renderRail
+// Full content of the post currently open in the detail view, so the chat can
+// actually read its caption/slides (state_snapshot only carries the tree).
+// Set in renderPostDetail, cleared on every navigation in parseRoute.
+let CURRENT_POST = null;
 
 // Rail fold state — which projects/profiles are expanded. Persisted so folds
 // survive the full renderRail() that fires after every chat action / refresh.
@@ -116,7 +122,10 @@ function toggleOpen(kind, slug){
 async function boot(){ await renderRail(); parseRoute(location.hash||"#/calendar"); }
 
 async function renderRail(){
-  _TREE = await api("/api/tree");
+  [_TREE, _POSTS] = await Promise.all([
+    api("/api/tree"),
+    api("/api/posts-index").catch(() => []),
+  ]);
   const projects = _TREE.map(p=>{
     const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
     const profileRows = p.profiles.length ? p.profiles.map(prof=>{
@@ -626,31 +635,44 @@ async function renderChannelGuidelines(slug){
 
 // ── Brief content renderer (shared by post detail + revise pages) ───────────
 function briefSect(h,b){ return `<div style="margin-top:16px"><div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:6px">${esc(h)}</div>${b}</div>`; }
+// "cover_overlay" → "Cover overlay". Field labels come from the brief itself.
+function humanizeKey(k){ return String(k).replace(/[_-]+/g," ").replace(/^\w/,c=>c.toUpperCase()); }
+
+// Render ONE brief value by its shape — no hardcoded field names. This is what
+// makes each profile's brief render its OWN output: whatever fields that
+// profile's brief-spec produced get shown, in authored order, nothing assumed.
+function renderBriefValue(v){
+  if(v==null||v==="") return "";
+  if(Array.isArray(v)){
+    if(!v.length) return "";
+    if(typeof v[0]==="object"&&v[0]!==null){           // array of objects, e.g. slides
+      return `<div style="display:flex;flex-direction:column;gap:6px">`+v.map(o=>
+        `<div style="font-size:12.5px;line-height:1.5;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;white-space:pre-wrap">`
+        +Object.entries(o).filter(([,val])=>val!=null&&val!=="")
+          .map(([kk,val])=>`<b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${esc(Array.isArray(val)?val.join(" · "):val)}`).join("&nbsp; · &nbsp;")
+        +`</div>`).join("")+`</div>`;
+    }
+    return `<div style="font-size:12.5px;line-height:1.6;color:var(--sky)">${v.map(esc).join(" · ")}</div>`;
+  }
+  if(typeof v==="object"){                              // nested object, e.g. visual_brief
+    return Object.entries(v).filter(([,val])=>val!=null&&val!=="").map(([kk,val])=>
+      `<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${renderBriefValue(val)}</div>`
+    ).join("");
+  }
+  return `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:10px 12px">${esc(v)}</div>`;
+}
+
+// Schema-agnostic: render exactly the fields the profile's brief contains.
 function renderBriefBody(slot, brief, n){
   let body="";
   if(slot.concept) body+=briefSect("Concept",`<div style="font-size:13px;line-height:1.6">${esc(slot.concept)}</div>`);
   if(brief&&brief._error) body+=briefSect("Brief",`<div style="color:#c0392b;font-size:13px">${esc(brief._error)}</div>`);
   else if(brief){
-    if(brief.hook) body+=briefSect("Hook",`<div style="font-size:14px;font-weight:600;line-height:1.5">${esc(brief.hook)}</div>`);
-    if(brief.catchy_title) body+=briefSect("Catchy title",`<div style="font-size:14px;font-weight:600;line-height:1.5;color:var(--sky)">${esc(brief.catchy_title)}</div>`);
-    if(Array.isArray(brief.slides)&&brief.slides.length) body+=briefSect("Slide overlays",`<div style="display:flex;flex-direction:column;gap:6px">${brief.slides.map(s=>`<div style="display:flex;gap:8px;align-items:baseline"><span style="font-size:11px;font-weight:700;color:var(--dim);min-width:22px">${s.slide}</span><span style="font-size:12.5px;line-height:1.45;white-space:pre-wrap;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;flex:1">${esc(s.overlay)}</span></div>`).join("")}</div>`);
-    if(Array.isArray(brief.structure)&&brief.structure.length) body+=briefSect("Structure",`<ol style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${brief.structure.map(s=>`<li>${esc(s)}</li>`).join("")}</ol>`);
-    if(brief.caption) body+=briefSect("Caption",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:11px 13px">${esc(brief.caption)}</div>`);
-    if(brief.cta) body+=briefSect("CTA",`<div style="font-size:13px;line-height:1.5">${esc(brief.cta)}</div>`);
-    if(Array.isArray(brief.hashtags)&&brief.hashtags.length) body+=briefSect("Hashtags",`<div style="font-size:12px;color:var(--sky)">${esc(brief.hashtags.map(h=>h.startsWith("#")?h:"#"+h).join(" "))}</div>`);
-    const vb=brief.visual_brief;
-    if(vb&&typeof vb==="object"){
-      const rows=[["What it shows",vb.description],["Mood",vb.mood],["Format",vb.format_specs],
-                  ["Overlays",Array.isArray(vb.text_overlays)?vb.text_overlays.join(" · "):vb.text_overlays]]
-        .filter(([,v])=>v).map(([k,v])=>`<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(k)}:</b> ${esc(v)}</div>`).join("");
-      let gpHtml="";
-      if(vb.genai_prompt_draft){
-        const prompts=Array.isArray(vb.genai_prompt_draft)?vb.genai_prompt_draft:[vb.genai_prompt_draft];
-        gpHtml=`<div style="margin-top:6px"><b style="font-size:12.5px;color:var(--ink2)">Gen prompts:</b>${prompts.map((p,i)=>`<div style="margin-top:6px;padding:8px 10px;background:rgba(0,0,0,.04);border-radius:8px;font-size:11.5px;line-height:1.55;white-space:pre-wrap"><span style="color:var(--dim);font-weight:700">${i+1}.</span> ${esc(p)}</div>`).join("")}</div>`;
-      }
-      if(rows||gpHtml) body+=briefSect("Visual brief",rows+gpHtml);
+    for(const [k,v] of Object.entries(brief)){
+      if(k.startsWith("_")) continue;                  // private/meta keys
+      const html=renderBriefValue(v);
+      if(html) body+=briefSect(humanizeKey(k), html);
     }
-    if(brief.notes_for_human) body+=briefSect("⚑ For human",`<div style="font-size:12.5px;line-height:1.55;color:#b9770e">${esc(brief.notes_for_human)}</div>`);
   } else {
     body+=`<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.brief?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
   }
@@ -661,6 +683,7 @@ function renderBriefBody(slot, brief, n){
 async function renderPostDetail(id, profileSlug){
   let detail; try{ detail=await api(`/api/post/${id}`); }catch(e){ return toast("✗ "+e.message); }
   const slot=detail.slot||{}, brief=detail.brief||null;
+  CURRENT_POST = { id, slot, brief };   // expose full content to the chat (buildContext)
   const st=slot.status||"planned", n=NEXT[st];
   const title=slot.working_title||slot.pillar||id;
   const canRevise=["planned","approved_slot","briefed","approved"].includes(st);
@@ -1179,6 +1202,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
           out.push({ type:"channel", slug:ch.slug, name:(ch.name||ch.platform), meta:(ch.platform||"channel") });
       }
     }
+    for (const post of _POSTS) {
+      out.push({
+        type:"post",
+        slug:post.id,
+        name:(post.working_title || post.pillar || post.id),
+        meta:`${post.profile_name||post.profile_slug} · ${post.status||""}`.trim(),
+      });
+    }
     return out;
   }
   // the @-query immediately left of the caret, or null
@@ -1197,7 +1228,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       .slice(0, 8);
     if (!menuItems.length) return closeMenu();
     menuIdx = Math.min(menuIdx, menuItems.length - 1);
-    const ICON = { project:"▣", profile:"◐", channel:"▶" };
+    const ICON = { project:"▣", profile:"◐", channel:"▶", post:"✎" };
     menu.innerHTML = menuItems.map((c, i) =>
       `<div class="mi${i===menuIdx?" sel":""}" data-i="${i}">
          <span class="mi-ic">${ICON[c.type]}</span><b>${esc(c.name)}</b>
@@ -1233,6 +1264,16 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── chat ─────────────────────────────────────────────────────────────────
   const history = [];
   let busy = false;
+  let chatAbort = null;   // AbortController for the in-flight /api/ask stream
+
+  // ESC stops the current turn: abort the SSE stream client-side AND tell the
+  // server to kill the claude subprocess (otherwise it keeps burning tokens).
+  function stopChat(){
+    if (!busy) return false;
+    if (chatAbort) chatAbort.abort();
+    fetch("/api/chat-stop", { method: "POST" }).catch(() => {});
+    return true;
+  }
 
   function addMsg(role, text){
     const div = document.createElement("div");
@@ -1296,6 +1337,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         `- ${m.type} "${m.name}" (slug: ${m.slug})`
       ).join("\n") + "\n";
     }
+    // The post the user is looking at, in full — so the chat can actually read
+    // its caption/slides (the state snapshot only carries the project tree).
+    if (CURRENT_POST) {
+      ctx += `\n## Post currently open (id: ${CURRENT_POST.id})\n`
+           + "Use this id with `update-post` to fix it. Full content:\n```json\n"
+           + JSON.stringify({ slot: CURRENT_POST.slot, brief: CURRENT_POST.brief }, null, 2)
+           + "\n```\n";
+    }
     if (attachedFiles.length) {
       ctx += "\n## Attached files\n" + attachedFiles.map(f =>
         `### ${f.name}\n\`\`\`\n${f.content}\n\`\`\``
@@ -1325,11 +1374,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
     let pendingBreak = false;
 
+    chatAbort = new AbortController();
     try {
       const resp = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: [{ role: "user", content: text }], context: ctx })
+        body: JSON.stringify({ messages: [{ role: "user", content: text }], context: ctx }),
+        signal: chatAbort.signal
       });
 
       if (!resp.ok) {
@@ -1374,9 +1425,16 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       }
       statusEl.textContent = "Ready";
     } catch(e) {
-      bubble.textContent = "Error: " + e.message;
-      history.pop(); statusEl.textContent = "Error";
+      if (e.name === "AbortError") {
+        bubble.textContent = full ? full + "  ⏹ stopped" : "⏹ stopped";
+        if (full) { history.push({ role: "assistant", content: full }); saveHistory(); }
+        statusEl.textContent = "Stopped";
+      } else {
+        bubble.textContent = "Error: " + e.message;
+        history.pop(); statusEl.textContent = "Error";
+      }
     } finally {
+      chatAbort = null;
       finalizeSteps();                // turn the live steps line into a quiet summary
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
@@ -1385,7 +1443,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
 
   sendBtn.onclick = send;
   input.addEventListener("keydown", e => {
+    if (e.key === "Escape" && busy) { e.preventDefault(); e.stopPropagation(); stopChat(); return; }
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+  // Global ESC also stops a streaming turn (when focus isn't in the textarea).
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && busy) stopChat();
   });
   input.addEventListener("input", () => {
     input.style.height = "auto";
