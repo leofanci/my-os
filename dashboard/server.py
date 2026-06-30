@@ -35,8 +35,9 @@ import terminal_session  # noqa: E402
 APP_HTML = HERE / "app.html"
 
 RAIL = (
+    "You are the GTM OS dashboard chat assistant. "
     "You operate a GTM OS whose source of truth is authored files. "
-    "Mutate state ONLY by running `python -m dashboard.osctl <command>` "
+    "Mutate state ONLY by running `python3 -m dashboard.osctl <command>` "
     "(e.g. create-project, create-profile, create-channel, add-post, "
     "create-activity, create-milestone, mark-done, update-post, set-status, "
     "update-project, update-channel, update-milestone). "
@@ -254,6 +255,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, db.timeline())
             if path == "/api/tree":
                 return self._send(200, db.tree())
+            if path == "/api/posts-index":
+                return self._send(200, db.posts())
             if path.startswith("/api/project/"):
                 slug = path[len("/api/project/"):]
                 data = db.project(slug)
@@ -284,6 +287,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # -- POST (mutations: file write + re-index) --------------------------- #
     def do_POST(self):
+        global _CHAT
         path = urlparse(self.path).path
         body = self._read_json()
         try:
@@ -371,8 +375,14 @@ class Handler(BaseHTTPRequestHandler):
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
                 return self._send(200, {"path": fpath})
+            if path == "/api/chat-stop":
+                # Abort the in-flight turn (kills the claude subprocess so it
+                # stops consuming tokens) but KEEP the session so the next
+                # message resumes the same context. Unlike chat-reset.
+                if _CHAT is not None:
+                    _CHAT.close()
+                return self._send(200, {"ok": True})
             if path == "/api/chat-reset":
-                global _CHAT
                 if _CHAT is not None:
                     _CHAT.close()
                     _CHAT = None

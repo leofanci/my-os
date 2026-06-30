@@ -33,5 +33,19 @@ class TestTree(unittest.TestCase):
             self.assertEqual([a["slug"] for a in p["products"]], ["app"])
             self.assertEqual(p["profiles"][0]["posts"], 1)
 
+class TestPostsIndex(unittest.TestCase):
+    def test_posts_returns_all_with_profile_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = TestTree()._db(tmp)
+            rows = db.posts()
+            self.assertEqual(len(rows), 1)
+            r = rows[0]
+            self.assertEqual(r["id"], "p1")
+            self.assertEqual(r["profile_slug"], "demo")
+            self.assertEqual(r["profile_name"], "Demo")
+            for key in ("pillar", "working_title", "status"):
+                self.assertIn(key, r)
+
+
 if __name__ == "__main__":
     unittest.main()
