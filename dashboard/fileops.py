@@ -26,7 +26,65 @@ import subprocess
 import sys
 from pathlib import Path
 
+from core.brief_spec_util import (
+    allowed_brief_keys,
+    merge_fields_from_slot,
+    normalize_brief_for_spec,
+    read_spec_text,
+    validate_brief_obj,
+    write_spec_text,
+)
+from core.ids import (
+    build_id_registry,
+    lk_experiment,
+    lk_feature,
+    lk_fld_brief,
+    lk_memo,
+    lk_prod,
+    next_activity_id,
+    next_experiment_stem,
+    next_memo_version,
+    next_milestone_id,
+    next_post_id,
+    slug_key,
+)
+from core.project_schemas import (
+    FEATURE_PRIORITIES,
+    MEMO_TYPES,
+    ROADMAP_SECTION_ALIASES,
+    dumps_json,
+    normalize_experiment_body,
+    normalize_markdown,
+    normalize_memo_body,
+)
+from core.subsections import (
+    DOC_META,
+    add_doc_subsection,
+    ensure_config,
+    load_config,
+    normalize_doc_text,
+    parse_subsections_arg as _parse_subsections_arg,
+    save_config,
+    set_doc_subsections,
+    set_validation_tab_subsections,
+    starter_text,
+    subsections_api_payload,
+    subsections_for_doc,
+    validation_tab_subsections,
+)
+
+
+def parse_subsections_arg(raw: str) -> list[str]:
+    return _parse_subsections_arg(raw)
+
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _composed_id(lookup_key: str) -> str:
+    """Map internal lookup key → composed id after reindex."""
+    from dashboard import db  # noqa: WPS433 — avoid import cycle at module load
+    reg = build_id_registry(db.tree(), db.posts(), root=ROOT)
+    return reg.get(lookup_key) or lookup_key
 
 # index.py is a fixed script (it lives at the repo root); ROOT is the WORKSPACE
 # it indexes. They coincide in production but tests point ROOT at a temp dir.
@@ -81,19 +139,64 @@ def _parse_channels(raw):
     return slugs
 
 
-def find_post(post_id):
-    """Locate the plan file + post object for a post id. Returns a dict context."""
-    for plan in sorted(ROOT.glob("projects/*/profiles/*/content/plan-*.json")):
+def _post_profile_hint(post_id: str, profile_slug: str | None = None) -> str | None:
+    """Resolve which profile owns a post id — explicit hint or os.db index."""
+    if profile_slug and str(profile_slug).strip():
+        return str(profile_slug).strip()
+    try:
+        import dashboard.db as db
+
+        rows = db._rows("SELECT profile_slug FROM posts WHERE id = ?", (post_id,))
+        if rows:
+            return rows[0]["profile_slug"]
+    except Exception:
+        pass
+    return None
+
+
+def find_post(post_id, profile_slug=None):
+    """Locate the plan file + post object for a post id. Returns a dict context.
+
+    Post ids must be unique workspace-wide, but when duplicates exist (e.g. post-001
+    in both profile-a and profile-b) the os.db profile_slug disambiguates.
+    Callers that know the profile (dashboard post views) should pass profile_slug.
+    """
+    post_id = str(post_id or "").strip()
+    if not post_id:
+        raise ActionError("post id is required")
+    hint = _post_profile_hint(post_id, profile_slug)
+    plan_glob = (
+        ROOT.glob(f"projects/*/profiles/{hint}/content/plan-*.json")
+        if hint
+        else ROOT.glob("projects/*/profiles/*/content/plan-*.json")
+    )
+    matches = []
+    for plan in sorted(plan_glob):
         try:
             data = json.loads(plan.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         for post in data.get("posts", []) if isinstance(data, dict) else []:
             if post.get("id") == post_id:
-                # projects/<proj>/profiles/<profile>/content/plan-*.json
-                profile_slug = plan.parent.parent.name
-                return {"plan": plan, "data": data, "post": post, "profile_slug": profile_slug}
-    raise ActionError(f"post '{post_id}' not found in any plan file")
+                matches.append({
+                    "plan": plan,
+                    "data": data,
+                    "post": post,
+                    "profile_slug": plan.parent.parent.name,
+                })
+    if not matches:
+        raise ActionError(f"post '{post_id}' not found in any plan file")
+    if len(matches) == 1:
+        return matches[0]
+    resolved = _post_profile_hint(post_id)
+    if resolved:
+        for ctx in matches:
+            if ctx["profile_slug"] == resolved:
+                return ctx
+    names = ", ".join(sorted({m["profile_slug"] for m in matches}))
+    raise ActionError(
+        f"post '{post_id}' exists in multiple profiles ({names}) — pass profile to disambiguate"
+    )
 
 
 def _write_plan(ctx):
@@ -119,11 +222,11 @@ def _effective_status(ctx):
     return current
 
 
-def set_status(post_id, new_status):
+def set_status(post_id, new_status, profile_slug=None):
     """Transition a post's status in its plan file, then re-index."""
     if new_status not in ALLOWED_TRANSITIONS:
         raise ActionError(f"unknown status '{new_status}'")
-    ctx = find_post(post_id)
+    ctx = find_post(post_id, profile_slug)
     current = _effective_status(ctx)
     if new_status == current:
         raise ActionError(f"post is already '{current}'")
@@ -138,39 +241,38 @@ def set_status(post_id, new_status):
     return {"id": post_id, "status": new_status, "from": current}
 
 
-def generate_brief(post_id):
-    """Run the claude -p brief job for an approved slot, then mark it briefed.
-
-    Brief generation is the 'enqueue a claude -p job' step — synchronous here.
-    generate.py writes the brief file; we then advance status and re-index.
-    """
-    ctx = find_post(post_id)
+def generate_brief(post_id, instruction=None, profile_slug=None):
+    """Run the claude -p brief job (Write button). Persists via write_brief inside generate.py."""
+    ctx = find_post(post_id, profile_slug)
     current = ctx["post"].get("status") or "planned"
     if current not in ("planned", "approved_slot"):
         raise ActionError(f"can only brief a planned/approved_slot post (is '{current}')")
 
-    brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
-    is_rebrief = brief_file.exists()  # regenerating an existing brief = a new version
-
-    res = subprocess.run(
-        [sys.executable, str(ROOT / "generate.py"),
-         "--workspace", str(ROOT), "brief", ctx["profile_slug"], post_id],
-        capture_output=True, text=True,
-    )
+    cmd = [sys.executable, str(ROOT / "generate.py"),
+           "--workspace", str(ROOT), "brief", ctx["profile_slug"], post_id]
+    if instruction and instruction.strip():
+        cmd += ["--instruction", instruction.strip()]
+    res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise ActionError(f"brief job failed: {(res.stderr or res.stdout).strip()[:800]}")
-
-    # re-read, advance status; a re-brief bumps version (edits create a new version)
-    ctx = find_post(post_id)
-    ctx["post"]["status"] = "briefed"
-    if is_rebrief:
-        ctx["post"]["version"] = int(ctx["post"].get("version") or 1) + 1
-    _write_plan(ctx)
-    reindex()
     return {"id": post_id, "status": "briefed", "stdout": res.stdout.strip()}
 
 
-def revise_post(post_id, instruction):
+def update_brief(post_id, instruction=None, profile_slug=None):
+    """Natural-language brief create or update — primary chat path.
+
+    Existing brief → revise job with the user's words. No brief yet → generate
+    job (optional direction). Same validated persist path either way."""
+    ctx = find_post(post_id, profile_slug)
+    brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
+    if brief_file.exists():
+        if not (instruction or "").strip():
+            raise ActionError("instruction is required to change an existing brief")
+        return revise_post(post_id, instruction, profile_slug)
+    return generate_brief(post_id, instruction, profile_slug)
+
+
+def revise_post(post_id, instruction, profile_slug=None):
     """Revise a slot (idea) or brief (draft) in place via the AI revise job.
 
     For drafts the brief file is overwritten and the plan-file version is bumped.
@@ -178,7 +280,7 @@ def revise_post(post_id, instruction):
     """
     if not instruction or not instruction.strip():
         raise ActionError("instruction is required")
-    ctx = find_post(post_id)
+    ctx = find_post(post_id, profile_slug)
     brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
     is_draft = brief_file.exists()
 
@@ -192,7 +294,7 @@ def revise_post(post_id, instruction):
         raise ActionError(f"revise job failed: {(res.stderr or res.stdout).strip()[:800]}")
 
     if is_draft:
-        ctx = find_post(post_id)
+        ctx = find_post(post_id, profile_slug)
         ctx["post"]["version"] = int(ctx["post"].get("version") or 1) + 1
         _write_plan(ctx)
 
@@ -214,12 +316,20 @@ def _parse_frontmatter(text):
     return fm, body
 
 
+def brief_spec_relpath(slug):
+    """Repo-relative path to the profile's brief-spec.md (single source of truth)."""
+    return str(_profile_dir(slug).relative_to(ROOT) / "brief-spec.md")
+
+
 def read_brief_spec(slug):
-    """The profile's brief spec: free-text requirements every post must meet
-    (e.g. caption length, hashtag count, format leanings). Injected into every
-    brief job for this profile. Authored file, not indexed."""
-    f = _profile_dir(slug) / "brief-spec.md"
-    return f.read_text(encoding="utf-8") if f.exists() else ""
+    """Live brief spec for this profile only — each profile has its own brief-spec.md."""
+    return read_spec_text(_profile_dir(slug))
+
+
+def write_brief_spec(slug, text):
+    """Write brief-spec.md. Profile Setup and chat use this same path."""
+    write_spec_text(_profile_dir(slug), text)
+    return {"slug": slug, "path": brief_spec_relpath(slug)}
 
 
 def read_profile(slug):
@@ -261,13 +371,13 @@ def refine_guidelines(slug, raw_text):
     return {"refined": res.stdout}
 
 
-def read_detail(post_id):
+def read_detail(post_id, profile_slug=None):
     """Authored detail for a post: the plan slot + the brief JSON if it exists.
 
     Prose/authored content is read from FILES (their source of truth), while the
     coordination fields come from os.db via db.py.
     """
-    ctx = find_post(post_id)
+    ctx = find_post(post_id, profile_slug)
     brief = None
     brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
     if brief_file.exists():
@@ -278,7 +388,7 @@ def read_detail(post_id):
     return {"slot": ctx["post"], "brief": brief, "profile_slug": ctx["profile_slug"]}
 
 
-_POST_FIELDS = ("date", "pillar", "working_title", "concept")
+_POST_FIELDS = ("date", "pillar", "working_title", "concept", "format", "objective", "platform")
 
 
 def add_post(profile_slug, fields):
@@ -296,9 +406,7 @@ def add_post(profile_slug, fields):
         plan = content / "plan-manual.json"
         data = {"posts": []}
     existing = {p.get("id") for p in data["posts"]}
-    pid = "m-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    while pid in existing:
-        pid += "x"
+    pid = next_post_id(existing, manual=True)
     post = {"id": pid, "status": "planned"}
     for k in _POST_FIELDS:
         v = (fields.get(k) or "").strip()
@@ -313,9 +421,30 @@ def add_post(profile_slug, fields):
     return {"id": pid, "profile_slug": profile_slug}
 
 
-def update_post(post_id, fields):
-    """Edit a slot's authored fields in its plan file, then re-index."""
-    ctx = find_post(post_id)
+def _merge_brief_patch(existing: dict, patch: dict) -> dict:
+    merged = dict(existing)
+    for k, v in patch.items():
+        if k == "id":
+            continue
+        if v is None or v == "" or (isinstance(v, list) and not v):
+            merged.pop(k, None)
+        else:
+            merged[k] = v
+    return merged
+
+
+def _sync_slot_identity_to_brief(brief: dict, slot: dict) -> None:
+    """Keep brief identity fields aligned with the plan slot after manual edits."""
+    for k in ("format", "objective", "pillar", "platform"):
+        if slot.get(k):
+            brief[k] = slot[k]
+    if slot.get("channels"):
+        brief["channels"] = slot["channels"]
+
+
+def update_post(post_id, fields, profile_slug=None):
+    """Edit plan-slot fields and, when a brief exists, patch brief JSON in one save."""
+    ctx = find_post(post_id, profile_slug)
     for k in _POST_FIELDS:
         if k in fields:
             v = (fields.get(k) or "").strip()
@@ -329,32 +458,133 @@ def update_post(post_id, fields):
             ctx["post"]["channels"] = channels
         else:
             ctx["post"].pop("channels", None)
-    _write_plan(ctx)
-    reindex()
+    brief_patch = fields.get("brief")
+    if brief_patch is not None:
+        if not isinstance(brief_patch, dict):
+            raise ActionError("brief must be a JSON object")
+        brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
+        if not brief_file.exists():
+            raise ActionError(f"no brief for post '{post_id}' — generate draft first")
+        try:
+            existing = json.loads(brief_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ActionError(f"brief file unreadable: {exc}") from exc
+        if not isinstance(existing, dict):
+            raise ActionError("brief must be a JSON object")
+        merged = _merge_brief_patch(existing, brief_patch)
+        _sync_slot_identity_to_brief(merged, ctx["post"])
+        _write_plan(ctx)
+        write_brief(
+            post_id, merged, strict_spec=False, set_status=False,
+            bump_version_if_exists=True, profile_slug=profile_slug,
+        )
+    else:
+        _write_plan(ctx)
+        reindex()
     return {"id": post_id}
 
 
 
-_BRIEF_FIELDS = ('caption', 'hook', 'catchy_title', 'cover_overlay')
+def write_brief(post_id, brief, *, bump_version_if_exists=True, set_status=True,
+                strict_spec=None, profile_slug=None):
+    """Canonical brief persist — write JSON, update plan.
 
-
-def patch_brief(post_id, fields):
-    """Update free-text fields in a post's brief JSON, then re-index."""
-    ctx = find_post(post_id)
-    brief_file = ctx['plan'].parent / 'briefs' / f'{post_id}.json'
-    if not brief_file.exists():
-        raise ActionError(f'no brief found for post "{post_id}"')
-    brief = json.loads(brief_file.read_text(encoding='utf-8'))
-    for k in _BRIEF_FIELDS:
-        if k in fields and fields[k] is not None:
-            brief[k] = fields[k].strip()
-    brief_file.write_text(json.dumps(brief, indent=2, ensure_ascii=False), encoding='utf-8')
+    New briefs validate against current brief-spec.md. Existing briefs are
+    grandfathered when the spec changes — they keep their old shape unless
+    the user explicitly revises them."""
+    if not isinstance(brief, dict):
+        raise ActionError("brief must be a JSON object")
+    ctx = find_post(post_id, profile_slug)
+    slot = ctx["post"]
+    briefs_dir = ctx["plan"].parent / "briefs"
+    briefs_dir.mkdir(parents=True, exist_ok=True)
+    brief_file = briefs_dir / f"{post_id}.json"
+    is_rebrief = brief_file.exists()
+    if strict_spec is None:
+        strict_spec = not is_rebrief
+    spec_text = read_brief_spec(ctx["profile_slug"])
+    normalize_brief_for_spec(brief, spec_text)
+    for k in merge_fields_from_slot(spec_text):
+        if not brief.get(k) and slot.get(k):
+            brief[k] = slot[k]
+    allowed = allowed_brief_keys(spec_text)
+    if allowed is not None:
+        for k in list(brief.keys()):
+            if k not in allowed:
+                del brief[k]
+    errs = validate_brief_obj(brief, post_id, spec_text, slot, strict_spec=strict_spec)
+    if errs:
+        label = "brief does not match profile brief spec" if strict_spec else "brief invalid"
+        raise ActionError(f"{label}: " + "; ".join(errs))
+    brief["id"] = post_id
+    brief_file.write_text(json.dumps(brief, indent=2, ensure_ascii=False), encoding="utf-8")
+    if set_status:
+        ctx["post"]["status"] = "briefed"
+    if is_rebrief and bump_version_if_exists:
+        ctx["post"]["version"] = int(ctx["post"].get("version") or 1) + 1
+    _write_plan(ctx)
     reindex()
-    return {'id': post_id}
+    return {"id": post_id, "status": ctx["post"].get("status", "briefed"), "rebrief": is_rebrief}
 
-def delete_post(post_id):
+
+def set_brief(post_id, brief):
+    """Internal persist — generate.py and tests only. Agents use update_brief()."""
+    return write_brief(post_id, brief)
+
+def add_slide_overlay(post_id: str, overlay: str, profile_slug=None) -> dict:
+    """Append one slide_overlays row to an existing brief (sync via reindex)."""
+    text = (overlay or "").strip()
+    if not text:
+        raise ActionError("overlay text is required")
+    ctx = find_post(post_id, profile_slug)
+    brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
+    if not brief_file.exists():
+        raise ActionError(f"no brief for post '{post_id}' — generate draft first")
+    try:
+        brief = json.loads(brief_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ActionError(f"brief file unreadable: {exc}") from exc
+    if not isinstance(brief, dict):
+        raise ActionError("brief must be a JSON object")
+    slides = brief.get("slide_overlays")
+    if not isinstance(slides, list):
+        slides = []
+    next_n = 1
+    for item in slides:
+        if isinstance(item, dict) and item.get("slide"):
+            try:
+                next_n = max(next_n, int(item["slide"]) + 1)
+            except (TypeError, ValueError):
+                pass
+    slides.append({"slide": next_n, "overlay": text})
+    brief["slide_overlays"] = slides
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    if lines:
+        title = lines[0]
+        tail = lines[2] if len(lines) > 2 else (lines[1] if len(lines) > 1 else "")
+        bullet = f"• {title}. {tail}" if tail else f"• {title}"
+        cap = brief.get("caption") or ""
+        if bullet not in cap:
+            for marker in ("\n\nWhich", "\n\n#", "\n\nAnd "):
+                idx = cap.find(marker)
+                if idx != -1:
+                    cap = cap[:idx].rstrip() + "\n" + bullet + cap[idx:]
+                    break
+            else:
+                cap = (cap.rstrip() + "\n" + bullet).strip() + "\n"
+            brief["caption"] = cap
+    result = write_brief(post_id, brief, bump_version_if_exists=True, strict_spec=False,
+                          profile_slug=profile_slug)
+    return {
+        **result,
+        "slide": next_n,
+        "field_id": _composed_id(lk_fld_brief(post_id, f"slide-{next_n}")),
+    }
+
+
+def delete_post(post_id, profile_slug=None):
     """Remove a slot (and its brief file, if any), then re-index."""
-    ctx = find_post(post_id)
+    ctx = find_post(post_id, profile_slug)
     ctx["data"]["posts"] = [p for p in ctx["data"]["posts"] if p.get("id") != post_id]
     brief = ctx["plan"].parent / "briefs" / f"{post_id}.json"
     if brief.exists():
@@ -364,7 +594,7 @@ def delete_post(post_id):
     return {"id": post_id, "deleted": True}
 
 
-def delete_posts(post_ids):
+def delete_posts(post_ids, profile_slug=None):
     """Delete several slots in one pass (one re-index). Unknown ids are skipped.
 
     Touches each plan file at most once so a multi-select delete is a single
@@ -373,7 +603,12 @@ def delete_posts(post_ids):
     if not wanted:
         return {"deleted": [], "count": 0}
     deleted = []
-    for plan in sorted(ROOT.glob("projects/*/profiles/*/content/plan-*.json")):
+    plan_glob = (
+        ROOT.glob(f"projects/*/profiles/{profile_slug}/content/plan-*.json")
+        if profile_slug
+        else ROOT.glob("projects/*/profiles/*/content/plan-*.json")
+    )
+    for plan in sorted(plan_glob):
         try:
             data = json.loads(plan.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -414,6 +649,7 @@ def create_project(slug: str, fields: dict) -> dict:
         (project_dir / sub).mkdir(parents=True, exist_ok=True)
     md = f"---\nname: {name}\nkind: {kind}\npriority: {priority}\nhours_per_week: {hours}\nstatus: {status}\n---\n{voice}\n"
     (project_dir / "project.md").write_text(md, encoding="utf-8")
+    ensure_config(ROOT, slug)
     reindex()
     return {"slug": slug}
 
@@ -507,10 +743,6 @@ def update_profile(slug: str, fields: dict) -> dict:
     voice = (fields.get("voice") if fields.get("voice") is not None else "").strip()
     md = f"---\nname: {name}\ntopic: {topic}\nproject: {project}\n---\n{voice}\n"
     f.write_text(md, encoding="utf-8")
-    # Brief spec lives in its own authored file (free text, not indexed).
-    if fields.get("brief_spec") is not None:
-        (profile_dir / "brief-spec.md").write_text(
-            fields["brief_spec"].strip() + "\n", encoding="utf-8")
     reindex()
     return {"slug": slug}
 
@@ -617,7 +849,13 @@ def create_activity(fields: dict) -> dict:
     date_end = (fields.get("date_end") or "").strip()
     type_ = (fields.get("type") or "task").strip()
     priority = (fields.get("priority") or "").strip()
-    parts = [title, f"entity: {entity}"]
+    existing_ids: set[str] = set()
+    if path.exists():
+        for _sec, _chk, _title, fields in _parse_activities(path.read_text(encoding="utf-8")):
+            if fields.get("id"):
+                existing_ids.add(str(fields["id"]))
+    act_id = next_activity_id(existing_ids)
+    parts = [title, f"id: {act_id}", f"entity: {entity}"]
     if date:
         parts.append(f"date: {date}")
     if date_end:
@@ -633,7 +871,13 @@ def create_activity(fields: dict) -> dict:
     else:
         path.write_text(f"## Activities\n{line}", encoding="utf-8")
     reindex()
-    return {"title": title, "entity": entity}
+    return {"id": act_id, "title": title, "entity": entity}
+
+
+def _parse_activities(text: str):
+    """Reuse index.parse_checklist without importing index at module load."""
+    import index
+    return index.parse_checklist(text)
 
 
 def create_milestone(fields: dict) -> dict:
@@ -657,9 +901,7 @@ def create_milestone(fields: dict) -> dict:
     else:
         data = {"milestones": []}
     existing_ids = {m.get("id") for m in data.get("milestones", [])}
-    ms_id = "ms-" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    while ms_id in existing_ids:
-        ms_id += "x"
+    ms_id = next_milestone_id(existing_ids)
     ms: dict = {"id": ms_id, "title": title, "date": date,
                 "type": (fields.get("type") or "event").strip(),
                 "entity_type": (fields.get("entity_type") or "project").strip()}
@@ -723,6 +965,377 @@ def delete_milestone(ms_id: str) -> dict:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     reindex()
     return {"id": ms_id, "deleted": True}
+
+
+def _roadmap_section_name(raw: str, project_slug: str) -> str:
+    section = (raw or "Next").strip() or "Next"
+    low = section.lower()
+    if low in ROADMAP_SECTION_ALIASES:
+        return ROADMAP_SECTION_ALIASES[low]
+    sections = subsections_for_doc(load_config(ROOT, project_slug), "roadmap")
+    for s in sections:
+        if s.lower() == low:
+            return s
+    raise ActionError(
+        f"unknown roadmap section '{section}' — use one of: {', '.join(sections)}"
+    )
+
+
+def read_subsections(project_slug: str) -> dict:
+    """Load subsection config; writes default subsections.json if missing."""
+    _project_dir(project_slug)
+    return subsections_api_payload(ensure_config(ROOT, project_slug))
+
+
+def _project_doc_path(project_slug: str, doc_key: str) -> Path | None:
+    rel = DOC_META.get(doc_key, {}).get("path")
+    if not rel or "<" in rel:
+        return None
+    return _project_dir(project_slug) / rel
+
+
+def _write_project_doc(project_slug: str, doc_key: str, text: str, *, path: Path) -> str:
+    cfg = load_config(ROOT, project_slug)
+    norm, cfg = normalize_doc_text(text, doc_key=doc_key, config=cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(norm, encoding="utf-8")
+    save_config(ROOT, project_slug, cfg)
+    return norm
+
+
+def _normalize_doc_strict(project_slug: str, doc_key: str, text: str, cfg: dict) -> str:
+    """Normalize markdown to config subsections only — no heading merge."""
+    meta = DOC_META[doc_key]
+    sections = subsections_for_doc(cfg, doc_key)
+    return normalize_markdown(
+        text,
+        title=meta["title"],
+        sections=sections,
+        roadmap=doc_key == "roadmap",
+    )
+
+
+def update_subsections(project_slug: str, doc_key: str, titles: list[str]) -> dict:
+    _project_dir(project_slug)
+    cfg = set_doc_subsections(load_config(ROOT, project_slug), doc_key, titles)
+    save_config(ROOT, project_slug, cfg)
+    doc_path = _project_doc_path(project_slug, doc_key)
+    if doc_path and doc_path.is_file():
+        norm = _normalize_doc_strict(
+            project_slug, doc_key, doc_path.read_text(encoding="utf-8"), cfg,
+        )
+        doc_path.write_text(norm, encoding="utf-8")
+    reindex()
+    return {"project": project_slug, "doc": doc_key, "subsections": subsections_api_payload(cfg)}
+
+
+def update_validation_tab(project_slug: str, titles: list[str]) -> dict:
+    _project_dir(project_slug)
+    try:
+        cfg = set_validation_tab_subsections(load_config(ROOT, project_slug), titles)
+    except ValueError as exc:
+        raise ActionError(str(exc)) from exc
+    save_config(ROOT, project_slug, cfg)
+    reindex()
+    return {
+        "project": project_slug,
+        "validation_tab": list(validation_tab_subsections(cfg)),
+        "subsections": subsections_api_payload(cfg),
+    }
+
+
+def add_subsection(project_slug: str, doc_key: str, title: str) -> dict:
+    _project_dir(project_slug)
+    cfg = add_doc_subsection(load_config(ROOT, project_slug), doc_key, title)
+    save_config(ROOT, project_slug, cfg)
+    doc_path = _project_doc_path(project_slug, doc_key)
+    if doc_path and doc_path.is_file():
+        norm = _normalize_doc_strict(
+            project_slug, doc_key, doc_path.read_text(encoding="utf-8"), cfg,
+        )
+        doc_path.write_text(norm, encoding="utf-8")
+    reindex()
+    return {"project": project_slug, "doc": doc_key, "title": title.strip(),
+            "subsections": subsections_api_payload(cfg)}
+
+
+def _project_dir(project_slug: str) -> Path:
+    d = ROOT / "projects" / project_slug
+    if not d.is_dir():
+        raise ActionError(f"project '{project_slug}' not found")
+    return d
+
+
+def _product_dir(product_slug: str) -> tuple[Path, str]:
+    """Return (product folder, owning project slug)."""
+    projects = ROOT / "projects"
+    for proj in sorted(projects.glob("*")) if projects.is_dir() else []:
+        if not proj.is_dir():
+            continue
+        d = proj / "products" / product_slug
+        if d.is_dir():
+            return d, proj.name
+    raise ActionError(f"product '{product_slug}' not found")
+
+
+def create_intake(project_slug: str) -> dict:
+    project_dir = _project_dir(project_slug)
+    intake = project_dir / "strategy" / "intake.md"
+    if intake.exists():
+        raise ActionError("intake.md already exists")
+    cfg = ensure_config(ROOT, project_slug)
+    intake.parent.mkdir(parents=True, exist_ok=True)
+    intake.write_text(starter_text(cfg, "intake"), encoding="utf-8")
+    reindex()
+    rel = str(intake.relative_to(ROOT))
+    return {"path": rel, "project": project_slug}
+
+
+def write_intake(project_slug: str, text: str) -> dict:
+    """Replace strategy/intake.md (creates parent dirs if needed)."""
+    if not (text or "").strip():
+        raise ActionError("intake text required")
+    intake = _project_dir(project_slug) / "strategy" / "intake.md"
+    _write_project_doc(project_slug, "intake", text, path=intake)
+    reindex()
+    return {"path": str(intake.relative_to(ROOT)), "project": project_slug}
+
+
+def create_technical(project_slug: str) -> dict:
+    project_dir = _project_dir(project_slug)
+    technical = project_dir / "technical.md"
+    if technical.exists():
+        raise ActionError("technical.md already exists")
+    cfg = ensure_config(ROOT, project_slug)
+    technical.write_text(starter_text(cfg, "technical"), encoding="utf-8")
+    reindex()
+    rel = str(technical.relative_to(ROOT))
+    return {"path": rel, "project": project_slug}
+
+
+def write_technical(project_slug: str, text: str) -> dict:
+    """Replace technical.md (creates file if needed)."""
+    if not (text or "").strip():
+        raise ActionError("technical text required")
+    technical = _project_dir(project_slug) / "technical.md"
+    _write_project_doc(project_slug, "technical", text, path=technical)
+    reindex()
+    return {"path": str(technical.relative_to(ROOT)), "project": project_slug}
+
+
+def create_memo(project_slug: str, memo_type: str, fields: dict | None = None,
+                body_extra: dict | None = None) -> dict:
+    mtype = (memo_type or "").strip()
+    if mtype not in MEMO_TYPES:
+        raise ActionError(f"unknown memo type '{mtype}'")
+    project_dir = _project_dir(project_slug)
+    memo_dir = project_dir / "strategy" / "memos"
+    memo_dir.mkdir(parents=True, exist_ok=True)
+    version = next_memo_version(memo_dir, mtype)
+    merged: dict = {}
+    if body_extra:
+        merged.update(body_extra)
+    if fields:
+        merged.update({k: v for k, v in fields.items() if v is not None})
+    body = normalize_memo_body(mtype, merged, version=version)
+    fname = f"{mtype}-v{version}.json"
+    path = memo_dir / fname
+    path.write_text(dumps_json(body), encoding="utf-8")
+    reindex()
+    key = lk_memo(project_slug, mtype, version)
+    rel = str(path.relative_to(ROOT))
+    return {"id": _composed_id(key), "type": mtype, "version": version, "path": rel, "project": project_slug}
+
+
+def create_experiment(project_slug: str, fields: dict) -> dict:
+    assumption = (fields.get("assumption") or fields.get("assumption_under_test") or "").strip()
+    if not assumption:
+        raise ActionError("assumption is required")
+    project_dir = _project_dir(project_slug)
+    exp_dir = project_dir / "strategy" / "experiments"
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    stem = (fields.get("stem") or "").strip() or next_experiment_stem(exp_dir)
+    stem = _slugify(stem) or next_experiment_stem(exp_dir)
+    path = exp_dir / f"{stem}.json"
+    if path.exists():
+        raise ActionError(f"experiment '{stem}' already exists")
+    body = normalize_experiment_body({**fields, "assumption": assumption})
+    path.write_text(dumps_json(body), encoding="utf-8")
+    reindex()
+    rel = str(path.relative_to(ROOT))
+    return {
+        "id": _composed_id(lk_experiment(project_slug, stem)),
+        "stem": stem,
+        "path": rel,
+        "project": project_slug,
+        "assumption": assumption,
+    }
+
+
+def update_experiment(project_slug: str, stem: str, fields: dict) -> dict:
+    """Patch an existing experiment JSON by stem."""
+    stem = (stem or "").strip()
+    if not stem:
+        raise ActionError("stem is required")
+    path = _project_dir(project_slug) / "strategy" / "experiments" / f"{stem}.json"
+    if not path.exists():
+        raise ActionError(f"experiment '{stem}' not found")
+    body = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(body, dict):
+        raise ActionError(f"experiment '{stem}' is not a JSON object")
+    patch = dict(body)
+    for key in ("assumption", "assumption_under_test", "success_criteria", "kill_criteria", "status"):
+        if key in fields and fields[key] is not None:
+            patch[key] = fields[key]
+    body = normalize_experiment_body(patch)
+    path.write_text(dumps_json(body), encoding="utf-8")
+    reindex()
+    rel = str(path.relative_to(ROOT))
+    return {
+        "id": _composed_id(lk_experiment(project_slug, stem)),
+        "stem": stem,
+        "path": rel,
+        "project": project_slug,
+    }
+
+
+def create_product(project_slug: str, slug: str, fields: dict) -> dict:
+    slug = (slug or "").strip()
+    if not slug:
+        raise ActionError("slug is required")
+    project_dir = _project_dir(project_slug)
+    prod_dir = project_dir / "products" / slug
+    if prod_dir.exists():
+        raise ActionError(f"product '{slug}' already exists")
+    name = (fields.get("name") or slug).strip()
+    ptype = (fields.get("type") or "app").strip()
+    status = (fields.get("status") or "idea").strip()
+    prod_dir.mkdir(parents=True)
+    (prod_dir / "product.md").write_text(
+        f"---\nname: {name}\ntype: {ptype}\nstatus: {status}\n---\n",
+        encoding="utf-8",
+    )
+    cfg = ensure_config(ROOT, project_slug)
+    (prod_dir / "roadmap.md").write_text(starter_text(cfg, "roadmap"), encoding="utf-8")
+    reindex()
+    return {"id": _composed_id(lk_prod(slug)), "slug": slug, "name": name, "project": project_slug}
+
+
+def feature_roadmap_details(product_slug: str) -> dict[str, dict]:
+    """Parse roadmap.md checklist — map title → why, priority, etc."""
+    try:
+        prod_dir, _ = _product_dir(product_slug)
+    except ActionError:
+        return {}
+    roadmap = prod_dir / "roadmap.md"
+    if not roadmap.is_file():
+        return {}
+    from index import parse_checklist  # noqa: WPS433
+    out: dict[str, dict] = {}
+    for sec, _checked, title, flds in parse_checklist(roadmap.read_text(encoding="utf-8")):
+        if title:
+            row = dict(flds)
+            if sec:
+                row["roadmap_section"] = sec
+            out[title] = row
+    return out
+
+
+def enrich_project_memos(memos: list[dict], project_slug: str, registry) -> list[dict]:
+    from core.ids import lk_memo  # noqa: WPS433
+    rows = []
+    for m in memos or []:
+        row = dict(m)
+        if registry:
+            row["id"] = registry.lookup.get(
+                lk_memo(project_slug, m.get("type") or "", int(m.get("version") or 0)))
+        rows.append(row)
+    return rows
+
+
+def enrich_project_experiments(experiments: list[dict], project_slug: str, registry) -> list[dict]:
+    from core.ids import experiment_stem_from_path, lk_experiment  # noqa: WPS433
+    rows = []
+    for x in experiments or []:
+        row = dict(x)
+        stem = row.get("stem") or experiment_stem_from_path(row.get("file_path") or "") or ""
+        if registry and stem:
+            row["id"] = registry.lookup.get(lk_experiment(project_slug, stem))
+        rows.append(row)
+    return rows
+
+
+def enrich_project_features(features: list[dict], registry) -> list[dict]:
+    """Attach canonical id + roadmap why/priority from live files."""
+    from core.ids import lk_feature, slug_key  # noqa: WPS433
+    by_prod: dict[str, dict[str, dict]] = {}
+    rows = []
+    for f in features or []:
+        row = dict(f)
+        pslug = row.get("product_slug") or ""
+        title = row.get("title") or ""
+        if pslug not in by_prod:
+            by_prod[pslug] = feature_roadmap_details(pslug)
+        det = by_prod[pslug].get(title) or {}
+        if det.get("why"):
+            row["why"] = det["why"]
+        if det.get("priority") and not row.get("priority"):
+            row["priority"] = det["priority"]
+        if det.get("roadmap_section"):
+            row["roadmap_section"] = det["roadmap_section"]
+        tk = slug_key(title)
+        row["id"] = (registry.lookup.get(lk_feature(pslug, tk)) if registry else None)
+        rows.append(row)
+    return rows
+
+
+def add_feature(product_slug: str, fields: dict) -> dict:
+    title = (fields.get("title") or "").strip()
+    if not title:
+        raise ActionError("title is required")
+    prod_dir, project_slug = _product_dir(product_slug)
+    roadmap = prod_dir / "roadmap.md"
+    if not roadmap.exists():
+        cfg = ensure_config(ROOT, project_slug)
+        roadmap.write_text(starter_text(cfg, "roadmap"), encoding="utf-8")
+    section = _roadmap_section_name(fields.get("section") or "Next", project_slug)
+    text = _write_project_doc(project_slug, "roadmap", roadmap.read_text(encoding="utf-8"), path=roadmap)
+    marker = f"## {section}"
+    if marker not in text:
+        text = text.rstrip() + f"\n\n{marker}\n\n"
+    if not text.endswith("\n"):
+        text += "\n"
+    why = (fields.get("why") or "").strip()
+    line = f"- [ ] {title}"
+    if why:
+        line += f" — {why}"
+    prio = (fields.get("priority") or "").strip().lower()
+    if prio in FEATURE_PRIORITIES:
+        line += f" — priority: {prio}"
+    text += line + "\n"
+    _write_project_doc(project_slug, "roadmap", text, path=roadmap)
+    reindex()
+    return {
+        "id": _composed_id(lk_feature(product_slug, slug_key(title))),
+        "title": title,
+        "product": product_slug,
+        "section": section,
+    }
+
+
+def write_roadmap(product_slug: str, text: str) -> dict:
+    """Replace products/<slug>/roadmap.md."""
+    if not (text or "").strip():
+        raise ActionError("roadmap text required")
+    prod_dir, project_slug = _product_dir(product_slug)
+    roadmap = prod_dir / "roadmap.md"
+    _write_project_doc(project_slug, "roadmap", text, path=roadmap)
+    reindex()
+    return {
+        "path": str(roadmap.relative_to(ROOT)),
+        "product": product_slug,
+        "project": project_slug,
+    }
 
 
 def read_authored_json(relpath):

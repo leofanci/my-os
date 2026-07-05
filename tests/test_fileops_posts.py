@@ -31,6 +31,30 @@ class T(unittest.TestCase):
         fileops.delete_post(pid)
         self.assertEqual(db.profile_posts("demo"), [])
 
+    def test_update_post_patches_brief_fields(self):
+        fileops.add_post("demo", {
+            "working_title": "Idea A",
+            "format": "reel",
+            "channels": "demo-tiktok",
+        })
+        pid = db.profile_posts("demo")[0]["id"]
+        fileops.set_brief(pid, {
+            "channels": ["demo-tiktok"],
+            "caption": "original caption",
+            "gen_prompts": ["prompt one"],
+        })
+        fileops.update_post(pid, {
+            "objective": "conversion",
+            "brief": {"caption": "edited caption", "gen_prompts": ["prompt two"]},
+        })
+        post = db.profile_posts("demo")[0]
+        self.assertEqual(post["version"], 2)
+        detail = fileops.read_detail(pid)
+        self.assertEqual(detail["slot"]["objective"], "conversion")
+        self.assertEqual(detail["brief"]["caption"], "edited caption")
+        self.assertEqual(detail["brief"]["gen_prompts"], ["prompt two"])
+        self.assertEqual(detail["brief"]["format"], "reel")
+
     def test_working_title_and_concept_surface(self):
         fileops.add_post("demo", {"working_title": "Idea A",
                                   "concept": "why this now", "channels": "demo-tiktok"})
@@ -49,9 +73,68 @@ class T(unittest.TestCase):
         self.assertEqual(db.profile_posts("demo"), [])
 
     def test_brief_spec_roundtrip(self):
-        fileops.update_profile("demo", {"name": "Demo", "brief_spec": "Captions under 100 words."})
+        fileops.write_brief_spec("demo", "Captions under 100 words.")
         self.assertEqual(fileops.read_profile("demo")["brief_spec"].strip(),
                          "Captions under 100 words.")
+
+    def test_set_brief_creates_file_and_briefs_post(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        res = fileops.set_brief(pid, {"caption": "hello", "hook": "stop scrolling",
+                                      "channels": ["demo-tiktok"]})
+        self.assertEqual(res["status"], "briefed")
+        self.assertFalse(res["rebrief"])
+        post = db.profile_posts("demo")[0]
+        self.assertEqual(post["status"], "briefed")
+        self.assertTrue(post["brief_path"])
+        bf = fileops.ROOT.joinpath(post["brief_path"])
+        self.assertTrue(bf.exists())
+        data = json.loads(bf.read_text())
+        self.assertEqual(data["id"], pid)          # id forced, never trusted
+        self.assertEqual(data["caption"], "hello")
+
+    def test_set_brief_again_bumps_version_rebrief(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        fileops.set_brief(pid, {"caption": "v1"})
+        res = fileops.set_brief(pid, {"caption": "v2"})
+        self.assertTrue(res["rebrief"])
+        self.assertEqual(db.profile_posts("demo")[0]["version"], 2)
+
+    def test_set_brief_unknown_post_raises(self):
+        with self.assertRaises(fileops.ActionError):
+            fileops.set_brief("nope-123", {"caption": "x"})
+
+    def test_set_brief_non_dict_raises(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        with self.assertRaises(fileops.ActionError):
+            fileops.set_brief(pid, ["not", "a", "dict"])
+
+    def test_set_brief_rejects_missing_spec_fields(self):
+        fileops.write_brief_spec("demo", "- cover_overlay\n- caption")
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        with self.assertRaises(fileops.ActionError) as ctx:
+            fileops.set_brief(pid, {"channels": ["demo-tiktok"], "caption": "only caption"})
+        self.assertIn("cover_overlay", str(ctx.exception))
+
+    def test_existing_brief_grandfathered_when_spec_changes(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        fileops.set_brief(pid, {"channels": ["demo-tiktok"], "caption": "old style"})
+        fileops.write_brief_spec("demo", "- cover_overlay\n- catchy_title")
+        # Re-save same old-shaped brief — must not fail after spec got stricter
+        res = fileops.set_brief(pid, {"channels": ["demo-tiktok"], "caption": "old style v2"})
+        self.assertTrue(res["rebrief"])
+
+    def test_brief_spec_is_per_profile(self):
+        write(fileops.ROOT / "projects/acme/profiles/other/profile.md", "---\nname: Other\n---")
+        (fileops.ROOT / "projects/acme/profiles/other/content").mkdir(parents=True, exist_ok=True)
+        fileops.write_brief_spec("demo", "Demo rules.")
+        fileops.write_brief_spec("other", "Other rules.")
+        self.assertEqual(fileops.read_brief_spec("demo").strip(), "Demo rules.")
+        self.assertEqual(fileops.read_brief_spec("other").strip(), "Other rules.")
 
     def test_brief_file_reconciles_status_for_review(self):
         # A brief written directly (batch/terminal) leaves status at 'planned'
@@ -82,6 +165,26 @@ class T(unittest.TestCase):
     def test_add_unknown_profile(self):
         with self.assertRaises(fileops.ActionError):
             fileops.add_post("nope", {})
+
+    def test_find_post_disambiguates_duplicate_ids_across_profiles(self):
+        root = fileops.ROOT
+        alpha = root / "projects" / "acme" / "profiles" / "alpha"
+        beta = root / "projects" / "acme" / "profiles" / "beta"
+        write(beta / "profile.md", "---\nname: Beta\n---")
+        for prof, title in (("alpha", "Alpha title"), ("beta", "Beta title")):
+            content = root / "projects" / "acme" / "profiles" / prof / "content"
+            content.mkdir(parents=True, exist_ok=True)
+            (content / "plan-manual.json").write_text(json.dumps({
+                "posts": [{"id": "post-001", "working_title": title, "channels": ["demo-tiktok"]}]
+            }), encoding="utf-8")
+        index.build(root)
+        # Indexer keeps the later profile folder (beta) when ids collide.
+        ctx = fileops.find_post("post-001")
+        self.assertEqual(ctx["profile_slug"], "beta")
+        self.assertEqual(ctx["post"]["working_title"], "Beta title")
+        alpha_ctx = fileops.find_post("post-001", "alpha")
+        self.assertEqual(alpha_ctx["profile_slug"], "alpha")
+        self.assertEqual(alpha_ctx["post"]["working_title"], "Alpha title")
 
 if __name__ == "__main__":
     unittest.main()

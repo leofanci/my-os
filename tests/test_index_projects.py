@@ -52,6 +52,19 @@ class TestTreeWalk(unittest.TestCase):
             row = con.execute("SELECT product_slug, title FROM features").fetchone()
             self.assertEqual(row[0], "acme-app")
 
+    def test_unchecked_shipped_section_is_planned_not_shipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            proj = root / "projects" / "acme"
+            write(proj / "project.md", "---\nname: Acme\nkind: venture\n---\n")
+            write(proj / "products" / "acme-app" / "product.md", "---\nname: App\ntype: app\n---\n")
+            write(proj / "products" / "acme-app" / "roadmap.md",
+                  "## Shipped\n- [ ] Spec only — not done yet\n")
+            index.build(root)
+            con = sqlite3.connect(root / "database" / "data" / "os.db")
+            status = con.execute("SELECT status FROM features").fetchone()[0]
+            self.assertEqual(status, "planned")
+
     def test_post_carries_working_title_and_concept(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

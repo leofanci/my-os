@@ -1,9 +1,8 @@
 """terminal_session.py — a claude process attached to a PTY.
 
-The bottom integrated terminal runs full (unrestricted) `claude` here; bytes are
-bridged to the browser's xterm.js over the /ws/terminal WebSocket. The chat
-agent's osctl guard rail does NOT apply to this surface — it is the full-trust
-power terminal.
+The bottom integrated terminal runs `claude` here; bytes are bridged to the
+browser's xterm.js over the /ws/terminal WebSocket. Content writes must still
+go through osctl — see `dashboard/ai_rules.py` and CLAUDE.md.
 """
 import fcntl
 import os

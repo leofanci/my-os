@@ -8,7 +8,48 @@ Respond like smart caveman. Cut all filler, keep technical substance.
 - No hedging. Fragments fine. Short synonyms.
 - Technical terms stay exact. Code blocks unchanged.
 - Pattern: [thing] [action] [reason]. [next step].
+- Never em dash (—). Use comma, period, or colon instead.
+- Memos/chat: blank line between paragraphs; bullets as `- ` lines, one per line.
 
 ## After taking action
 
 Never repeat, quote, or paste back output from actions you completed — created posts, plans, briefs, ventures, calendars, validation results, osctl output, etc. User reads it directly. One-sentence confirmation max.
+
+<!-- CANONICAL: dashboard/ai_rules.py — keep in sync -->
+## Content writes (mandatory — chat and terminal)
+
+Never write content files directly. All mutations go through osctl:
+
+| What | Command |
+|------|---------|
+| Venture intake file | `create-intake --project <slug>` or `update-intake --project <slug>` (--text or stdin) |
+| Technical doc | `create-technical --project <slug>` or `update-technical --project <slug>` (--text or stdin) |
+| Tab subsections (per project) | `get-subsections --project <slug>` · `update-subsections --project <slug> --doc intake/technical/roadmap --subsections "A,B,C"` · `add-subsection --project <slug> --doc technical --title "Prompt"` · `update-validation-tab --project <slug> --subsections "Stage & evidence,Market"` |
+| Strategy memo | `create-memo --project <slug> --type <memo-type> [--summary] [--recommendation]` |
+| Experiment | `create-experiment --project <slug> --assumption "..."` |
+| Product scaffold | `create-product --project <slug> --slug <prod-slug> [--name] [--type]` |
+| Roadmap feature | `add-feature --product <prod-slug> --title "..." [--section Next]` |
+| Roadmap (full replace) | `update-roadmap --product <prod-slug>` (--text or stdin) |
+| Experiment patch | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` |
+| Post slide row | `add-slide --id <post-id> --overlay "<text>"` |
+| Profile voice/name/topic | `update-profile --slug <slug> [--name] [--topic] [--voice]` |
+| Brief spec | `update-brief-spec --profile <slug> --text "<full spec>"` or stdin |
+| Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
+| Post brief (auto) | `generate-brief --id <post-id>` |
+| Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
+| Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` |
+
+Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json` or `brief-spec.md`.
+
+Brief spec ONE file per profile: `projects/<project>/profiles/<profile>/brief-spec.md`. Changing it does not rewrite existing post briefs.
+To edit it from NL: `get-brief-spec` first, then MINIMAL EDIT — keep every line the user did not touch verbatim, change only what they asked, never rewrite/reword the rest.
+
+**Write gate (same as posts):** routing + short summary in chat → user approves tab placement → osctl writes content once (review in dashboard, not chat). Never paste full memo/intake/roadmap text in chat and again in osctl. Full rules: `dashboard/ai_rules.py` WRITE_GATE + TAB_ROUTING.
+
+"Fill tabs" / left panel = six project sections per TAB_ROUTING in `ai_rules.py`. Product roadmap features go under **Next**, not **Shipped**, until checked off. Never `create-experiment`, `create-activity`, `create-milestone`, or `generate-plan` for AI-invented plans without explicit user approval.
+
+Artifact shapes: `core/project_schemas.py` + `core/subsections.py` (also `GET /api/schemas`). Six tabs are fixed; **subsections** (`##` headings inside intake/technical/roadmap) are per project in `projects/<slug>/subsections.json`. Manual dashboard, chat, and osctl share same normalize path.
+
+## IDs
+
+Composed IDs: full parent→child cascade. `pr1` `pr1.sec04.mm1` `pr1.sec03.ex1` `pr1.sec05.pd1.ft1` `pr1.pf1.sec00.po3` `pr1.pf1.sec00.po3.br1.fd02`. Artifacts nest under UI tab/entity — never skip levels. No fd under pr/pf/ch for form metadata. `get-id-catalog`, `resolve-id`. Source: `core/ids.py`. Dashboard loads tab layout from `/api/schemas` (not hardcoded in `os-ids.js`).

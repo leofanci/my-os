@@ -29,10 +29,11 @@ prose before or after — the first character of your reply must be '{'.
   "strategy_note": "1-2 sentences: the angle for this period and why",
   "posts": [
     {
-      "id": "draft-001",
+      "id": "post-001",
       "date": "YYYY-MM-DD",
       "channels": ["<channel-slug>", "..."],
       "platform": "primary platform for this post (e.g. instagram)",
+      "format": "carousel | reel | short — default carousel; use reel/short only when the concept needs motion-dependent storytelling",
       "pillar": "must match a pillar in the profile voice",
       "objective": "awareness | engagement | conversion | community | authority",
       "working_title": "short internal label",

@@ -163,10 +163,113 @@ my-os/
 └── projects/                ← all projects (nested: strategy/, products/, profiles/, channels/)
     └── <project-slug>/
         ├── project.md       ← project voice + metadata
+        ├── subsections.json ← per-project tab subsection lists (intake, technical, roadmap, validation_tab)
         ├── strategy/        ← intake.md, memos/, experiments/
         ├── products/<slug>/ ← roadmap.md
         └── profiles/<slug>/ ← profile.md, content/, channels/<slug>/
 ```
+
+---
+
+## ID cascade (canonical references)
+
+Every clickable thing in the dashboard gets a **composed ID**: a dot-separated path
+from root → tab → artifact. The string *is* the parent chain — never skip a level.
+
+```
+pr2                         project 2
+├── sec04                   Positioning & pricing tab
+│   ├── mm1                 positioning memo
+│   └── mm2                 pricing memo
+├── sec03                   Experiments tab
+│   └── ex1                 experiment
+├── sec05                   Product tab
+│   └── pd1                 product
+│       └── ft1             roadmap feature
+└── pf1                     profile
+    ├── sec00               Posts tab
+    │   └── po1             plan slot / idea
+    │       ├── sl01        slot field (working_title, concept)
+    │       └── br1         brief
+    │           └── fd01    brief field (caption, slide-1, …)
+    └── ch1                 channel
+        └── sec00           Guidelines tab
+```
+
+**Segment prefixes**
+
+| Prefix | Thing |
+|--------|--------|
+| `pr` | project |
+| `sec` | tab (project section, profile Posts/Setup, channel Guidelines/Setup) |
+| `mm` | strategy memo |
+| `ex` | experiment |
+| `pd` / `ft` | product / feature |
+| `pf` / `ch` / `po` | profile / channel / post |
+| `sl` / `br` / `fd` | slot field / brief / brief field |
+| `vw` | global view (calendar, operations, …) |
+
+**Which tab owns what**
+
+| Tab (`sec`) | Artifacts |
+|-------------|-----------|
+| `sec01` Overview | assessment memo |
+| `sec02` Problem & validation | problem-validation memo |
+| `sec03` Experiments | experiments (`ex`) |
+| `sec04` Positioning & pricing | positioning, pricing, competitors, icp, channels memos |
+| `sec05` Product | products (`pd`) and features (`ft`) |
+| `pfN.sec00` Posts | posts (`po`) and everything under them |
+
+Form metadata (project name, profile voice, channel handle, post date/format) has
+**no** field ids — edit via the entity id (`pr1`, `pr1.pf1`, `pr1.pf1.sec00.po3`).
+
+**Lookup**
+
+```bash
+python3 dashboard/osctl.py get-id-catalog          # full list
+python3 dashboard/osctl.py get-id-catalog --text # readable
+python3 dashboard/osctl.py resolve-id --id pr2.sec04.mm1
+```
+
+In chat/terminal, `@pr2.sec04.mm1` or a bare slug (`acme`) when unambiguous.
+Source of truth: `core/ids.py`. Dashboard tab layout from `GET /api/schemas`.
+
+---
+
+## Tab subsections (per project)
+
+The six project tabs (`sec01`–`sec06`) are fixed for every project. **Subsections**
+are the ordered `##` headings inside a tab's markdown doc — and they can differ
+per project.
+
+| Doc key | File | Tab |
+|---------|------|-----|
+| `intake` | `strategy/intake.md` | Problem & validation (filtered) |
+| `technical` | `technical.md` | Technical |
+| `roadmap` | `products/<slug>/roadmap.md` | Product (shared list per project) |
+
+Config: `projects/<slug>/subsections.json`. Defaults ship in `GET /api/schemas`
+(`subsections.docs.*.default_subsections`). Runtime reads the project file after
+first write or re-index.
+
+```bash
+python3 dashboard/osctl.py get-subsections --project demo
+python3 dashboard/osctl.py update-subsections --project demo --doc technical \
+  --subsections "Stack,Prompt,Tools"
+python3 dashboard/osctl.py add-subsection --project demo --doc technical --title "Evals"
+python3 dashboard/osctl.py update-validation-tab --project demo \
+  --subsections "Stage & evidence,Market,Goals"
+```
+
+- `update-subsections` / `add-subsection` — change doc heading lists; normalize
+  rewrites the markdown file.
+- `update-validation-tab` — choose which **intake** subsections appear on sec02
+  (never includes "What it is"; titles must already be in the intake list).
+- `update-intake` / `update-technical` / `update-roadmap` — extra `##` headings in
+  pasted text auto-register on save.
+
+Source: `core/subsections.py`. Chat and dashboard mutations go through `osctl` /
+`fileops` (same normalize path).
 
 ---
 

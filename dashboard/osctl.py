@@ -12,6 +12,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root
 from dashboard import db, fileops  # noqa: E402
+from core.ids import (  # noqa: E402
+    bare_slug,
+    build_catalog,
+    build_id_registry,
+    build_project_sections,
+    catalog_as_text,
+    describe_id,
+    parse_id,
+    resolve_section,
+)
 
 
 def _emit(obj, ok=True):
@@ -68,6 +78,134 @@ def _build_parser():
     p.set_defaults(_run=lambda a: fileops.create_channel(
         a.profile, a.slug, a.platform, a.handle))
 
+    p = sub.add_parser("create-intake", help="Scaffold strategy/intake.md for a project")
+    p.add_argument("--project", required=True)
+    p.set_defaults(_run=lambda a: fileops.create_intake(a.project))
+
+    p = sub.add_parser("update-intake", help="Replace strategy/intake.md (--text or stdin)")
+    p.add_argument("--project", required=True)
+    p.add_argument("--text", default="")
+    def _update_intake(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        return fileops.write_intake(a.project, text)
+    p.set_defaults(_run=_update_intake)
+
+    p = sub.add_parser("create-technical", help="Scaffold technical.md for a project")
+    p.add_argument("--project", required=True)
+    p.set_defaults(_run=lambda a: fileops.create_technical(a.project))
+
+    p = sub.add_parser("update-technical", help="Replace technical.md (--text or stdin)")
+    p.add_argument("--project", required=True)
+    p.add_argument("--text", default="")
+    def _update_technical(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        return fileops.write_technical(a.project, text)
+    p.set_defaults(_run=_update_technical)
+
+    p = sub.add_parser("get-subsections", help="Per-project tab subsection config")
+    p.add_argument("--project", required=True)
+    def _get_subsections(a):
+        return {"project": a.project, "subsections": fileops.read_subsections(a.project)}
+    p.set_defaults(_run=_get_subsections)
+
+    p = sub.add_parser("update-subsections",
+                       help="Replace subsection list for intake, technical, or roadmap doc")
+    p.add_argument("--project", required=True)
+    p.add_argument("--doc", required=True, choices=["intake", "technical", "roadmap"])
+    p.add_argument("--subsections", required=True,
+                   help="Comma- or newline-separated subsection titles")
+    def _update_subsections(a):
+        titles = fileops.parse_subsections_arg(a.subsections)
+        if not titles:
+            raise fileops.ActionError("at least one subsection title required")
+        return fileops.update_subsections(a.project, a.doc, titles)
+    p.set_defaults(_run=_update_subsections)
+
+    p = sub.add_parser("add-subsection", help="Append one subsection to a project doc config")
+    p.add_argument("--project", required=True)
+    p.add_argument("--doc", required=True, choices=["intake", "technical", "roadmap"])
+    p.add_argument("--title", required=True)
+    p.set_defaults(_run=lambda a: fileops.add_subsection(a.project, a.doc, a.title))
+
+    p = sub.add_parser("update-validation-tab",
+                       help="Set which intake subsections show on Problem & validation tab")
+    p.add_argument("--project", required=True)
+    p.add_argument("--subsections", required=True,
+                   help="Comma- or newline-separated titles (must exist in intake list)")
+    def _update_validation_tab(a):
+        titles = fileops.parse_subsections_arg(a.subsections)
+        if not titles:
+            raise fileops.ActionError("at least one subsection title required")
+        return fileops.update_validation_tab(a.project, titles)
+    p.set_defaults(_run=_update_validation_tab)
+
+    p = sub.add_parser("create-memo", help="Create next versioned strategy memo JSON")
+    p.add_argument("--project", required=True)
+    p.add_argument("--type", required=True, dest="memo_type")
+    p.add_argument("--summary")
+    p.add_argument("--recommendation")
+    p.add_argument("--problem-statement", dest="problem_statement")
+    p.add_argument("--body-json", dest="body_json", default="",
+                   help="Extra memo fields as JSON (--body-json or stdin when --text empty)")
+    def _create_memo(a):
+        fields = _fields(a, ["summary", "recommendation", "problem_statement"])
+        body_extra = None
+        raw = (a.body_json or "").strip()
+        if raw:
+            body_extra = json.loads(raw)
+        return fileops.create_memo(a.project, a.memo_type, fields, body_extra=body_extra)
+    p.set_defaults(_run=_create_memo)
+
+    p = sub.add_parser("create-experiment", help="Create strategy/experiments/<stem>.json")
+    p.add_argument("--project", required=True)
+    p.add_argument("--assumption", required=True)
+    p.add_argument("--stem")
+    p.add_argument("--success-criteria", dest="success_criteria")
+    p.add_argument("--kill-criteria", dest="kill_criteria")
+    p.set_defaults(_run=lambda a: fileops.create_experiment(
+        a.project, _fields(a, ["assumption", "stem", "success_criteria", "kill_criteria"])))
+
+    p = sub.add_parser("update-experiment", help="Patch an existing experiment JSON")
+    p.add_argument("--project", required=True)
+    p.add_argument("--stem", required=True)
+    p.add_argument("--assumption")
+    p.add_argument("--success-criteria", dest="success_criteria")
+    p.add_argument("--kill-criteria", dest="kill_criteria")
+    p.set_defaults(_run=lambda a: fileops.update_experiment(
+        a.project, a.stem, _fields(a, ["assumption", "success_criteria", "kill_criteria"])))
+
+    p = sub.add_parser("create-product", help="Scaffold products/<slug>/ under a project")
+    p.add_argument("--project", required=True)
+    p.add_argument("--slug", required=True)
+    p.add_argument("--name")
+    p.add_argument("--type")
+    p.add_argument("--status")
+    p.set_defaults(_run=lambda a: fileops.create_product(
+        a.project, a.slug, _fields(a, ["name", "type", "status"])))
+
+    p = sub.add_parser("add-feature", help="Append a roadmap checklist item")
+    p.add_argument("--product", required=True)
+    p.add_argument("--title", required=True)
+    p.add_argument("--section", default="Next")
+    p.add_argument("--why", default=None, help="One-line description after title")
+    p.add_argument("--priority", default=None, choices=["critical", "high", "normal", "low"])
+    p.set_defaults(_run=lambda a: fileops.add_feature(
+        a.product, _fields(a, ["title", "section", "why", "priority"])))
+
+    p = sub.add_parser("update-roadmap", help="Replace products/<slug>/roadmap.md (--text or stdin)")
+    p.add_argument("--product", required=True)
+    p.add_argument("--text", default="")
+    def _update_roadmap(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        return fileops.write_roadmap(a.product, text)
+    p.set_defaults(_run=_update_roadmap)
+
     # add-post fields map to fileops._POST_FIELDS (date, pillar, working_title)
     # + channels; hook/angle are not real post fields, so they are not exposed.
     p = sub.add_parser("add-post")
@@ -115,8 +253,11 @@ def _build_parser():
     p.add_argument("--pillar")
     p.add_argument("--date")
     p.add_argument("--channels")
+    p.add_argument("--format")
+    p.add_argument("--objective")
+    p.add_argument("--platform")
     p.set_defaults(_run=lambda a: fileops.update_post(
-        a.id, _fields(a, ["working_title", "pillar", "date", "channels"])))
+        a.id, _fields(a, ["working_title", "pillar", "date", "channels", "format", "objective", "platform"])))
 
     p = sub.add_parser("set-status")
     p.add_argument("--id", required=True, dest="id")
@@ -130,9 +271,30 @@ def _build_parser():
     p.add_argument("--name")
     p.add_argument("--topic")
     p.add_argument("--voice")
-    p.add_argument("--brief-spec")
     p.set_defaults(_run=lambda a: fileops.update_profile(
-        a.slug, _fields(a, ["name", "topic", "voice", "brief_spec"])))
+        a.slug, _fields(a, ["name", "topic", "voice"])))
+
+    p = sub.add_parser("get-brief-spec",
+                       help="Read the profile brief-spec.md (single source for all generators)")
+    p.add_argument("--profile", required=True)
+    p.set_defaults(_run=lambda a: {
+        "profile": a.profile,
+        "path": fileops.brief_spec_relpath(a.profile),
+        "brief_spec": fileops.read_brief_spec(a.profile),
+    })
+
+    p = sub.add_parser("update-brief-spec",
+                       help="Replace brief-spec.md (Profile Setup + chat use same file)")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--text", default="")
+    def _update_brief_spec(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        if not text.strip():
+            raise fileops.ActionError("brief spec text required (--text or stdin)")
+        return fileops.write_brief_spec(a.profile, text)
+    p.set_defaults(_run=_update_brief_spec)
 
     p = sub.add_parser("update-project")
     p.add_argument("--slug", required=True)
@@ -166,14 +328,47 @@ def _build_parser():
     p.set_defaults(_run=lambda a: fileops.update_milestone(a.id, _fields(
         a, ["title", "date", "date_end", "type", "entity", "entity_type", "notes", "priority"])))
 
-    p = sub.add_parser('patch-brief')
-    p.add_argument('--id', required=True, dest='id')
-    p.add_argument('--caption')
-    p.add_argument('--hook')
-    p.add_argument('--catchy-title', dest='catchy_title')
-    p.add_argument('--cover-overlay', dest='cover_overlay')
-    p.set_defaults(_run=lambda a: fileops.patch_brief(
-        a.id, _fields(a, ['caption', 'hook', 'catchy_title', 'cover_overlay'])))
+    # Content generation — same generate.py jobs the dashboard buttons run.
+    p = sub.add_parser("generate-brief",
+                       help="Run the brief job for a planned/approved slot (same as Write button)")
+    p.add_argument("--id", required=True, dest="id")
+    p.add_argument("--instruction", default="")
+    p.set_defaults(_run=lambda a: fileops.generate_brief(a.id, a.instruction or None))
+
+    p = sub.add_parser("update-brief",
+                       help="Create or change a brief from natural language (primary chat path)")
+    p.add_argument("--id", required=True, dest="id")
+    p.add_argument("--instruction", default="")
+    p.set_defaults(_run=lambda a: fileops.update_brief(a.id, a.instruction or None))
+
+    p = sub.add_parser("generate-plan",
+                       help="Run the plan job for a profile (same as Generate ideas button)")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--period", required=True)
+    p.add_argument("--platforms", default="")
+    p.add_argument("--cadence", default="")
+    p.add_argument("--focus", default="")
+    def _generate_plan(a):
+        params = {"period": a.period}
+        if a.platforms:
+            params["platforms"] = a.platforms
+        if a.cadence not in (None, ""):
+            params["cadence"] = a.cadence
+        if a.focus:
+            params["focus"] = a.focus
+        return fileops.run_plan(a.profile, params)
+    p.set_defaults(_run=_generate_plan)
+
+    p = sub.add_parser("add-slide", help="Append one slide_overlays row to a post brief")
+    p.add_argument("--id", required=True, dest="post_id")
+    p.add_argument("--overlay", required=True)
+    p.set_defaults(_run=lambda a: fileops.add_slide_overlay(a.post_id, a.overlay))
+
+    p = sub.add_parser("revise-post",
+                       help="Revise a slot or draft via generate.py (same as Revise button)")
+    p.add_argument("--id", required=True, dest="id")
+    p.add_argument("--instruction", required=True)
+    p.set_defaults(_run=lambda a: fileops.revise_post(a.id, a.instruction))
 
     # --- read commands (no mutations) ---
 
@@ -190,22 +385,133 @@ def _build_parser():
         data = db.project(a.slug)
         if data is None:
             raise fileops.ActionError(f"project '{a.slug}' not found")
+        reg = build_id_registry(
+            db.tree(), db.posts(), root=fileops.ROOT, features=data["features"])
+        data["memos"] = fileops.enrich_project_memos(data["memos"], a.slug, reg)
+        data["experiments"] = fileops.enrich_project_experiments(data["experiments"], a.slug, reg)
+        data["features"] = fileops.enrich_project_features(data["features"], reg)
+        data["sections"] = build_project_sections(a.slug, fileops.ROOT, data, registry=reg)
+        from core.project_schemas import feature_form_fields
+
+        data["subsections"] = fileops.read_subsections(a.slug)
+        from core.ids import subsection_id_map
+        data["subsection_ids"] = subsection_id_map(reg, a.slug)
+        data["feature"] = feature_form_fields(data["subsections"]["docs"]["roadmap"])
         return {"project": data}
     p.set_defaults(_run=_get_project)
 
     p = sub.add_parser("read-file", help="Read any authored file by repo-relative path")
     p.add_argument("--path", required=True)
     def _read_file(a):
-        repo_root = Path(__file__).resolve().parent.parent
+        repo_root = fileops.ROOT
         target = (repo_root / a.path).resolve()
-        if not str(target).startswith(str(repo_root)):
+        if not str(target).startswith(str(repo_root.resolve())):
             raise fileops.ActionError("path outside repo")
         if not target.exists():
             raise fileops.ActionError(f"file not found: {a.path}")
         return {"path": a.path, "content": target.read_text(encoding="utf-8")}
     p.set_defaults(_run=_read_file)
 
+    p = sub.add_parser("get-id-catalog", help="List all canonical IDs (UI skeleton + live entities)")
+    p.add_argument("--text", action="store_true", help="Human-readable summary instead of JSON entries")
+    def _id_catalog(a):
+        entries = build_catalog(db.tree(), root=fileops.ROOT, posts=db.posts())
+        if a.text:
+            return {"catalog": catalog_as_text(entries), "count": len(entries)}
+        return {"entries": entries, "count": len(entries)}
+    p.set_defaults(_run=_id_catalog)
+
+    p = sub.add_parser("resolve-id", help="Describe a canonical ID")
+    p.add_argument("--id", required=True, dest="id")
+    def _resolve_id(a):
+        reg = build_id_registry(db.tree(), db.posts(), root=fileops.ROOT)
+        parsed = parse_id(a.id)
+        if not parsed:
+            raise fileops.ActionError(f"not a canonical id: {a.id}")
+        ent = reg.resolve(a.id)
+        out = {
+            "id": a.id,
+            "describe": describe_id(a.id, reg),
+            "bare": bare_slug(a.id, reg),
+            "parsed": parsed,
+        }
+        if ent:
+            out["entry"] = ent
+            ref = ent.get("ref") or {}
+            if ent.get("kind") == "tab" and ref.get("project") and ref.get("section"):
+                pdata = db.project(ref["project"])
+                sec = resolve_section(
+                    ref["project"], ref["section"], fileops.ROOT,
+                    project_data=pdata, registry=reg,
+                )
+                if sec is not None:
+                    out["section"] = sec
+            if ent.get("kind") == "slot_field" and ref.get("post") and ref.get("field"):
+                post_id, field = ref["post"], ref["field"]
+                try:
+                    detail = fileops.read_detail(post_id)
+                    slot = detail.get("slot") or {}
+                    out["field"] = {
+                        "post": post_id,
+                        "field": field,
+                        "scope": "slot",
+                        "value": slot.get(field) if field != "channels" else slot.get("channels"),
+                    }
+                except fileops.ActionError:
+                    pass
+            elif ent.get("kind") in ("field", "brief_field") and ref.get("post") and ref.get("field"):
+                post_id, field = ref["post"], ref["field"]
+                try:
+                    detail = fileops.read_detail(post_id)
+                    brief = detail.get("brief") or {}
+                    path = None
+                    if detail.get("profile_slug"):
+                        prof_dir = fileops._profile_dir(detail["profile_slug"])
+                        bf = prof_dir / "content" / "briefs" / f"{post_id}.json"
+                        if bf.exists():
+                            path = str(bf.relative_to(fileops.ROOT))
+                    out["field"] = {
+                        "post": post_id,
+                        "field": field,
+                        "scope": "brief",
+                        "path": path,
+                        "value": _brief_field_value(brief, field),
+                    }
+                except fileops.ActionError:
+                    pass
+            elif ent.get("kind") == "brief" and ref.get("post"):
+                post_id = ref["post"]
+                try:
+                    detail = fileops.read_detail(post_id)
+                    out["brief"] = {"post": post_id, "fields": list((detail.get("brief") or {}).keys())}
+                except fileops.ActionError:
+                    pass
+        return out
+    p.set_defaults(_run=_resolve_id)
+
     return parser
+
+
+def _brief_field_value(brief: dict, field: str):
+    if not brief or field.startswith("_"):
+        return None
+    if field.startswith("slide-"):
+        try:
+            n = int(field.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return None
+        for item in brief.get("slide_overlays") or []:
+            if isinstance(item, dict) and int(item.get("slide") or 0) == n:
+                return item.get("overlay")
+        return None
+    if field.startswith("gen-prompt-"):
+        try:
+            n = int(field.rsplit("-", 1)[1])
+        except (IndexError, ValueError):
+            return None
+        prompts = brief.get("gen_prompts") or []
+        return prompts[n - 1] if 0 < n <= len(prompts) else None
+    return brief.get(field)
 
 
 def main(argv=None):

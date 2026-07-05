@@ -35,10 +35,7 @@ HERE = Path(__file__).resolve().parent
 MIGRATIONS_DIR = HERE / "database" / "migrations"   # schema lives with the code
 DB_RELPATH = Path("database") / "data" / "os.db"    # generated under the workspace root
 
-MEMO_TYPES = {
-    "problem-validation", "assessment", "channels", "icp",
-    "positioning", "competitors", "pricing", "launch",
-}
+from core.project_schemas import MEMO_TYPES, normalize_workspace_artifacts  # noqa: E402
 EXPERIMENT_STATUSES = {"planned", "running", "done"}
 EXPERIMENT_DECISIONS = {"persist", "pivot", "kill"}
 POST_STATUSES = {
@@ -343,11 +340,15 @@ def collect_features(root: Path):
                 continue
             for section, checked, title, f in parse_checklist(roadmap.read_text(encoding="utf-8")):
                 sec = (section or "").lower()
-                if checked or "shipped" in sec:
+                # Shipped badge only when checkbox is ticked — unchecked lines under
+                # ## Shipped stay planned (common agent mistake).
+                if checked:
                     status = "shipped"
                 elif "now" in sec or "building" in sec:
                     status = "building"
-                elif "next" in sec or "planned" in sec:
+                elif ("next" in sec or "planned" in sec or "later" in sec or "ideas" in sec
+                      or "shipped" in sec):
+                    # Unchecked under ## Shipped = misplaced spec, not done (common agent error).
                     status = "planned"
                 else:
                     status = "idea"
@@ -454,6 +455,11 @@ def check_slugs(slugs, relationships, memos, experiments, posts, post_channels, 
 def build(root: Path):
     db_path = root / DB_RELPATH
     db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Canonicalize authored files before collectors read them (UI/osctl/chat → same shape).
+    changed = normalize_workspace_artifacts(root)
+    if changed:
+        print(f"  normalized {len(changed)} artifact(s)")
 
     entities, relationships = collect_entities(root)
     slugs = {e["slug"] for e in entities}

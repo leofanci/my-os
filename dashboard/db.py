@@ -214,6 +214,9 @@ def project(slug):
         " result, file_path FROM experiments WHERE entity_slug = ?",
         (slug,),
     )
+    for row in experiments_rows:
+        fp = row.get("file_path") or ""
+        row["stem"] = fp.rsplit("/", 1)[-1].replace(".json", "") if fp else ""
 
     product_slugs = [p["slug"] for p in products_list]
     features_rows = []

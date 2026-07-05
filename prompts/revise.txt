@@ -6,8 +6,12 @@ the user message above. The user message contains the VOICE CASCADE:
 
 Apply the REVISION INSTRUCTION below to the CURRENT CONTENT block.
 
+The instruction is free-form natural language from the user — interpret their
+intent generously. They will not name JSON fields or schemas; translate what
+they want into the brief structure defined by the profile brief spec.
+
 Rules:
-- Apply ONLY what the instruction asks. Preserve everything else unchanged.
+- Apply what the instruction asks. Preserve everything else unless they ask for a full rewrite.
 - Stay within the project and profile voice, pillars, and visual mood.
 - Honor the channel guidelines and platform constraints.
 - Honor the profile brief spec if provided.

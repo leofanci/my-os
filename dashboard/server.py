@@ -14,6 +14,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -21,128 +22,339 @@ import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
+sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(HERE))
 import db                # noqa: E402
 import fileops           # noqa: E402
 import chat_session      # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
+from ai_rules import CHAT_RAIL  # noqa: E402
+from core.project_schemas import schemas_for_api  # noqa: E402
+from core.ids import (  # noqa: E402
+    PROJECT_SECTIONS,
+    bare_slug,
+    build_catalog,
+    build_id_registry,
+    build_project_sections,
+    catalog_as_text,
+    describe_id,
+    subsection_id_map,
+    lk_tab_proj,
+    parse_id,
+    section_tally,
+)
 
 APP_HTML = HERE / "app.html"
 
-RAIL = """You are the GTM OS consultant embedded in the dashboard. You have deep expertise in go-to-market strategy, problem validation, positioning, content, channel strategy, and product. Think like a strategic partner, not an assistant.
+RAIL = CHAT_RAIL
 
-## Data access
-Every turn you receive a full OS state snapshot (projects, profiles, posts, activities, experiments, memos). For deep content, fetch on demand:
-- `python3 -m dashboard.osctl get-posts [--profile <slug>]` — all posts with IDs, dates, briefs
-- `python3 -m dashboard.osctl get-project --slug <slug>` — activities, experiments, memos, features
-- `python3 -m dashboard.osctl read-file --path <repo-relative-path>` — read any authored file (profile.md, brief JSON, memo JSON, strategy/intake.md, etc.)
 
-## Mutations (ONLY via osctl — never write files directly)
-create-project, create-profile, create-channel, add-post, create-activity, create-milestone, mark-done, update-post, set-status, update-project, update-channel, update-milestone, patch-brief
-IMPORTANT: update-profile has TWO fields — --voice for brand voice/tone, --brief-spec for brief output format. Never merge. Omit whichever isn't being updated.
-
-## Skills (terminal only — tell user exactly which to run and when)
-The user runs these in the terminal panel via /skill-name. Your job: diagnose, decide which skill applies, tell the user what to run and with what context.
-- /gtm-assessment — ICP hypotheses, positioning options, pace call (validate/accelerate), riskiest assumptions. Use for "where does this stand" or after new evidence.
-- /problem-validation — validate problem is real/painful/frequent before any GTM or build. Use for new ideas, "is this worth doing", or before gtm-assessment.
-- /positioning — positioning and messaging options, category framing, differentiation. Use for homepage, deck, bio, "how do we describe this".
-- /channel-strategy — compare GTM channels, recommend primary. Use after gtm-assessment or "where should I find customers".
-- /icp-research — sharpen ICP, segment options, where to find them, interview guide. Use when target customer is vague or before user interviews.
-- /brand-identity — profile voice and channel guidelines. Use for new profiles or when content feels off-brand.
-- /content-plan — content calendar skeleton for a profile (slots, not full copy). Use for "plan next two weeks".
-- /content-brief — expand approved slots into full post briefs (hook, caption, CTA, visual brief, GenAI prompt). Use after slots are approved.
-- /copy-variants — adapt content across channels or generate hook variants for testing.
-- /experiment-design — cheapest test for riskiest assumption, with success/kill criteria.
-- /experiment-review — log results, judge against criteria, decide persist/pivot/kill.
-- /competitor-scan — competitive landscape, gaps, strategic implications.
-- /market-sizing — bottom-up SAM/SOM anchored to real buyer counts.
-- /pricing-strategy — model, price points, packaging options with pros/cons.
-- /launch-plan — launch sequencing, assets, channels, success metrics, day-by-day checklist.
-- /venture-intake — create/update strategy/intake.md via structured interview. Use for new ventures or logging new evidence.
-- /weekly-review — portfolio cadence, surface what needs attention, set week's priorities.
-- /portfolio-timeline — unified timeline across all projects, profiles, content, launches.
-- /portfolio-sync — cross-entity coordination actions this week.
-- /portfolio-map — scaffold folder structure for new project/profile/channel.
-- /product-build — roadmap: plan features, track build status, link releases to content.
-- /gtm-os — master dispatcher. Use at session start to route any request.
-
-## Behavior
-- After acting: one-sentence confirmation only.
-- Never repeat, quote, or paste back content user can see in dashboard (briefs, posts, plans, etc.).
-- State snapshot is provided every turn — never use Read/Grep/Glob to explore structure.
-- Be direct. No hedging. Short sentences. Fragments fine."""
+def _app_html_bytes() -> bytes:
+    """Serve app.html with cache-busted asset URLs (mtime) so UI updates land."""
+    html = APP_HTML.read_text(encoding="utf-8")
+    for name in ("app.css", "app.js", "os-ids.js"):
+        v = int((HERE / name).stat().st_mtime)
+        html = html.replace(f"/{name}\"", f"/{name}?v={v}\"")
+    return html.encode("utf-8")
 
 
 def state_snapshot(projects):
-    """Full OS state for the chat agent: projects, profiles, posts, activities,
-    experiments, memos. Rich enough to act without extra fetches; deep content
-    (brief JSON, profile voice, memo body) requires read-file on demand."""
-    lines = ["## GTM OS State"]
+    """COMPACT OS index for the chat agent — projects/profiles/channels plus
+    per-entity counts, NOT full content. Bounded in size as content grows (the
+    old version enumerated every post/memo/activity every turn). The agent pulls
+    detail on demand via osctl get-posts / get-project / read-file."""
+    lines = ["## Current GTM OS state",
+             "(index only — fetch detail with osctl get-posts / get-project / read-file)"]
     if not projects:
         lines.append("(no projects yet)")
         return "\n".join(lines)
 
     try:
-        all_posts = db.posts()
-        all_memos = db.memos()
-        all_experiments = db.experiments()
-        all_activities = db._rows(
-            "SELECT entity_slug, title, date, type, status, priority"
-            " FROM activities ORDER BY entity_slug, (date IS NULL), date"
+        post_counts, memo_counts, exp_counts, open_act_counts = {}, {}, {}, {}
+        all_memos, all_exps, all_features = db.memos(), db.experiments(), db._rows(
+            "SELECT product_slug, title, status FROM features"
         )
+        for p in db.posts():
+            post_counts[p["profile_slug"]] = post_counts.get(p["profile_slug"], 0) + 1
+        for m in all_memos:
+            memo_counts[m["entity_slug"]] = memo_counts.get(m["entity_slug"], 0) + 1
+        for e in all_exps:
+            exp_counts[e["entity_slug"]] = exp_counts.get(e["entity_slug"], 0) + 1
+        for a in db._rows("SELECT entity_slug, status FROM activities"):
+            if (a["status"] or "") != "done":
+                open_act_counts[a["entity_slug"]] = open_act_counts.get(a["entity_slug"], 0) + 1
     except Exception:  # noqa: BLE001
-        all_posts = all_memos = all_experiments = all_activities = []
+        post_counts = memo_counts = exp_counts = open_act_counts = {}
+        all_memos, all_exps, all_features = [], [], []
 
-    posts_by_profile = {}
-    for p in all_posts:
-        posts_by_profile.setdefault(p["profile_slug"], []).append(p)
-
-    memos_by_entity = {}
-    for m in all_memos:
-        memos_by_entity.setdefault(m["entity_slug"], []).append(m)
-
-    exps_by_entity = {}
-    for e in all_experiments:
-        exps_by_entity.setdefault(e["entity_slug"], []).append(e)
-
-    acts_by_entity = {}
-    for a in all_activities:
-        acts_by_entity.setdefault(a["entity_slug"], []).append(a)
+    reg = build_id_registry(projects, db.posts(), root=ROOT)
 
     for p in projects:
         slug = p["slug"]
-        lines.append(f"\n### {slug} ({p.get('kind') or p.get('type')}, {p.get('priority', '')})")
+        pr_id = reg.get(f"proj:{slug}") or slug
+        head = f"\n### {slug} id={pr_id} ({p.get('kind') or p.get('type')}"
+        if p.get("priority"):
+            head += f", {p['priority']}"
+        head += ")"
+        tally = []
+        if memo_counts.get(slug):
+            tally.append(f"{memo_counts[slug]} memos")
+        if exp_counts.get(slug):
+            tally.append(f"{exp_counts[slug]} exp")
+        if open_act_counts.get(slug):
+            tally.append(f"{open_act_counts[slug]} open")
+        if tally:
+            head += "  [" + " · ".join(tally) + "]"
+        lines.append(head)
 
-        for m in memos_by_entity.get(slug, []):
-            lines.append(f"  memo {m['type']}-v{m['version']} [{m['status']}] path={m['file_path']}")
+        proj_memos = [m for m in all_memos if m.get("entity_slug") == slug]
+        proj_exps = [e for e in all_exps if e.get("entity_slug") == slug]
+        proj_products = p.get("products") or []
+        pslugs = {pr["slug"] for pr in proj_products}
+        proj_features = [f for f in all_features if f.get("product_slug") in pslugs]
 
-        for e in exps_by_entity.get(slug, []):
-            lines.append(f"  experiment: {e['assumption'][:80]} [{e['status']}]")
-
-        for a in acts_by_entity.get(slug, []):
-            d = f" {a['date']}" if a["date"] else ""
-            lines.append(f"  activity: {a['title']}{d} [{a['status']}]")
+        for key, label in PROJECT_SECTIONS:
+            tally = section_tally(
+                slug, key, ROOT,
+                memos=proj_memos,
+                experiments=proj_exps,
+                products=proj_products,
+                features=proj_features,
+            )
+            sec_id = reg.get(lk_tab_proj(slug, key)) or key
+            lines.append(f"  section {label} id={sec_id} [{tally}]")
 
         for prof in p.get("profiles", []):
-            pslug = prof["slug"]
-            posts = posts_by_profile.get(pslug, [])
-            lines.append(f"  profile {pslug} \"{prof['name']}\" [{len(posts)} posts]")
-            for post in posts:
-                d = f" {post['date']}" if post["date"] else ""
-                b = " [brief]" if post["brief_path"] else ""
-                lines.append(
-                    f"    post {post['id']}: {post['working_title'] or '(untitled)'}"
-                    f"{d} [{post['status']}]{b}"
-                )
+            n = post_counts.get(prof["slug"], 0)
+            pf_id = reg.get(f"prof:{prof['slug']}") or prof["slug"]
+            lines.append(f"  profile {prof['slug']} id={pf_id} \"{prof['name']}\" [{n} posts]")
             for ch in prof.get("channels", []):
-                lines.append(f"    channel {ch['slug']} ({ch.get('platform')})")
+                ch_id = reg.get(f"chan:{ch['slug']}") or ch["slug"]
+                lines.append(f"    channel {ch['slug']} id={ch_id} ({ch.get('platform')})")
 
     return "\n".join(lines)
+
+
+# --- per-turn routing (skills, web, model) ------------------------------ #
+# Instead of loading the whole skill library via the Skill tool (~4k tok of
+# discovery just to let the model pick one), the server routes to the ONE
+# relevant skill here and injects only its SKILL.md body into the prompt. No
+# discovery overhead, no leaked built-in commands. Pure string match — no extra
+# model call.
+SKILLS_DIR = ROOT / ".claude" / "skills"
+
+# Ordered: first match wins, so put the more specific / earlier-in-loop skills
+# first (e.g. problem-validation before gtm-assessment).
+_SKILL_ROUTES = [
+    ("problem-validation", r"validat\w*|worth (doing|building|it)|is this worth|do people (need|want)|real problem|painkiller|vitamin"),
+    ("market-sizing",      r"market siz\w*|siz\w* (the )?market|\bsam\b|\bsom\b|\btam\b|how big is the market|buyer count"),
+    ("pricing-strategy",   r"pricing|price point|packaging|how much (should|do) (we|i) charge|what (should|to) charge|willingness to pay"),
+    ("competitor-scan",    r"competitor\w*|competitive landscape|rivals|alternatives to|who else (does|is)"),
+    ("positioning",        r"position\w*|messaging|how (do|should) we describe|category|differentiat\w*|tagline|value prop"),
+    ("channel-strategy",   r"channel strateg\w*|which channel|distribution channel|where (should|do) (i|we) find customers"),
+    ("icp-research",       r"\bicp\b|ideal customer|target customer|customer segment|interview guide"),
+    ("brand-identity",     r"brand voice|brand identity|tone of voice|off.brand"),
+    ("content-brief",      r"content brief|expand (the )?slot|full (post )?brief|write the brief"),
+    ("content-plan",       r"content (plan|calendar)|posting schedule|plan (the )?next \w+ (weeks?|days?)"),
+    ("copy-variants",      r"copy variant|hook variant|adapt (across|for) channel|variant\w* for test"),
+    ("experiment-design",  r"experiment design|design an experiment|cheapest test|success criteria|kill criteria|riskiest assumption"),
+    ("experiment-review",  r"experiment review|log (the )?result|persist.{0,4}pivot.{0,4}kill"),
+    ("launch-plan",        r"launch plan|launch sequenc\w*|go.live|launch checklist"),
+    ("venture-intake",     r"venture intake|new venture|log (new )?evidence|intake interview"),
+    ("weekly-review",      r"weekly review|portfolio cadence|week'?s priorit\w*|what needs attention"),
+    ("portfolio-timeline", r"portfolio timeline|unified timeline|timeline across"),
+    ("portfolio-sync",     r"portfolio sync|cross.entity|coordinate this week"),
+    ("portfolio-map",      r"portfolio map|scaffold (the )?folder|new project structure"),
+    # Tab-fill must beat product-build — "fill tabs" is left-panel sections, not roadmap-only.
+    ("gtm-os",             r"fill.{0,40}\btabs?\b|fill.{0,40}\bpanel\b|left panel|project sections?|divide.{0,50}\btabs?\b|populate.{0,40}(tabs?|panel|sections?)"),
+    ("product-build",      r"product roadmap|build status|feature roadmap|plan (the )?features"),
+    ("gtm-assessment",     r"assess\w*|where (do|does) (we|this) stand|pace call|gtm assessment"),
+    # gtm-os is the catch-all dispatcher for strategic asks that matched nothing
+    # specific — handled separately in _route_skill so it has lowest priority.
+]
+SKILL_NAMES = frozenset(name for name, _ in _SKILL_ROUTES) | {"gtm-os"}
+_COMPILED_ROUTES = [(name, re.compile(pat, re.I)) for name, pat in _SKILL_ROUTES]
+_MENTION_RE = re.compile(r"[@/]([a-z][a-z0-9-]+)")
+# Generic strategic intent with no specific skill → route to the gtm-os dispatcher.
+_STRATEGIC_RE = re.compile(r"\b(strateg\w*|go.to.market|\bgtm\b|business model|grow\w*)\b", re.I)
+
+# Skills that almost always want live external data.
+_WEB_SKILLS = frozenset({"competitor-scan", "market-sizing", "icp-research"})
+
+
+def _explicit_skill(text):
+    """Skill active only when user tagged @skill or /skill (picker or typed)."""
+    if not text:
+        return None
+    for m in _MENTION_RE.findall(text.lower()):
+        if m in SKILL_NAMES:
+            return m
+    return None
+
+
+def _suggest_skill(text):
+    """Keyword hint for untagged turns — does not activate skill or Sonnet."""
+    if not text:
+        return None
+    for name, rx in _COMPILED_ROUTES:
+        if rx.search(text):
+            return name
+    return None
+
+
+def _route_skill(text):
+    """Backward-compat alias: explicit tag only."""
+    return _explicit_skill(text)
+
+
+def _needs_web(text, skill=None):
+    """Web tools only on explicit `/web` or `@web`, or tagged research skills."""
+    if skill in _WEB_SKILLS:
+        return True
+    if text and ("web" in _MENTION_RE.findall(text.lower())):
+        return True
+    return False
+
+
+_READ_TURN_RE = re.compile(
+    r"^\s*(what|which|how many|list|show|get|read|status|where|who)\b", re.I
+)
+_WRITE_TURN_RE = re.compile(
+    r"\b(save|commit|write|create|update|fill|populate|add|generate|draft|"
+    r"validate|assess|design|plan|build|launch|revise|brief)\b",
+    re.I,
+)
+_CONTINUATION_RE = re.compile(
+    r"\b(yes|yep|yeah|ok|okay|sure|go ahead|save|commit|do it|approved|"
+    r"looks good|next tab|proceed|continue|save all)\b",
+    re.I,
+)
+
+
+def _continuation_allowed(session, user_msg):
+    """Follow-up on an explicitly tagged skill thread (e.g. "yes save sec02")."""
+    if not getattr(session, "_skill_explicit", False) or not getattr(session, "_last_skill", None):
+        return False
+    return bool(_CONTINUATION_RE.search(user_msg or ""))
+
+
+def _pick_model(skill, web, user_msg="", session=None, *, explicit=False):
+    """Sonnet only on explicit /skill, /web, or tagged-thread continuations."""
+    if web:
+        return chat_session.ESCALATED_MODEL
+    if skill and explicit:
+        msg = (user_msg or "").strip()
+        if _READ_TURN_RE.search(msg) and not _WRITE_TURN_RE.search(msg):
+            return chat_session.CHAT_MODEL
+        return chat_session.ESCALATED_MODEL
+    if session and _continuation_allowed(session, user_msg):
+        return chat_session.ESCALATED_MODEL
+    return chat_session.CHAT_MODEL
+
+
+def _tag_gate_message(suggest):
+    skill = f"/{suggest}" if suggest else "/gtm-os or the skill for your task"
+    return (
+        f"Tag {skill} first (type / or tap ⊕ in the composer). "
+        "Writes and GTM playbooks run on Sonnet only after you tag. "
+        "Untagged turns stay on Haiku for reads and routing chat only."
+    )
+
+
+_SKILL_CONTINUATION = (
+    "(continuing — full skill instructions are in session history; "
+    "osctl get-project / read-file if state changed)"
+)
+_RESUME_NOTE = (
+    "(resumed session — prior turns in context; "
+    "osctl get-project / read-file for fresh detail)"
+)
+
+
+# Skills fully covered by CHAT_RAIL — inject stub only (avoids ~1k+ duplicate tok/turn).
+_RAIL_COVERED_SKILL_STUBS: dict[str, str] = {
+    "gtm-os": (
+        "Tab map + write gate are in system prompt. Fill tabs: turn 1 = routing plan "
+        "(sec01–sec06, one-line bullets, no osctl). Turn 2+ = one tab per osctl commit. "
+        "Other intents: route per gtm-os skill table (venture-intake, product-build, etc.)."
+    ),
+}
+
+
+def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=None, explicit=False):
+    """Assemble one chat turn. Snapshot + full skill body only on fresh session."""
+    parts = []
+    fresh = session.is_fresh() if hasattr(session, "is_fresh") else not getattr(session, "_started", False)
+
+    if fresh:
+        try:
+            parts.append(state_snapshot(projects))
+        except Exception:  # noqa: BLE001
+            pass
+    else:
+        parts.append(_RESUME_NOTE)
+
+    if skill and explicit:
+        last = getattr(session, "_last_skill", None)
+        if fresh or skill != last:
+            body_md = _load_skill_body(skill)
+            if body_md:
+                parts.append(f"## Active skill: {skill}\n{body_md}")
+        else:
+            parts.append(f"## Active skill: {skill}\n{_SKILL_CONTINUATION}")
+    elif _continuation_allowed(session, user_msg):
+        parts.append(f"## Active skill: {session._last_skill}\n{_SKILL_CONTINUATION}")
+    elif suggest and not explicit:
+        parts.append(
+            f"## Skill hint (not active)\n"
+            f"Wording suggests `{suggest}` — user did not tag. "
+            f"Before any osctl write: tell them to add `/{suggest}` (⊕ picker). "
+            "Reads ok; no commits this turn unless they tagged or this is a continuation."
+        )
+
+    if context:
+        parts.append(context.strip())
+    parts.append(f"## Request\n{user_msg}")
+    return "\n\n".join(parts)
+
+
+def _load_skill_body(name):
+    """Read a routed skill's SKILL.md, returning its instruction body (frontmatter
+    stripped). Returns '' if missing. Rail-covered skills return a short stub."""
+    stub = _RAIL_COVERED_SKILL_STUBS.get(name)
+    if stub:
+        return stub
+    f = SKILLS_DIR / name / "SKILL.md"
+    if not f.exists():
+        return ""
+    txt = f.read_text(encoding="utf-8")
+    # strip a leading YAML frontmatter block (--- ... ---)
+    if txt.startswith("---"):
+        end = txt.find("\n---", 3)
+        if end != -1:
+            txt = txt[end + 4:]
+    return txt.strip()
+
+
+def _skills_index():
+    """List the OS skills (name + one-line description from SKILL.md frontmatter)
+    for the chat's manual skill picker. Sorted by name."""
+    out = []
+    if not SKILLS_DIR.exists():
+        return out
+    for d in sorted(SKILLS_DIR.iterdir()):
+        f = d / "SKILL.md"
+        if not f.exists():
+            continue
+        fm, _ = fileops._parse_frontmatter(f.read_text(encoding="utf-8"))
+        out.append({"name": fm.get("name", d.name),
+                    "description": fm.get("description", "")})
+    return out
 
 
 _CHAT = None
@@ -176,6 +388,13 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
+    def _profile_hint(self, body=None):
+        qs = parse_qs(urlparse(self.path).query)
+        prof = (qs.get("profile") or qs.get("profile_slug") or [None])[0]
+        if not prof and body:
+            prof = body.get("profile") or body.get("profile_slug")
+        return (prof or "").strip() or None
+
     def log_message(self, fmt, *args):
         sys.stderr.write("  [dash] " + (fmt % args) + "\n")
 
@@ -184,22 +403,53 @@ class Handler(BaseHTTPRequestHandler):
         messages = body.get("messages", [])
         if not messages or messages[-1].get("role") != "user":
             return self._send(400, {"error": "no user message"})
-        text = messages[-1]["content"]
+        user_msg = messages[-1]["content"]
 
-        # Client-supplied context (current view + attached file contents from
-        # buildContext() in app.html). Placed ahead of the request so the agent
-        # sees what the user is looking at and any files they attached.
-        text = f"## Request\n{text}"
+        # Per-turn routing: explicit @/skill tags only (keyword → hint, not Sonnet).
         context = (body.get("context") or "").strip()
-        if context:
-            text = f"{context}\n\n{text}"
+        explicit = _explicit_skill(user_msg)
+        suggest = _suggest_skill(user_msg) if not explicit else None
+        skill = explicit
+        sess = get_chat_session()
 
-        try:
-            snapshot = state_snapshot(db.tree())
-            text = f"{snapshot}\n\n{text}"
-        except Exception:  # noqa: BLE001
-            pass
+        if (_WRITE_TURN_RE.search(user_msg or "")
+                and not explicit
+                and not _continuation_allowed(sess, user_msg)):
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("X-Accel-Buffering", "no")
+            self.end_headers()
+            gate = _tag_gate_message(suggest)
+            self.wfile.write(f"data: {json.dumps({'delta': gate})}\n\n".encode())
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+            self.log_message(
+                "chat tag-gate suggest=%s turn=%d", suggest or "-", sess._turn_count,
+            )
+            return
 
+        with_web = _needs_web(user_msg, skill)
+        model = _pick_model(skill, with_web, user_msg, sess, explicit=bool(explicit))
+
+        text = compose_turn_prompt(
+            user_msg=user_msg,
+            context=context,
+            skill=skill,
+            session=sess,
+            projects=db.tree(),
+            suggest=suggest,
+            explicit=bool(explicit),
+        )
+        sess.note_skill(skill, explicit=bool(explicit))
+
+        ctx_len = len((body.get("context") or "").strip())
+        fresh = sess.is_fresh()
+        self.log_message(
+            "chat turn prompt=%d ctx=%d skill=%s explicit=%s model=%s web=%s fresh=%s turn=%d",
+            len(text), ctx_len, skill or "-", bool(explicit), model, with_web, fresh,
+            sess._turn_count,
+        )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -212,7 +462,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            for kind, payload in get_chat_session().ask(text):
+            for kind, payload in get_chat_session().ask(text, with_web=with_web, model=model):
                 if kind == "delta":
                     emit({"delta": payload})
                 elif kind == "tool":
@@ -291,14 +541,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ws/terminal" and self.headers.get("Upgrade", "").lower() == "websocket":
             return self._handle_terminal_ws()
         if path in ("/", "/index.html"):
-            return self._send(200, APP_HTML.read_bytes(), "text/html; charset=utf-8")
+            return self._send(200, _app_html_bytes(), "text/html; charset=utf-8")
 
         if path == "/quit":
             self._send(200, {"ok": True})
             threading.Timer(0.3, lambda: os.kill(os.getpid(), signal.SIGTERM)).start()
             return
 
-        if path in ("/app.css", "/app.js"):
+        if path in ("/app.css", "/app.js", "/os-ids.js"):
             f = HERE / path.lstrip("/")
             ctype = "text/css" if path.endswith(".css") else "application/javascript"
             data = f.read_bytes()
@@ -324,14 +574,29 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             if path == "/api/chat-session":
-                sid = _CHAT.session_id if _CHAT is not None else None
-                return self._send(200, {"session_id": sid})
+                if _CHAT is None:
+                    return self._send(200, {"session_id": None, "turn_count": 0,
+                                            "max_turns": chat_session.MAX_TURNS, "fresh": True})
+                return self._send(200, _CHAT.session_meta())
             if path == "/api/timeline":
                 return self._send(200, db.timeline())
             if path == "/api/tree":
                 return self._send(200, db.tree())
             if path == "/api/posts-index":
                 return self._send(200, db.posts())
+            if path == "/api/skills-index":
+                return self._send(200, _skills_index())
+            if path == "/api/schemas":
+                return self._send(200, schemas_for_api())
+            if path == "/api/id-catalog":
+                tree = db.tree()
+                entries = build_catalog(tree, root=ROOT, posts=db.posts())
+                return self._send(200, {"entries": entries, "count": len(entries)})
+            if path == "/api/id-registry":
+                tree = db.tree()
+                feats = db._rows("SELECT product_slug, title, status FROM features ORDER BY product_slug, title")
+                reg = build_id_registry(tree, db.posts(), root=ROOT, features=feats)
+                return self._send(200, {"lookup": reg.lookup, "entries": reg.entries, "count": len(reg.entries)})
             if path.startswith("/api/project/"):
                 slug = path[len("/api/project/"):]
                 data = db.project(slug)
@@ -341,6 +606,17 @@ class Handler(BaseHTTPRequestHandler):
                     m["body"] = fileops.read_authored_json(m.get("file_path"))
                 for x in data["experiments"]:
                     x["body"] = fileops.read_authored_json(x.get("file_path"))
+                tree = db.tree()
+                reg = build_id_registry(tree, db.posts(), root=ROOT, features=data["features"])
+                data["memos"] = fileops.enrich_project_memos(data["memos"], slug, reg)
+                data["experiments"] = fileops.enrich_project_experiments(data["experiments"], slug, reg)
+                data["features"] = fileops.enrich_project_features(data["features"], reg)
+                data["sections"] = build_project_sections(slug, ROOT, data, registry=reg)
+                data["subsection_ids"] = subsection_id_map(reg, slug)
+                from core.project_schemas import feature_form_fields
+
+                data["subsections"] = fileops.read_subsections(slug)
+                data["feature"] = feature_form_fields(data["subsections"]["docs"]["roadmap"])
                 return self._send(200, data)
             if path.startswith("/api/profile/") and path.endswith("/posts"):
                 slug = path[len("/api/profile/"):-len("/posts")]
@@ -353,7 +629,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"text": fileops.read_channel_guidelines(slug)})
             if path.startswith("/api/post/"):
                 post_id = path[len("/api/post/"):]
-                return self._send(200, fileops.read_detail(post_id))
+                return self._send(200, fileops.read_detail(post_id, self._profile_hint()))
         except fileops.ActionError as exc:
             return self._send(404, {"error": str(exc)})
         except Exception as exc:  # noqa: BLE001
@@ -372,28 +648,43 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/update"):
                 slug = path[len("/api/profile/"):-len("/update")]
                 return self._send(200, {"ok": True, **fileops.update_profile(slug, body)})
+            if path.startswith("/api/profile/") and path.endswith("/brief-spec"):
+                slug = path[len("/api/profile/"):-len("/brief-spec")]
+                text = body.get("text")
+                if text is None:
+                    text = body.get("brief_spec", "")
+                return self._send(200, {"ok": True, **fileops.write_brief_spec(slug, text)})
             if path.startswith("/api/profile/") and path.endswith("/plan"):
                 slug = path[len("/api/profile/"):-len("/plan")]
                 return self._send(200, {"ok": True, **fileops.run_plan(slug, body)})
             if path.startswith("/api/post/") and path.endswith("/update"):
                 post_id = path[len("/api/post/"):-len("/update")]
-                return self._send(200, {"ok": True, **fileops.update_post(post_id, body)})
+                prof = self._profile_hint(body)
+                return self._send(200, {"ok": True, **fileops.update_post(post_id, body, prof)})
             if path == "/api/posts/delete":
-                return self._send(200, {"ok": True, **fileops.delete_posts(body.get("ids", []))})
+                return self._send(200, {"ok": True, **fileops.delete_posts(
+                    body.get("ids", []), self._profile_hint(body))})
             if path.startswith("/api/post/") and path.endswith("/delete"):
                 post_id = path[len("/api/post/"):-len("/delete")]
-                return self._send(200, {"ok": True, **fileops.delete_post(post_id)})
+                return self._send(200, {"ok": True, **fileops.delete_post(
+                    post_id, self._profile_hint(body))})
             if path.startswith("/api/post/") and path.endswith("/status"):
                 post_id = path[len("/api/post/"):-len("/status")]
-                result = fileops.set_status(post_id, body.get("status"))
+                result = fileops.set_status(
+                    post_id, body.get("status"), self._profile_hint(body))
                 return self._send(200, {"ok": True, **result})
             if path.startswith("/api/post/") and path.endswith("/brief"):
                 post_id = path[len("/api/post/"):-len("/brief")]
-                result = fileops.generate_brief(post_id)
+                result = fileops.generate_brief(post_id, profile_slug=self._profile_hint(body))
                 return self._send(200, {"ok": True, **result})
+            if path.startswith("/api/post/") and path.endswith("/slide/new"):
+                post_id = path[len("/api/post/"):-len("/slide/new")]
+                return self._send(200, {"ok": True, **fileops.add_slide_overlay(
+                    post_id, body.get("overlay", ""), self._profile_hint(body))})
             if path.startswith("/api/post/") and path.endswith("/revise"):
                 post_id = path[len("/api/post/"):-len("/revise")]
-                result = fileops.revise_post(post_id, body.get("instruction", ""))
+                result = fileops.revise_post(
+                    post_id, body.get("instruction", ""), self._profile_hint(body))
                 return self._send(200, {"ok": True, **result})
             if path.startswith("/api/channel/") and path.endswith("/guidelines/refine"):
                 slug = path[len("/api/channel/"):-len("/guidelines/refine")]
@@ -421,6 +712,54 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/project/") and path.endswith("/delete"):
                 slug = path[len("/api/project/"):-len("/delete")]
                 return self._send(200, {"ok": True, **fileops.delete_project(slug)})
+            if path.startswith("/api/project/") and path.endswith("/intake/new"):
+                proj = path[len("/api/project/"):-len("/intake/new")]
+                return self._send(200, {"ok": True, **fileops.create_intake(proj)})
+            if path.startswith("/api/project/") and path.endswith("/technical/new"):
+                proj = path[len("/api/project/"):-len("/technical/new")]
+                return self._send(200, {"ok": True, **fileops.create_technical(proj)})
+            if path.startswith("/api/project/") and path.endswith("/subsections/update"):
+                proj = path[len("/api/project/"):-len("/subsections/update")]
+                doc = (body.get("doc") or "").strip()
+                titles = body.get("subsections") or body.get("titles") or []
+                if isinstance(titles, str):
+                    titles = fileops.parse_subsections_arg(titles)
+                if not doc or doc not in ("intake", "technical", "roadmap"):
+                    return self._send(400, {"error": "doc must be intake, technical, or roadmap"})
+                if not titles:
+                    return self._send(400, {"error": "subsections list required"})
+                return self._send(200, {"ok": True, **fileops.update_subsections(proj, doc, titles)})
+            if path.startswith("/api/project/") and path.endswith("/subsections/add"):
+                proj = path[len("/api/project/"):-len("/subsections/add")]
+                doc = (body.get("doc") or "").strip()
+                title = (body.get("title") or "").strip()
+                if not doc or doc not in ("intake", "technical", "roadmap"):
+                    return self._send(400, {"error": "doc must be intake, technical, or roadmap"})
+                if not title:
+                    return self._send(400, {"error": "title required"})
+                return self._send(200, {"ok": True, **fileops.add_subsection(proj, doc, title)})
+            if path.startswith("/api/project/") and path.endswith("/validation-tab/update"):
+                proj = path[len("/api/project/"):-len("/validation-tab/update")]
+                titles = body.get("subsections") or body.get("titles") or []
+                if isinstance(titles, str):
+                    titles = fileops.parse_subsections_arg(titles)
+                if not titles:
+                    return self._send(400, {"error": "subsections list required"})
+                return self._send(200, {"ok": True, **fileops.update_validation_tab(proj, titles)})
+            if path.startswith("/api/project/") and path.endswith("/memo/new"):
+                proj = path[len("/api/project/"):-len("/memo/new")]
+                mtype = (body.get("type") or "").strip()
+                return self._send(200, {"ok": True, **fileops.create_memo(proj, mtype, body)})
+            if path.startswith("/api/project/") and path.endswith("/experiment/new"):
+                proj = path[len("/api/project/"):-len("/experiment/new")]
+                return self._send(200, {"ok": True, **fileops.create_experiment(proj, body)})
+            if path.startswith("/api/project/") and path.endswith("/product/new"):
+                proj = path[len("/api/project/"):-len("/product/new")]
+                slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()
+                return self._send(200, {"ok": True, **fileops.create_product(proj, slug, body)})
+            if path.startswith("/api/product/") and path.endswith("/feature/new"):
+                prod_slug = path[len("/api/product/"):-len("/feature/new")]
+                return self._send(200, {"ok": True, **fileops.add_feature(prod_slug, body)})
             if path.startswith("/api/project/") and path.endswith("/profile/new"):
                 proj = path[len("/api/project/"):-len("/profile/new")]
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()

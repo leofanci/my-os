@@ -46,6 +46,11 @@ my-portfolio/
 **Voice cascade** (injected into every content job):
 `project.md` body → `profile.md` body → `channels/<slug>/guidelines.md`
 
+**ID cascade** (dashboard @-mentions): every artifact gets a path id that mirrors
+the UI tree — `pr1.sec04.mm1` (pricing tab → positioning memo),
+`pr1.pf1.sec00.po3.br1.fd02` (profile → Posts → post → brief field). See
+[`docs/guide.md`](docs/guide.md#id-cascade-canonical-references).
+
 ---
 
 ## Install

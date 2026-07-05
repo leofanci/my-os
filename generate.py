@@ -44,6 +44,30 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 PROMPTS = HERE / "prompts"
 
+from core.brief_spec_util import (  # noqa: E402
+    format_for_brief_prompt,
+    format_for_plan_prompt,
+    merge_fields_from_slot,
+    normalize_brief_for_spec,
+    read_spec_text,
+    validate_brief_obj,
+)
+from core.ids import collect_profile_post_ids, renumber_plan_posts  # noqa: E402
+
+
+def _persist_brief(root: Path, post_id: str, brief: dict,
+                   *, bump_version_if_exists=True, set_status=True):
+    """Save via fileops.write_brief — canonical persist for all generation jobs."""
+    import dashboard.fileops as fo
+    prev = fo.ROOT
+    fo.ROOT = root
+    try:
+        fo.write_brief(post_id, brief,
+                       bump_version_if_exists=bump_version_if_exists,
+                       set_status=set_status)
+    finally:
+        fo.ROOT = prev
+
 # Content jobs are bounded, schema-constrained generations — Sonnet does them
 # well and is far faster/cheaper than the user's interactive default (which may
 # be Opus at high effort). Pinning the model here is what keeps a 14-brief batch
@@ -134,15 +158,9 @@ def validate_revise_idea(obj) -> list:
     return errs
 
 
-def validate_brief(obj, slot_id: str) -> list:
-    if not isinstance(obj, dict):
-        return ["brief is not a JSON object"]
-    errs = []
-    if obj.get("id") and obj["id"] != slot_id:
-        errs.append(f"brief id '{obj.get('id')}' != slot id '{slot_id}'")
-    if not obj.get("channels"):
-        errs.append("missing 'channels'")
-    return errs
+def validate_brief(obj, slot_id: str, spec_text: str = "", slot: dict | None = None,
+                     *, strict_spec: bool = True) -> list:
+    return validate_brief_obj(obj, slot_id, spec_text, slot, strict_spec=strict_spec)
 
 
 # --------------------------------------------------------------------------- #
@@ -331,8 +349,7 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
     # The planner needs them too — e.g. "one carousel reused as a reel across both
     # platforms" means a slot should target BOTH channels, not split into one post
     # per platform. Without this the calendar drifts from how the posts are produced.
-    brief_spec_file = profile_dir / "brief-spec.md"
-    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
+    brief_spec = read_spec_text(profile_dir).strip()
 
     base = (PROMPTS / "plan.txt").read_text(encoding="utf-8")
     params = (
@@ -345,11 +362,7 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         "\n--- RECENT HISTORY (do not repeat) ---\n"
         f"{recent_history(content_dir)}\n"
     )
-    if brief_spec:
-        params += (
-            "\n--- PROFILE BRIEF SPEC (how posts are produced — plan accordingly) ---\n"
-            f"{brief_spec}\n"
-        )
+    params += format_for_plan_prompt(brief_spec)
     obj = run_job(base + params, voice_text, validate_plan)
 
     # Normalize channel refs: the model often emits platform names ('tiktok')
@@ -367,6 +380,11 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         # 'published'); force every new slot back to 'planned' so the pipeline
         # state machine starts from the front.
         post["status"] = "planned"
+        if not post.get("format"):
+            post["format"] = "carousel"
+
+    existing_ids = collect_profile_post_ids(profile_dir)
+    renumber_plan_posts(obj.get("posts", []), existing_ids)
 
     fname = "plan-" + re.sub(r"[^0-9a-zA-Z]+", "-", period).strip("-") + ".json"
     out = content_dir / fname
@@ -387,7 +405,7 @@ def find_slot(content_dir: Path, post_id: str):
     return None
 
 
-def do_brief(root: Path, profile_slug: str, post_id: str):
+def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = ""):
     profile_dir = find_profile_dir(root, profile_slug)
     profile_md = profile_dir / "profile.md"
     if not profile_md.exists():
@@ -408,34 +426,33 @@ def do_brief(root: Path, profile_slug: str, post_id: str):
 
     # Per-profile brief spec: free-text requirements (caption length, hashtag
     # count, format leanings) that every post for this profile must honor.
-    brief_spec_file = profile_dir / "brief-spec.md"
-    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
-
-    brief_spec_block = (
-        "--- PROFILE BRIEF SPEC (per-field rules — override defaults below) ---\n"
-        f"{brief_spec}\n"
-        "--- END PROFILE BRIEF SPEC ---"
-        if brief_spec else
-        "(no per-field overrides — use your best judgment for the content type and platform)"
-    )
+    brief_spec = read_spec_text(profile_dir).strip()
     base = (PROMPTS / "brief.txt").read_text(encoding="utf-8").replace(
-        "{{PROFILE_BRIEF_SPEC}}", brief_spec_block
+        "{{PROFILE_BRIEF_SPEC}}", format_for_brief_prompt(brief_spec)
     )
+    fmt = (slot.get("format") or "carousel").lower()
     params = (
         "\n\n--- APPROVED SLOT ---\n"
         f"{json.dumps(slot, indent=2, ensure_ascii=False)}\n"
+        f"\n--- SLOT FORMAT ---\n"
+        f"{fmt}\n"
+        f"Produce a {fmt} brief. Follow the matching rules in PROFILE BRIEF SPEC.\n"
         f"\n--- PLATFORM CONSTRAINTS ({plat}) ---\n"
         f"{json.dumps(plat_cfg, indent=2, ensure_ascii=False)}\n"
     )
-    obj = run_job(base + params, voice_text,
-                  lambda o: validate_brief(o, post_id))
+    if instruction and instruction.strip():
+        params += f"\n--- USER DIRECTION ---\n{instruction.strip()}\n"
+    def _validate_prepared(o):
+        normalize_brief_for_spec(o, brief_spec)
+        for k in merge_fields_from_slot(brief_spec):
+            if not o.get(k) and slot.get(k):
+                o[k] = slot[k]
+        return validate_brief(o, post_id, brief_spec, slot)
 
-    briefs = content_dir / "briefs"
-    briefs.mkdir(parents=True, exist_ok=True)
-    out = briefs / f"{post_id}.json"
-    out.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"wrote {out}")
-    print("Next: re-index so posts.status picks up the new brief.")
+    obj = run_job(base + params, voice_text, _validate_prepared)
+
+    _persist_brief(root, post_id, obj)
+    print(f"wrote brief for {post_id}")
 
 
 def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
@@ -466,8 +483,7 @@ def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
     plat_cfg = constraints.get(plat, {}) if plat else {}
     voice_text = build_voice_cascade(profile_dir, [plat] if plat else None)
 
-    brief_spec_file = profile_dir / "brief-spec.md"
-    brief_spec = brief_spec_file.read_text(encoding="utf-8").strip() if brief_spec_file.exists() else ""
+    brief_spec = read_spec_text(profile_dir).strip()
 
     kind = "BRIEF" if is_draft else "SLOT"
     base = (PROMPTS / "revise.txt").read_text(encoding="utf-8")
@@ -481,11 +497,14 @@ def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
     if brief_spec:
         params += f"\n--- PROFILE BRIEF SPEC ---\n{brief_spec}\n"
 
-    validate = (lambda o: validate_brief(o, post_id)) if is_draft else validate_revise_idea
+    validate = (
+        (lambda o: validate_brief(o, post_id, brief_spec, slot, strict_spec=False))
+        if is_draft else validate_revise_idea
+    )
     obj = run_job(base + params, voice_text, validate)
 
     if is_draft:
-        brief_file.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
+        _persist_brief(root, post_id, obj, bump_version_if_exists=False, set_status=False)
         print(f"revised brief for {post_id}")
     else:
         # Merge revised fields back into the plan file slot in place.
@@ -551,6 +570,8 @@ def main():
     pb = sub.add_parser("brief", help="expand one approved slot into full content")
     pb.add_argument("profile", help="profile slug")
     pb.add_argument("post_id", help="slot id from plan-*.json")
+    pb.add_argument("--instruction", default=None,
+                    help="optional free-form direction from the user")
 
     pv = sub.add_parser("revise", help="revise an existing slot or brief with an instruction")
     pv.add_argument("profile", help="profile slug")
@@ -568,7 +589,7 @@ def main():
             platforms = [p.strip() for p in args.platforms.split(",") if p.strip()]
             do_plan(root, args.profile, args.period, platforms, args.cadence, args.focus)
         elif args.job == "brief":
-            do_brief(root, args.profile, args.post_id)
+            do_brief(root, args.profile, args.post_id, args.instruction or "")
         elif args.job == "revise":
             do_revise(root, args.profile, args.post_id, args.instruction)
         else:  # refine-guidelines

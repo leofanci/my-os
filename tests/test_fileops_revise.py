@@ -1,5 +1,6 @@
 import json, subprocess, sys, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 import dashboard.fileops as fileops
 import index
 from tests.test_index_projects import write
@@ -139,6 +140,26 @@ class RevisePostTest(unittest.TestCase):
 
         data = json.loads(plan_path.read_text())
         self.assertEqual(data["posts"][0]["version"], 4)
+
+    def test_update_brief_routes_to_revise_when_draft_exists(self):
+        brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
+        with mock.patch.object(fileops, "revise_post", return_value={"id": "post-001"}) as rev:
+            fileops.update_brief("post-001", "shorter caption")
+        rev.assert_called_once_with("post-001", "shorter caption")
+
+    def test_update_brief_routes_to_generate_when_no_brief(self):
+        with mock.patch.object(fileops, "generate_brief", return_value={"id": "post-001"}) as gen:
+            fileops.update_brief("post-001", "focus on noir films")
+        gen.assert_called_once_with("post-001", "focus on noir films")
+
+    def test_update_brief_requires_instruction_for_existing(self):
+        brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
+        with self.assertRaises(fileops.ActionError):
+            fileops.update_brief("post-001", "")
 
     def test_revise_empty_instruction_raises(self):
         with self.assertRaises(fileops.ActionError):

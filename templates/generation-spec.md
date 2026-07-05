@@ -1,8 +1,10 @@
 # Generation Spec — Content Planning Pipeline
 
-> Defines the contract between your system and `claude -p` jobs.
+> **Canonical prompts:** `prompts/plan.txt` and `prompts/brief.txt` (loaded by `generate.py`).
+> **Output shape:** driven by `brief-spec.md` per profile (`core/brief_spec_util.py`), not hardcoded here.
+> This doc is reference only — do not duplicate schema in skills or RAIL.
+
 > Two job types: **Plan** (calendar-level) and **Brief** (post-level).
-> Everything is JSON so the dashboard and (later) media-gen tools can consume it.
 
 ---
 
@@ -32,7 +34,7 @@ projects/<project-slug>/project.md        ← project voice (overall context)
   "strategy_note": "1-2 sentences: the angle for this period and why",
   "posts": [
     {
-      "id": "draft-001",
+      "id": "post-001",
       "date": "2026-06-15",
       "channels": ["<channel-slug>"],
       "platform": "instagram",

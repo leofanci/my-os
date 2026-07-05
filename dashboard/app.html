@@ -9,41 +9,43 @@
 </head>
 <body>
 <div class="titlebar"></div>
-<div class="app" id="app">
-  <aside class="panel side" id="rail"></aside>
-  <div class="right-col">
-    <section class="panel main" id="main"><div class="scroll"><div style="padding:30px;color:var(--dim)">loading…</div></div></section>
-    <div class="panel term-panel" id="term-panel">
+<div class="app" id="app" data-os-id="panel:shell">
+  <aside class="panel side" id="rail" data-os-id="panel:rail"></aside>
+  <div class="right-col" data-os-id="panel:main-col">
+    <section class="panel main" id="main" data-os-id="panel:main"><div class="scroll"><div style="padding:30px;color:var(--dim)">loading…</div></div></section>
+    <div class="panel term-panel" id="term-panel" data-os-id="panel:terminal">
       <div class="tbar" id="term-tab"><span id="term-chevron">▸</span>&nbsp;Terminal
         <span class="thint">full claude · all skills</span>
-        <button class="tclose" id="term-close" title="Toggle terminal">open ⌃`</button></div>
+        <button class="tclose" id="term-close" title="Toggle terminal" data-os-id="btn:global:terminal-toggle">open ⌃`</button></div>
       <div class="term-mount" id="term"></div>
     </div>
   </div>
-  <aside class="panel chat-dock" id="chat-dock">
+  <aside class="panel chat-dock" id="chat-dock" data-os-id="panel:chat">
+    <div class="chat-resize" id="chat-resize" title="Drag to resize chat"></div>
     <div class="dock-bar">
       <span class="av"></span>
       <div><b>Chat</b><span class="sm" id="chat-status">Ready</span></div>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="term-btn" id="chat-clear" title="Clear chat history">⌫</button>
-        <button class="term-btn" id="chat-move" title="Move chat to bottom-left">⇲</button>
-        <button class="term-btn" id="chat-hide" title="Hide chat">✕</button>
+        <button class="term-btn" id="chat-clear" title="Clear chat history" data-os-id="btn:global:chat-clear">⌫</button>
+        <button class="term-btn" id="chat-move" title="Move chat to bottom-left" data-os-id="btn:global:chat-move">⇲</button>
+        <button class="term-btn" id="chat-hide" title="Hide chat" data-os-id="btn:global:chat-hide">✕</button>
       </div>
     </div>
-    <div class="stream" id="chat-stream"></div>
+    <div class="stream" id="chat-stream" data-os-id="fld:global:chat:stream"></div>
     <div class="compose">
       <div class="attachments" id="attachments"></div>
       <div class="ibox">
-        <button class="attach-btn" id="attach-btn" title="Attach file">⊕</button>
+        <button class="attach-btn" id="attach-btn" title="Skills · web search · attach file (or type / )" data-os-id="btn:global:attach">⊕</button>
         <input type="file" id="file-input" multiple style="display:none">
-        <textarea id="chat-input" placeholder="Ask the OS to create or change things…" rows="1"></textarea>
-        <button class="send" id="chat-send">↑</button>
+        <textarea id="chat-input" data-os-id="fld:global:chat:input" placeholder="Reads: plain text. Writes: /skill first (⊕) — e.g. /gtm-os /content-brief. @ refs entities." rows="1"></textarea>
+        <button class="send" id="chat-send" data-os-id="btn:global:chat-send">↑</button>
       </div>
     </div>
   </aside>
 </div>
-<button class="chat-reopen" id="chat-reopen">💬 Chat</button>
-<div id="toast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(27,31,39,.92);color:#fff;padding:10px 16px;border-radius:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30"></div>
-<script src="/app.js"></script>
+<button class="chat-reopen" id="chat-reopen" data-os-id="btn:global:chat-reopen">💬 Chat</button>
+<div id="toast" data-os-id="panel:toast" style="position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(27,31,39,.92);color:#fff;padding:10px 16px;border-radius:14px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:30"></div>
+<script src="/os-ids.js?v=20260704e"></script>
+<script src="/app.js?v=20260704e"></script>
 </body>
 </html>
