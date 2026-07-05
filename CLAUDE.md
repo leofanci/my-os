@@ -1,5 +1,9 @@
 # my-os CLAUDE.md
 
+## PUBLIC REPO: zero usage data (absolute)
+
+Repo is public. NEVER write real venture/profile/product/channel names, post content, or any user data into tracked files: code, tests, docs, comments, examples, placeholders, commit messages. Real data lives only in gitignored `projects/`. Fixtures and examples use generic slugs only: `demo`, `acme`, `profile-a`, `profile-b`. Enforced by `tests/test_no_usage_data.py`, run it before every commit.
+
 ## Response style
 
 Respond like smart caveman. Cut all filler, keep technical substance.
