@@ -23,3 +23,5 @@ dashboard/server.log
 /projects/*
 !/projects/.gitkeep
 .tokensave
+os.db
+dashboard/os.db
