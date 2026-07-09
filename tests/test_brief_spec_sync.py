@@ -145,7 +145,7 @@ class BriefSpecSyncTest(unittest.TestCase):
             osctl.main(["get-brief-spec", "--profile", "demo"])
         out = json.loads(buf.getvalue().strip().splitlines()[-1])
         self.assertTrue(out["ok"])
-        self.assertEqual(out["brief_spec"].strip(), "Osctl read check.")
+        self.assertEqual(out["text"].strip(), "Osctl read check.")
 
 
 if __name__ == "__main__":

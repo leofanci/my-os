@@ -66,9 +66,8 @@ def _build_parser():
     p.add_argument("--slug", required=True)
     p.add_argument("--name")
     p.add_argument("--topic")
-    p.add_argument("--voice")
     p.set_defaults(_run=lambda a: fileops.create_profile(
-        a.project, a.slug, _fields(a, ["name", "topic", "voice"])))
+        a.project, a.slug, _fields(a, ["name", "topic"])))
 
     p = sub.add_parser("create-channel")
     p.add_argument("--profile", required=True)
@@ -270,22 +269,24 @@ def _build_parser():
     p.add_argument("--slug", required=True)
     p.add_argument("--name")
     p.add_argument("--topic")
-    p.add_argument("--voice")
     p.set_defaults(_run=lambda a: fileops.update_profile(
-        a.slug, _fields(a, ["name", "topic", "voice"])))
+        a.slug, _fields(a, ["name", "topic"])))
 
     p = sub.add_parser("get-brief-spec",
-                       help="Read the profile brief-spec.md (single source for all generators)")
+                       help="Read one profile brief-spec (default br1), or list all with --list")
     p.add_argument("--profile", required=True)
-    p.set_defaults(_run=lambda a: {
-        "profile": a.profile,
-        "path": fileops.brief_spec_relpath(a.profile),
-        "brief_spec": fileops.read_brief_spec(a.profile),
-    })
+    p.add_argument("--id", default="br1", dest="brief_id")
+    p.add_argument("--list", action="store_true")
+    p.set_defaults(_run=lambda a: (
+        {"profile": a.profile, "specs": fileops.list_brief_specs(a.profile)}
+        if a.list else fileops.get_brief_spec(a.profile, a.brief_id)
+    ))
 
     p = sub.add_parser("update-brief-spec",
-                       help="Replace brief-spec.md (Profile Setup + chat use same file)")
+                       help="Replace one profile brief-spec (default br1)")
     p.add_argument("--profile", required=True)
+    p.add_argument("--id", default="br1", dest="brief_id")
+    p.add_argument("--platforms")
     p.add_argument("--text", default="")
     def _update_brief_spec(a):
         text = a.text
@@ -293,8 +294,69 @@ def _build_parser():
             text = sys.stdin.read()
         if not text.strip():
             raise fileops.ActionError("brief spec text required (--text or stdin)")
-        return fileops.write_brief_spec(a.profile, text)
+        return fileops.write_brief_spec(a.profile, text, a.brief_id, a.platforms)
     p.set_defaults(_run=_update_brief_spec)
+
+    p = sub.add_parser("create-brief-spec",
+                       help="Add a new brief-spec to a profile (mints the next br id)")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--platforms", default="all")
+    p.add_argument("--text", default="")
+    def _create_brief_spec(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        if not text.strip():
+            raise fileops.ActionError("brief spec text required (--text or stdin)")
+        return fileops.create_brief_spec(a.profile, text, a.platforms)
+    p.set_defaults(_run=_create_brief_spec)
+
+    p = sub.add_parser("delete-brief-spec", help="Delete a profile brief-spec by id")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--id", required=True, dest="brief_id")
+    p.set_defaults(_run=lambda a: fileops.delete_brief_spec(a.profile, a.brief_id))
+
+    p = sub.add_parser("get-voice",
+                       help="Read one profile voice (default vc1), or list all with --list")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--id", default="vc1", dest="voice_id")
+    p.add_argument("--list", action="store_true")
+    p.set_defaults(_run=lambda a: (
+        {"profile": a.profile, "voices": fileops.list_voices(a.profile)}
+        if a.list else fileops.get_voice(a.profile, a.voice_id)
+    ))
+
+    p = sub.add_parser("update-voice", help="Replace one profile voice (default vc1)")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--id", default="vc1", dest="voice_id")
+    p.add_argument("--platforms")
+    p.add_argument("--text", default="")
+    def _update_voice(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        if not text.strip():
+            raise fileops.ActionError("voice text required (--text or stdin)")
+        return fileops.update_voice(a.profile, text, a.voice_id, a.platforms)
+    p.set_defaults(_run=_update_voice)
+
+    p = sub.add_parser("create-voice", help="Add a new voice to a profile (mints the next vc id)")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--platforms", default="all")
+    p.add_argument("--text", default="")
+    def _create_voice(a):
+        text = a.text
+        if not text.strip():
+            text = sys.stdin.read()
+        if not text.strip():
+            raise fileops.ActionError("voice text required (--text or stdin)")
+        return fileops.create_voice(a.profile, text, a.platforms)
+    p.set_defaults(_run=_create_voice)
+
+    p = sub.add_parser("delete-voice", help="Delete a profile voice by id")
+    p.add_argument("--profile", required=True)
+    p.add_argument("--id", required=True, dest="voice_id")
+    p.set_defaults(_run=lambda a: fileops.delete_voice(a.profile, a.voice_id))
 
     p = sub.add_parser("update-project")
     p.add_argument("--slug", required=True)

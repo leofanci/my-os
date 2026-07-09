@@ -139,7 +139,32 @@ class T(unittest.TestCase):
         self.assertTrue(out["ok"])
         c, got = run(["get-brief-spec", "--profile", "demo"])
         self.assertEqual(c, 0)
-        self.assertEqual(got["brief_spec"].strip(), "Caption max 120 chars.")
+        self.assertEqual(got["text"].strip(), "Caption max 120 chars.")
+
+    def test_create_and_update_brief_spec_with_id(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        c, out = run(["create-brief-spec", "--profile", "demo",
+                      "--text", "tiktok rules", "--platforms", "all"])
+        self.assertEqual(c, 0)
+        self.assertEqual(out["brief_id"], "br2")
+        c, out2 = run(["update-brief-spec", "--profile", "demo",
+                       "--id", "br2", "--text", "updated"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out2["ok"])
+        c, got = run(["get-brief-spec", "--profile", "demo", "--id", "br2"])
+        self.assertEqual(got["text"].strip(), "updated")
+
+    def test_create_and_delete_voice(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        c, out = run(["create-voice", "--profile", "demo",
+                      "--text", "faster cuts", "--platforms", "all"])
+        self.assertEqual(c, 0)
+        self.assertEqual(out["voice_id"], "vc2")
+        c, out2 = run(["delete-voice", "--profile", "demo", "--id", "vc2"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out2["deleted"])
 
     def test_update_brief_delegates_to_fileops(self):
         run(["create-project", "--slug", "acme"])
