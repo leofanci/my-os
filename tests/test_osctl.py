@@ -114,7 +114,31 @@ class T(unittest.TestCase):
             c, out = run(["generate-brief", "--id", post["id"]])
         self.assertEqual(c, 0)
         self.assertTrue(out["ok"])
-        gen.assert_called_once_with(post["id"], None)
+        gen.assert_called_once_with(post["id"], None, brief_id=None, voice_id=None)
+
+    def test_generate_brief_forwards_explicit_spec_and_voice(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        run(["create-channel", "--profile", "demo", "--slug", "demo-tiktok", "--platform", "tiktok"])
+        _, post = run(["add-post", "--profile", "demo", "--working-title", "Idea A",
+                       "--channels", "demo-tiktok"])
+        with mock.patch.object(fileops, "generate_brief",
+                               return_value={"id": post["id"], "status": "briefed"}) as gen:
+            run(["generate-brief", "--id", post["id"], "--spec", "br2", "--voice", "vc2"])
+        gen.assert_called_once_with(post["id"], None, brief_id="br2", voice_id="vc2")
+
+    def test_generate_plan_forwards_brief_and_voice_counts(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        with mock.patch.object(fileops, "run_plan",
+                               return_value={"profile_slug": "demo", "stdout": "ok"}) as plan:
+            run(["generate-plan", "--profile", "demo", "--period", "2026-07-01 to 2026-07-14",
+                 "--brief-counts", "br1:5,br2:2", "--voice-counts", "vc1:7"])
+        plan.assert_called_once_with("demo", {
+            "period": "2026-07-01 to 2026-07-14",
+            "brief_counts": "br1:5,br2:2",
+            "voice_counts": "vc1:7",
+        })
 
     def test_generate_plan_delegates_to_fileops(self):
         run(["create-project", "--slug", "acme"])
@@ -178,7 +202,7 @@ class T(unittest.TestCase):
                           "--instruction", "punchier hook"])
         self.assertEqual(c, 0)
         self.assertTrue(out["ok"])
-        upd.assert_called_once_with(post["id"], "punchier hook")
+        upd.assert_called_once_with(post["id"], "punchier hook", brief_id=None, voice_id=None)
 
     def test_get_project_includes_sections(self):
         run(["create-project", "--slug", "acme", "--name", "Acme"])
@@ -335,7 +359,7 @@ class T(unittest.TestCase):
                           "--instruction", "punchier title"])
         self.assertEqual(c, 0)
         self.assertTrue(out["ok"])
-        rev.assert_called_once_with(post["id"], "punchier title")
+        rev.assert_called_once_with(post["id"], "punchier title", brief_id=None, voice_id=None)
 
 
 if __name__ == "__main__":

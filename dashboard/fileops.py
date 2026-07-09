@@ -298,8 +298,11 @@ def set_status(post_id, new_status, profile_slug=None):
     return {"id": post_id, "status": new_status, "from": current}
 
 
-def generate_brief(post_id, instruction=None, profile_slug=None):
-    """Run the claude -p brief job (Write button). Persists via write_brief inside generate.py."""
+def generate_brief(post_id, instruction=None, profile_slug=None, brief_id=None, voice_id=None):
+    """Run the claude -p brief job (Write button). Persists via write_brief inside generate.py.
+
+    brief_id/voice_id override which brief-spec/voice to use — omit to use
+    whatever the post is stored with, else br1/vc1 (see generate.py do_brief)."""
     ctx = find_post(post_id, profile_slug)
     current = ctx["post"].get("status") or "planned"
     if current not in ("planned", "approved_slot"):
@@ -309,13 +312,17 @@ def generate_brief(post_id, instruction=None, profile_slug=None):
            "--workspace", str(ROOT), "brief", ctx["profile_slug"], post_id]
     if instruction and instruction.strip():
         cmd += ["--instruction", instruction.strip()]
+    if brief_id:
+        cmd += ["--spec", brief_id]
+    if voice_id:
+        cmd += ["--voice", voice_id]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise ActionError(f"brief job failed: {(res.stderr or res.stdout).strip()[:800]}")
     return {"id": post_id, "status": "briefed", "stdout": res.stdout.strip()}
 
 
-def update_brief(post_id, instruction=None, profile_slug=None):
+def update_brief(post_id, instruction=None, profile_slug=None, brief_id=None, voice_id=None):
     """Natural-language brief create or update — primary chat path.
 
     Existing brief → revise job with the user's words. No brief yet → generate
@@ -325,28 +332,31 @@ def update_brief(post_id, instruction=None, profile_slug=None):
     if brief_file.exists():
         if not (instruction or "").strip():
             raise ActionError("instruction is required to change an existing brief")
-        return revise_post(post_id, instruction, profile_slug)
-    return generate_brief(post_id, instruction, profile_slug)
+        return revise_post(post_id, instruction, profile_slug, brief_id, voice_id)
+    return generate_brief(post_id, instruction, profile_slug, brief_id, voice_id)
 
 
-def revise_post(post_id, instruction, profile_slug=None):
+def revise_post(post_id, instruction, profile_slug=None, brief_id=None, voice_id=None):
     """Revise a slot (idea) or brief (draft) in place via the AI revise job.
 
     For drafts the brief file is overwritten and the plan-file version is bumped.
     For ideas the slot fields are updated directly in the plan file.
-    """
+    brief_id/voice_id override which brief-spec/voice to use — omit to use
+    whatever the post is stored with, else br1/vc1 (see generate.py do_revise)."""
     if not instruction or not instruction.strip():
         raise ActionError("instruction is required")
     ctx = find_post(post_id, profile_slug)
     brief_file = ctx["plan"].parent / "briefs" / f"{post_id}.json"
     is_draft = brief_file.exists()
 
-    res = subprocess.run(
-        [sys.executable, str(ROOT / "generate.py"),
-         "--workspace", str(ROOT), "revise", ctx["profile_slug"], post_id,
-         "--instruction", instruction],
-        capture_output=True, text=True,
-    )
+    cmd = [sys.executable, str(ROOT / "generate.py"),
+           "--workspace", str(ROOT), "revise", ctx["profile_slug"], post_id,
+           "--instruction", instruction]
+    if brief_id:
+        cmd += ["--spec", brief_id]
+    if voice_id:
+        cmd += ["--voice", voice_id]
+    res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise ActionError(f"revise job failed: {(res.stderr or res.stdout).strip()[:800]}")
 
@@ -641,7 +651,7 @@ def write_brief(post_id, brief, *, bump_version_if_exists=True, set_status=True,
     is_rebrief = brief_file.exists()
     if strict_spec is None:
         strict_spec = not is_rebrief
-    spec_text = read_brief_spec(ctx["profile_slug"])
+    spec_text = read_brief_spec(ctx["profile_slug"], slot.get("brief_id") or "br1")
     normalize_brief_for_spec(brief, spec_text)
     for k in merge_fields_from_slot(spec_text):
         if not brief.get(k) and slot.get(k):
@@ -1538,6 +1548,12 @@ def _plan_args(profile_slug, params):
     focus = (params.get("focus") or "").strip()
     if focus:
         args += ["--focus", focus]
+    brief_counts = (params.get("brief_counts") or "").strip()
+    if brief_counts:
+        args += ["--brief-counts", brief_counts]
+    voice_counts = (params.get("voice_counts") or "").strip()
+    if voice_counts:
+        args += ["--voice-counts", voice_counts]
     return args
 
 

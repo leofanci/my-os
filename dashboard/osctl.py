@@ -395,13 +395,23 @@ def _build_parser():
                        help="Run the brief job for a planned/approved slot (same as Write button)")
     p.add_argument("--id", required=True, dest="id")
     p.add_argument("--instruction", default="")
-    p.set_defaults(_run=lambda a: fileops.generate_brief(a.id, a.instruction or None))
+    p.add_argument("--spec", dest="brief_id", default=None,
+                   help="brief-spec id to use, e.g. br2 (default: post's stored id, else br1)")
+    p.add_argument("--voice", dest="voice_id", default=None,
+                   help="voice id to use, e.g. vc2 (default: post's stored id, else vc1)")
+    p.set_defaults(_run=lambda a: fileops.generate_brief(
+        a.id, a.instruction or None, brief_id=a.brief_id, voice_id=a.voice_id))
 
     p = sub.add_parser("update-brief",
                        help="Create or change a brief from natural language (primary chat path)")
     p.add_argument("--id", required=True, dest="id")
     p.add_argument("--instruction", default="")
-    p.set_defaults(_run=lambda a: fileops.update_brief(a.id, a.instruction or None))
+    p.add_argument("--spec", dest="brief_id", default=None,
+                   help="brief-spec id to use, e.g. br2 (default: post's stored id, else br1)")
+    p.add_argument("--voice", dest="voice_id", default=None,
+                   help="voice id to use, e.g. vc2 (default: post's stored id, else vc1)")
+    p.set_defaults(_run=lambda a: fileops.update_brief(
+        a.id, a.instruction or None, brief_id=a.brief_id, voice_id=a.voice_id))
 
     p = sub.add_parser("generate-plan",
                        help="Run the plan job for a profile (same as Generate ideas button)")
@@ -410,6 +420,10 @@ def _build_parser():
     p.add_argument("--platforms", default="")
     p.add_argument("--cadence", default="")
     p.add_argument("--focus", default="")
+    p.add_argument("--brief-counts", default="", dest="brief_counts",
+                   help='e.g. "br1:5,br2:2" — only meaningful when the profile has >1 brief-spec')
+    p.add_argument("--voice-counts", default="", dest="voice_counts",
+                   help='e.g. "vc1:5,vc2:2" — only meaningful when the profile has >1 voice')
     def _generate_plan(a):
         params = {"period": a.period}
         if a.platforms:
@@ -418,6 +432,10 @@ def _build_parser():
             params["cadence"] = a.cadence
         if a.focus:
             params["focus"] = a.focus
+        if a.brief_counts:
+            params["brief_counts"] = a.brief_counts
+        if a.voice_counts:
+            params["voice_counts"] = a.voice_counts
         return fileops.run_plan(a.profile, params)
     p.set_defaults(_run=_generate_plan)
 
@@ -430,7 +448,12 @@ def _build_parser():
                        help="Revise a slot or draft via generate.py (same as Revise button)")
     p.add_argument("--id", required=True, dest="id")
     p.add_argument("--instruction", required=True)
-    p.set_defaults(_run=lambda a: fileops.revise_post(a.id, a.instruction))
+    p.add_argument("--spec", dest="brief_id", default=None,
+                   help="brief-spec id to use, e.g. br2 (default: post's stored id, else br1)")
+    p.add_argument("--voice", dest="voice_id", default=None,
+                   help="voice id to use, e.g. vc2 (default: post's stored id, else vc1)")
+    p.set_defaults(_run=lambda a: fileops.revise_post(
+        a.id, a.instruction, brief_id=a.brief_id, voice_id=a.voice_id))
 
     # --- read commands (no mutations) ---
 

@@ -75,7 +75,7 @@ Source: `core.project_schemas.MEMO_SECTION` + `core.ids.PROJECT_SECTION_LAYOUT`.
 | vw02 | Calendar/Ops | user-confirmed scheduled work | `create-activity`, `create-milestone` | experiments, memos |"""
 
 BRIEF_SPEC = """## Brief spec & voice (several per profile ok, `platforms:` tag info only)
-`brief-specs/br{N}.md` / `voices/vc{N}.md`. `get/create-brief-spec --id brN`, `update-brief-spec --id brN --text ...`, minimal-edit, default br1. Same for voice (vc1).
+`brief-specs/br{N}.md` / `voices/vc{N}.md`. `get/update-brief-spec --id brN` (minimal-edit, default br1); `create-brief-spec` has no --id, mints next. Same for voice (vc1).
 Always explicit, default br1/vc1; post remembers its pair. New posts only; existing grandfathered."""
 
 POST_BRIEFS = """## Post briefs (NL — never ask user for JSON)

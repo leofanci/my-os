@@ -47,7 +47,7 @@ Never write content files directly. All mutations go through osctl:
 
 Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md`.
 
-A profile can have several brief-specs and several voices (`br1`, `br2`, ... / `vc1`, `vc2`, ...), each optionally tagged `platforms:` (`all` or a comma list from that profile's channels). Tag is informational only — selection between multiple is always manual, never auto-matched. Default is br1/vc1 when nothing is specified; a post remembers which pair produced it. Path: `projects/<project>/profiles/<profile>/brief-specs/br{N}.md` and `.../voices/vc{N}.md`. Changing one does not rewrite existing post briefs.
+A profile can have several brief-specs and several voices (`br1`, `br2`, ... / `vc1`, `vc2`, ...), each optionally tagged `platforms:` (`all` or a comma list from that profile's channels). Tag is informational only: selection between multiple is always manual, never auto-matched. Default is br1/vc1 when nothing is specified; a post remembers which pair produced it. Path: `projects/<project>/profiles/<profile>/brief-specs/br{N}.md` and `.../voices/vc{N}.md`. Changing one does not rewrite existing post briefs.
 To edit one from NL: `get-brief-spec --id <id>` first, then MINIMAL EDIT — keep every line the user did not touch verbatim, change only what they asked, never rewrite/reword the rest.
 
 **Write gate (same as posts):** routing + short summary in chat → user approves tab placement → osctl writes content once (review in dashboard, not chat). Never paste full memo/intake/roadmap text in chat and again in osctl. Full rules: `dashboard/ai_rules.py` WRITE_GATE + TAB_ROUTING.

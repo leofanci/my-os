@@ -378,7 +378,6 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
     # The planner needs them too — e.g. "one carousel reused as a reel across both
     # platforms" means a slot should target BOTH channels, not split into one post
     # per platform. Without this the calendar drifts from how the posts are produced.
-    brief_spec = read_spec_text(profile_dir).strip()
     brief_ids = list_brief_ids(profile_dir)
     voice_ids = list_voice_ids(profile_dir)
 
@@ -393,15 +392,33 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         "\n--- RECENT HISTORY (do not repeat) ---\n"
         f"{recent_history(content_dir)}\n"
     )
-    params += format_for_plan_prompt(brief_spec)
     if len(brief_ids) > 1:
+        # Each split id needs its OWN rules shown, not just br1's — a post minted
+        # under br2 must actually follow br2's constraints, not br1's.
         counts = brief_counts or {brief_ids[0]: cadence * len(platforms)}
-        params += "\n--- BRIEF-SPEC SPLIT (mint this many posts per brief id) ---\n"
-        params += "\n".join(f"{bid}: {n}" for bid, n in counts.items()) + "\n"
+        params += "\n--- BRIEF-SPEC SPLIT (mint this many posts per brief id, each with its own rules) ---\n"
+        for bid, n in counts.items():
+            spec_text = read_spec_text(profile_dir, bid).strip()
+            params += f"\n{bid} ({n} posts):\n" + format_for_plan_prompt(spec_text) + "\n"
+    else:
+        brief_spec = read_spec_text(profile_dir, brief_ids[0]).strip()
+        params += format_for_plan_prompt(brief_spec)
     if len(voice_ids) > 1:
+        # Same reasoning as the brief-spec split: show each voice's actual text,
+        # not just vc1's (already folded into voice_text above).
         counts = voice_counts or {voice_ids[0]: cadence * len(platforms)}
         params += "\n--- VOICE SPLIT (mint this many posts per voice id) ---\n"
-        params += "\n".join(f"{vid}: {n}" for vid, n in counts.items()) + "\n"
+        extra_voices = []
+        for vid, n in counts.items():
+            if vid == voice_ids[0]:
+                params += f"{vid} ({n} posts): default profile voice above\n"
+                continue
+            vtext = read_voice_text(profile_dir, vid).strip()
+            params += f"{vid} ({n} posts): see VOICE {vid} below\n"
+            if vtext:
+                extra_voices.append(f"--- VOICE {vid} ---\n{vtext}")
+        if extra_voices:
+            voice_text += "\n\n" + "\n\n".join(extra_voices)
     obj = run_job(base + params, voice_text, validate_plan)
 
     # Normalize channel refs: the model often emits platform names ('tiktok')
@@ -508,7 +525,8 @@ def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = "",
     print(f"wrote brief for {post_id}")
 
 
-def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
+def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str,
+              brief_id: str | None = None, voice_id: str | None = None):
     """Revise an existing slot (idea) or brief (draft) using a user instruction.
 
     - Ideas (no brief file): updates slot fields in the plan-*.json in place.
@@ -520,6 +538,10 @@ def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
     slot = find_slot(content_dir, post_id)
     if slot is None:
         raise JobError(f"slot '{post_id}' not found in any plan-*.json under {content_dir}")
+
+    # Explicit flag wins; else whatever this post was minted/briefed with; else default.
+    brief_id = brief_id or slot.get("brief_id") or "br1"
+    voice_id = voice_id or slot.get("voice_id") or "vc1"
 
     brief_file = content_dir / "briefs" / f"{post_id}.json"
     is_draft = brief_file.exists()
@@ -534,9 +556,9 @@ def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str):
         plat = slot.get("platform") or (slot.get("channels") or [""])[0]
 
     plat_cfg = constraints.get(plat, {}) if plat else {}
-    voice_text = build_voice_cascade(profile_dir, [plat] if plat else None)
+    voice_text = build_voice_cascade(profile_dir, [plat] if plat else None, voice_id)
 
-    brief_spec = read_spec_text(profile_dir).strip()
+    brief_spec = read_spec_text(profile_dir, brief_id).strip()
 
     kind = "BRIEF" if is_draft else "SLOT"
     base = (PROMPTS / "revise.txt").read_text(encoding="utf-8")
@@ -638,6 +660,10 @@ def main():
     pv.add_argument("profile", help="profile slug")
     pv.add_argument("post_id", help="slot id")
     pv.add_argument("--instruction", required=True, help='e.g. "punchier hook, caption under 200 chars"')
+    pv.add_argument("--spec", dest="brief_id", default=None,
+                    help="brief-spec id to use, e.g. br2 (default: post's stored id, else br1)")
+    pv.add_argument("--voice", dest="voice_id", default=None,
+                    help="voice id to use, e.g. vc2 (default: post's stored id, else vc1)")
 
     pr = sub.add_parser("refine-guidelines",
                         help="read rough guideline notes from stdin, print refined markdown")
@@ -654,7 +680,8 @@ def main():
             do_brief(root, args.profile, args.post_id, args.instruction or "",
                      args.brief_id, args.voice_id)
         elif args.job == "revise":
-            do_revise(root, args.profile, args.post_id, args.instruction)
+            do_revise(root, args.profile, args.post_id, args.instruction,
+                      args.brief_id, args.voice_id)
         else:  # refine-guidelines
             sys.stdout.write(do_refine_guidelines(root, args.channel, sys.stdin.read()))
     except JobError as exc:
