@@ -145,6 +145,19 @@ TAM note.
         _, updated = normalize_doc_text(raw, doc_key="intake", config=cfg)
         self.assertEqual(updated["validation_tab"], ["Stage & evidence", "Market"])
 
+    def test_update_doc_section_patches_one_heading(self):
+        import dashboard.fileops as fileops
+
+        fileops.ROOT = self.root
+        cfg = ensure_config(self.root, "acme")
+        path = self.proj / "technical.md"
+        path.write_text(starter_text(cfg, "technical"), encoding="utf-8")
+        out = fileops.update_doc_section("acme", "technical", "Stack", "- RN\n- Postgres")
+        self.assertEqual(out["title"], "Stack")
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("RN", text)
+        self.assertIn("## Architecture", text)
+
 
 if __name__ == "__main__":
     unittest.main()

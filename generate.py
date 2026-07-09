@@ -52,7 +52,7 @@ from core.brief_spec_util import (  # noqa: E402
     read_spec_text,
     validate_brief_obj,
 )
-from core.ids import collect_profile_post_ids, renumber_plan_posts  # noqa: E402
+from core.ids import mint_post_ids  # noqa: E402
 
 
 def _persist_brief(root: Path, post_id: str, brief: dict,
@@ -383,8 +383,10 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         if not post.get("format"):
             post["format"] = "carousel"
 
-    existing_ids = collect_profile_post_ids(profile_dir)
-    renumber_plan_posts(obj.get("posts", []), existing_ids)
+    project_slug = profile_dir.parent.parent.name
+    new_ids = mint_post_ids(root, project_slug, profile_slug, len(obj.get("posts", [])))
+    for post, pid in zip(obj.get("posts", []), new_ids):
+        post["id"] = pid
 
     fname = "plan-" + re.sub(r"[^0-9a-zA-Z]+", "-", period).strip("-") + ".json"
     out = content_dir / fname

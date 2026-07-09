@@ -36,16 +36,17 @@ from core.brief_spec_util import (
 )
 from core.ids import (
     build_id_registry,
+    find_duplicate_post_ids,
     lk_experiment,
     lk_feature,
     lk_fld_brief,
     lk_memo,
     lk_prod,
+    mint_post_ids,
     next_activity_id,
     next_experiment_stem,
     next_memo_version,
     next_milestone_id,
-    next_post_id,
     slug_key,
 )
 from core.project_schemas import (
@@ -56,6 +57,7 @@ from core.project_schemas import (
     normalize_experiment_body,
     normalize_markdown,
     normalize_memo_body,
+    parse_markdown_sections,
 )
 from core.subsections import (
     DOC_META,
@@ -112,6 +114,16 @@ def reindex():
     )
     if res.returncode != 0:
         raise ActionError(f"re-index failed: {res.stderr.strip()[:600]}")
+    # Guard: the SQLite index upserts by id, so two posts sharing one id
+    # silently collapse to whichever plan file was read last — invisible
+    # from the index itself. Check the raw plan files on every reindex so a
+    # collision (batch job, hand-edit, drifted counter) fails loudly right
+    # where it was introduced instead of surfacing later as a post that
+    # resolves to the wrong content.
+    dupes = find_duplicate_post_ids(ROOT)
+    if dupes:
+        detail = "; ".join(f"'{pid}' in {', '.join(files)}" for pid, files in sorted(dupes.items()))
+        raise ActionError(f"duplicate post id(s) found after reindex: {detail}")
     return res.stdout
 
 
@@ -405,8 +417,8 @@ def add_post(profile_slug, fields):
     else:
         plan = content / "plan-manual.json"
         data = {"posts": []}
-    existing = {p.get("id") for p in data["posts"]}
-    pid = next_post_id(existing, manual=True)
+    project_slug = profile_dir.parent.parent.name
+    pid = mint_post_ids(ROOT, project_slug, profile_slug, 1)[0]
     post = {"id": pid, "status": "planned"}
     for k in _POST_FIELDS:
         v = (fields.get(k) or "").strip()
@@ -1057,6 +1069,40 @@ def add_subsection(project_slug: str, doc_key: str, title: str) -> dict:
     reindex()
     return {"project": project_slug, "doc": doc_key, "title": title.strip(),
             "subsections": subsections_api_payload(cfg)}
+
+
+def update_doc_section(project_slug: str, doc_key: str, title: str, body: str) -> dict:
+    """Patch one ``##`` subsection body inside intake.md or technical.md."""
+    title = (title or "").strip()
+    if not title:
+        raise ActionError("title required")
+    if doc_key not in ("intake", "technical"):
+        raise ActionError("doc must be intake or technical")
+    _project_dir(project_slug)
+    doc_path = _project_doc_path(project_slug, doc_key)
+    if not doc_path or not doc_path.is_file():
+        raise ActionError(f"{doc_key} file missing — create it first")
+    cfg = load_config(ROOT, project_slug)
+    sections = tuple(subsections_for_doc(cfg, doc_key))
+    if title not in sections:
+        raise ActionError(f"subsection '{title}' not in config — add it first")
+    meta = DOC_META[doc_key]
+    roadmap = doc_key == "roadmap"
+    parsed = parse_markdown_sections(doc_path.read_text(encoding="utf-8"), roadmap=roadmap)
+    parsed[title] = (body or "").strip()
+    chunks = [f"# {meta['title']}", ""]
+    for sec in sections:
+        chunks.extend([f"## {sec}", "", (parsed.get(sec) or "").strip(), ""])
+    draft = "\n".join(chunks).rstrip() + "\n"
+    norm = _write_project_doc(project_slug, doc_key, draft, path=doc_path)
+    reindex()
+    return {
+        "project": project_slug,
+        "doc": doc_key,
+        "title": title,
+        "path": str(doc_path.relative_to(ROOT)),
+        "chars": len(norm),
+    }
 
 
 def _project_dir(project_slug: str) -> Path:

@@ -170,6 +170,8 @@ const ROUTES = [
   [/^\/project\/([^/]+)\/profile\/new$/,        ([s])    => renderNewProfile(s)],
   [/^\/project\/([^/]+)\/intake\/new$/,          ([s])    => renderNewIntake(s)],
   [/^\/project\/([^/]+)\/technical\/new$/,       ([s])    => renderNewTechnical(s)],
+  [/^\/project\/([^/]+)\/technical\/subsection\/new$/, ([s]) => renderNewDocSubsection(s, "technical")],
+  [/^\/project\/([^/]+)\/technical\/subsection\/edit\/([^/]+)$/, ([s,k]) => renderEditDocSubsection(s, "technical", k, _NAV_EXTRAS)],
   [/^\/project\/([^/]+)\/memo\/new\/([^/]+)$/,   ([s,t])  => renderNewMemo(s,t)],
   [/^\/project\/([^/]+)\/experiment\/new$/,     ([s])    => renderNewExperiment(s)],
   [/^\/project\/([^/]+)\/product\/new$/,          ([s])    => renderNewProduct(s)],
@@ -497,7 +499,10 @@ function entityId(id){
 
 function idDisplay(id, opts={}){
   if (!id) return "";
-  return opts.dropTabSuffix ? entityId(id) : id;
+  let s = opts.dropTabSuffix ? entityId(id) : id;
+  // Tab subsections: show pr2.sec06.ss1 not pr2.sec06.doc1.ss1 (doc = file layer, redundant in UI).
+  if (/\.doc\d+\.ss\d+/i.test(s)) s = s.replace(/\.doc\d+(\.ss\d+)/i, "$1");
+  return s;
 }
 
 function sectionIdChip(id, opts=null){
@@ -577,10 +582,11 @@ function composedIdOnly(...candidates){
   return "";
 }
 
-function renderSecGroup(label, inner, id=null){
+function renderSecGroup(label, inner, id=null, actions=""){
   const chip = sectionIdChip(composedIdOnly(id));
-  const head = chip
-    ? `<div class="sec-group-head"><h3>${esc(label)}</h3>${chip}</div>`
+  const act = actions ? `<div class="sec-group-actions">${actions}</div>` : "";
+  const head = chip || act
+    ? `<div class="sec-group-head"><h3>${esc(label)}</h3><div class="sec-group-end">${chip}${act}</div></div>`
     : `<h3>${esc(label)}</h3>`;
   return `<div class="sec-group">${head}${inner}</div>`;
 }
@@ -657,17 +663,30 @@ function docSubsectionId(projectSlug, p, docKey, title){
   return composedIdOnly(OSID.docSubsection(projectSlug, docKey, title));
 }
 
-function renderMdSubsections(projectSlug, p, docKey, text){
+function renderMdSubsections(projectSlug, p, docKey, text, opts = {}){
   const order = projectDocSubsections(p, docKey);
   const parsed = Object.fromEntries(parseMdSections(text || "").map(s => [s.title, s.body]));
   let html = "";
   order.forEach(title => {
     const body = (parsed[title] || "").trim();
-    const inner = body ? formatMdDoc(body) : `<p class="memo-empty">Empty.</p>`;
+    const inner = body ? formatMdDoc(body) : `<p class="memo-empty">Empty — click Edit to add content.</p>`;
     const subId = docSubsectionId(projectSlug, p, docKey, title);
-    html += renderSecGroup(title, `<div class="pcard"><div class="sec-body memo-body">${inner}</div></div>`, subId);
+    const titleKey = OSID.slugKey(title);
+    const editBtn = opts.editable
+      ? `<button type="button" class="btn" data-edit-doc-sub="${esc(docKey)}" data-sub-title="${esc(title)}" data-sub-key="${esc(titleKey)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>`
+      : "";
+    html += renderSecGroup(title, `<div class="pcard"><div class="sec-body memo-body">${inner}</div></div>`, subId, editBtn);
   });
   return html;
+}
+
+function wireDocSubsectionEditButtons(projectSlug){
+  $("#main").querySelectorAll("[data-edit-doc-sub]").forEach(btn => {
+    btn.onclick = () => navigate(
+      `#/project/${projectSlug}/${btn.dataset.editDocSub}/subsection/edit/${btn.dataset.subKey}`,
+      { subTitle: btn.dataset.subTitle },
+    );
+  });
 }
 
 function filterIntakeSections(text, allowedTitles){
@@ -773,7 +792,7 @@ function renderValidationSection(slug, p, sec){
 function renderTechnicalSection(slug, p, sec){
   const tech = (sec.artifacts || []).find(a => a.kind === "file" && (a.path || "").endsWith("technical.md"));
   if (!tech) return sectionEmptyState("technical");
-  return `<div class="sec-subsections">${renderMdSubsections(slug, p, "technical", tech.text)}</div>`;
+  return `<div class="sec-subsections">${renderMdSubsections(slug, p, "technical", tech.text, { editable: true })}</div>`;
 }
 
 function renderExperimentCard(slug, x){
@@ -894,7 +913,8 @@ function sectionAddButtons(slug, section, p){
     else if ((p.products || []).length > 1)
       out.push({ label: "＋ Feature", route: `#/project/${slug}/product`, pickProduct: true });
   } else if (section === "technical") {
-    if (!hasProjectTechnical(p)) out.push({ label: "＋ Technical doc", route: `#/project/${slug}/technical/new` });
+    if (!hasProjectTechnical(p)) out.push({ label: "＋ Technical", route: `#/project/${slug}/technical/new` });
+    else out.push({ label: "＋ Subsection", route: `#/project/${slug}/technical/subsection/new` });
   }
   return out;
 }
@@ -948,6 +968,7 @@ async function renderProjectSection(slug, section){
     };
   });
   if (section === "product") wireProductFeatureButtons(slug);
+  if (section === "technical") wireDocSubsectionEditButtons(slug);
   wireIdChips($("#main"));
 }
 
@@ -1657,17 +1678,72 @@ function renderNewIntake(projectSlug){
 
 function renderNewTechnical(projectSlug){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
-  $("#main").innerHTML = `${pageHeader("New technical doc", projName, `<button class="btn primary" id="nt-save">Create technical doc</button>`)}
+  $("#main").innerHTML = `${pageHeader("New technical", projName, `<button class="btn primary" id="nt-save">Create technical</button>`)}
     <div class="scroll"><div class="fpage">
       <p style="font-size:13px;color:var(--dim);margin:0 0 12px;line-height:1.55">
-        Creates <code>technical.md</code> with starter headings for stack, architecture, infra, and deployment. Edit in chat or your editor.
+        Creates <code>technical.md</code> with starter sections. Edit each with ✎ on the Technical tab.
       </p>
     </div></div>`;
   document.getElementById("nt-save").onclick = async () => {
     try {
       const out = await jpost(`/api/project/${projectSlug}/technical/new`, {});
-      toast(`Technical doc created · ${out.path || ""}`);
+      toast(`Technical created · ${out.path || ""}`);
       await renderRail(); navigate(`#/project/${projectSlug}/technical`);
+    } catch (e) { toast("✗ " + e.message); }
+  };
+}
+
+async function renderNewDocSubsection(projectSlug, docKey){
+  const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
+  const tab = docKey === "technical" ? "technical" : docKey;
+  $("#main").innerHTML = `${pageHeader("New subsection", projName, `<button class="btn primary" id="ns-save">Add subsection</button>`)}
+    <div class="scroll"><div class="fpage">
+      ${flabel("Section title")}${finput("title", "", 'placeholder="e.g. Security" required')}
+      <p style="font-size:12px;color:var(--dim);margin:12px 0 0">Adds a heading to this project&apos;s ${esc(docKey)} list and <code>${esc(docKey)}.md</code>.</p>
+    </div></div>`;
+  document.getElementById("ns-save").onclick = async () => {
+    const title = ($("#main input[name=title]").value || "").trim();
+    if (!title) return toast("Title required");
+    try {
+      await jpost(`/api/project/${projectSlug}/subsections/add`, { doc: docKey, title });
+      toast(`Subsection added · ${title}`);
+      await renderRail(); navigate(`#/project/${projectSlug}/${tab}`);
+    } catch (e) { toast("✗ " + e.message); }
+  };
+}
+
+async function renderEditDocSubsection(projectSlug, docKey, titleKey, extras = {}){
+  const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
+  const tab = docKey === "technical" ? "technical" : docKey;
+  const p = await api(`/api/project/${projectSlug}`);
+  const order = projectDocSubsections(p, docKey);
+  const title = extras.subTitle
+    || order.find(t => OSID.slugKey(t) === titleKey)
+    || order.find(t => t.toLowerCase() === String(titleKey || "").replace(/-/g, " "));
+  if (!title) {
+    $("#main").innerHTML = `<div class="scroll"><p class="memo-empty">Subsection not found.</p></div>`;
+    return;
+  }
+  const sec = (p.sections || {})[tab] || {};
+  const art = (sec.artifacts || []).find(a => {
+    if (a.kind !== "file") return false;
+    const p = a.path || "";
+    if (docKey === "intake") return p.endsWith("strategy/intake.md");
+    return p.endsWith(`${docKey}.md`);
+  });
+  const parsed = Object.fromEntries(parseMdSections(art?.text || "").map(s => [s.title, s.body]));
+  const body = (parsed[title] || "").trim();
+  const subId = docSubsectionId(projectSlug, p, docKey, title);
+  $("#main").innerHTML = `${pageHeader(`Edit · ${title}`, projName, `<button class="btn primary" id="es-save">Save</button>`, subId)}
+    <div class="scroll"><div class="fpage">
+      <p style="font-size:12px;color:var(--dim);margin:0 0 10px">Markdown for <b>${esc(title)}</b> only.</p>
+      <textarea id="es-body" style="width:100%;min-height:320px;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;font:13.5px/1.65 var(--body);resize:vertical">${esc(body)}</textarea>
+    </div></div>`;
+  document.getElementById("es-save").onclick = async () => {
+    try {
+      await jpost(`/api/project/${projectSlug}/doc/${docKey}/section`, { title, body: $("#es-body").value });
+      toast(`Saved · ${title}`);
+      await renderRail(); navigate(`#/project/${projectSlug}/${tab}`);
     } catch (e) { toast("✗ " + e.message); }
   };
 }

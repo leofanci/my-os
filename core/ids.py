@@ -50,6 +50,7 @@ ID assignment rules
 from __future__ import annotations
 
 import datetime
+import json
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -263,8 +264,57 @@ post = lk_post
 
 
 # --------------------------------------------------------------------------- #
-# IdRegistry — composed numeric IDs
+# persisted numbering — the ONE id, assigned once, never recomputed
+#
+# Every composed-id segment number (pr, pf, ch, mm, ex, pd, po, ...) used to
+# come from enumerate() over the live tree — recomputed fresh on every
+# reindex, so an id's meaning shifted whenever an earlier sibling was added,
+# removed, or reordered. This registry is the durable source: a natural key
+# (slug/stem) gets a number the first time it's ever seen, and that number is
+# never reassigned or reused, even after the entity is deleted.
 # --------------------------------------------------------------------------- #
+
+ID_REGISTRY_RELPATH = "database/data/id_registry.json"
+
+
+def load_id_registry(root: Path) -> dict:
+    path = root / ID_REGISTRY_RELPATH
+    if not path.is_file():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def save_id_registry(root: Path, registry: dict) -> None:
+    path = root / ID_REGISTRY_RELPATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(registry, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def allocate(registry: dict, scope: str, key: str) -> int:
+    """Persisted number for `key` within `scope` — same key always returns the
+    same number; a new key gets the next free number in that scope."""
+    scope_map = registry.setdefault(scope, {"assigned": {}, "next": 1})
+    assigned = scope_map["assigned"]
+    if key in assigned:
+        return assigned[key]
+    n = scope_map["next"]
+    assigned[key] = n
+    scope_map["next"] = n + 1
+    return n
+
+
+def next_counter(registry: dict, scope: str) -> int:
+    """Monotonic number in `scope` with no natural key to look up later —
+    for minting a brand new id (e.g. a post) whose full composed form gets
+    stored on the entity itself immediately, so it never needs re-deriving."""
+    scope_map = registry.setdefault(scope, {"assigned": {}, "next": 1})
+    n = scope_map["next"]
+    scope_map["next"] = n + 1
+    return n
+
 
 class IdRegistry:
     """Maps lookup keys ↔ composed ids for the live tree."""
@@ -320,16 +370,20 @@ class IdRegistry:
         for rows in posts_by_prof.values():
             rows.sort(key=lambda x: ((x.get("date") is None), x.get("date") or "", x.get("id") or ""))
 
+        # Every segment number below comes from the persisted registry, not
+        # live position — see the "persisted numbering" block above.
+        registry = load_id_registry(root) if root else {}
+
         for vkey, vnum in GLOBAL_VIEW_NUM.items():
             cid = f"vw{vnum}"
             reg._add(cid, vkey.replace("-", " ").title(), kind="view", ref={"view": vkey})
             reg._bind(lk_view(vkey), cid)
 
-        for pi, proj_row in enumerate(tree or [], 1):
+        for proj_row in tree or []:
             pslug = proj_row.get("slug") or ""
             if not pslug:
                 continue
-            pr_id = f"pr{pi}"
+            pr_id = f"pr{allocate(registry, 'project', pslug)}"
             pname = proj_row.get("name") or pslug
             reg._add(pr_id, pname, kind="project", meta=proj_row.get("kind") or proj_row.get("type"),
                      ref={"project": pslug})
@@ -342,9 +396,6 @@ class IdRegistry:
                          ref={"project": pslug, "section": skey})
                 reg._bind(lk_tab_proj(pslug, skey), cid)
 
-            ex_n, pd_n = 0, 0
-            mm_by_sec: dict[str, int] = {}
-            doc_by_sec: dict[str, int] = {}
             exp_sec_id = f"{pr_id}.sec{PROJ_SEC_NUM['experiments']}"
             prod_sec_id = f"{pr_id}.sec{PROJ_SEC_NUM['product']}"
             proj_dir = (root / "projects" / pslug) if root else None
@@ -356,13 +407,14 @@ class IdRegistry:
                         continue
                     snum = PROJ_SEC_NUM[sec_key]
                     sec_id = f"{pr_id}.sec{snum}"
-                    doc_by_sec[sec_key] = doc_by_sec.get(sec_key, 0) + 1
-                    cid = f"{sec_id}.doc{doc_by_sec[sec_key]}"
+                    doc_n = allocate(registry, f"doc:{pslug}:{sec_key}", doc_key)
+                    cid = f"{sec_id}.doc{doc_n}"
                     reg._add(cid, doc_key, kind="doc", parent=sec_id,
                              ref={"project": pslug, "section": sec_key, "path": rel_path})
                     reg._bind(lk_doc(pslug, doc_key), cid)
                     if proj_sub_cfg is not None and doc_key in DOC_KEYS:
-                        for si, title in enumerate(subsections_for_doc(proj_sub_cfg, doc_key), 1):
+                        for title in subsections_for_doc(proj_sub_cfg, doc_key):
+                            si = allocate(registry, f"subsection:{pslug}:{doc_key}", title)
                             ss_cid = f"{cid}.ss{si}"
                             reg._add(
                                 ss_cid, title, kind="subsection", parent=cid,
@@ -385,8 +437,8 @@ class IdRegistry:
                         sec_key = MEMO_SECTION.get(mtype, "overview")
                         snum = PROJ_SEC_NUM[sec_key]
                         sec_id = f"{pr_id}.sec{snum}"
-                        mm_by_sec[sec_key] = mm_by_sec.get(sec_key, 0) + 1
-                        cid = f"{sec_id}.mm{mm_by_sec[sec_key]}"
+                        mm_n = allocate(registry, f"memo:{pslug}:{sec_key}", f.stem)
+                        cid = f"{sec_id}.mm{mm_n}"
                         reg._add(cid, f"{mtype} v{ver}", kind="memo", parent=sec_id,
                                  ref={"project": pslug, "section": sec_key,
                                       "memo_type": mtype, "version": ver})
@@ -394,8 +446,8 @@ class IdRegistry:
                 exp_dir = proj_dir / "strategy" / "experiments"
                 if exp_dir.is_dir():
                     for f in sorted(exp_dir.glob("*.json")):
-                        ex_n += 1
                         stem = f.stem
+                        ex_n = allocate(registry, f"experiment:{pslug}", stem)
                         cid = f"{exp_sec_id}.ex{ex_n}"
                         reg._add(cid, stem, kind="exp", parent=exp_sec_id,
                                  ref={"project": pslug, "section": "experiments", "stem": stem})
@@ -405,18 +457,18 @@ class IdRegistry:
                     for d in sorted(prod_root.iterdir()):
                         if not d.is_dir() or not (d / "product.md").is_file():
                             continue
-                        pd_n += 1
                         pslug2 = d.name
+                        pd_n = allocate(registry, f"product:{pslug}", pslug2)
                         cid = f"{prod_sec_id}.pd{pd_n}"
                         reg._add(cid, pslug2, kind="prod", parent=prod_sec_id,
                                  ref={"product": pslug2, "section": "product"})
                         reg._bind(lk_prod(pslug2), cid)
 
-            for pfi, prof_row in enumerate(proj_row.get("profiles") or [], 1):
+            for prof_row in proj_row.get("profiles") or []:
                 prf_slug = prof_row.get("slug") or ""
                 if not prf_slug:
                     continue
-                pf_id = f"{pr_id}.pf{pfi}"
+                pf_id = f"{pr_id}.pf{allocate(registry, f'profile:{pslug}', prf_slug)}"
                 reg._add(pf_id, prof_row.get("name") or prf_slug, kind="profile", parent=pr_id,
                          ref={"profile": prf_slug, "project": pslug})
                 reg._bind(lk_prof(prf_slug), pf_id)
@@ -438,11 +490,11 @@ class IdRegistry:
                          ref={"profile": prf_slug, "field": "voice"})
                 reg._bind(lk_prof_voice(prf_slug), voice_id)
 
-                for chi, ch_row in enumerate(prof_row.get("channels") or [], 1):
+                for ch_row in prof_row.get("channels") or []:
                     cslug = ch_row.get("slug") or ""
                     if not cslug:
                         continue
-                    ch_id = f"{pf_id}.ch{chi}"
+                    ch_id = f"{pf_id}.ch{allocate(registry, f'channel:{prf_slug}', cslug)}"
                     reg._add(ch_id, ch_row.get("name") or cslug, kind="channel", parent=pf_id,
                              meta=ch_row.get("platform"), ref={"channel": cslug, "profile": prf_slug})
                     reg._bind(lk_chan(cslug), ch_id)
@@ -454,11 +506,19 @@ class IdRegistry:
                         reg._bind(lk_tab_chan(cslug, tkey), cid)
 
                 posts_tab_id = f"{pf_id}.sec{PROF_TAB_NUM['posts']}"
-                for poi, slot in enumerate(posts_by_prof.get(prf_slug, []), 1):
+                legacy_poi = 0
+                for slot in posts_by_prof.get(prf_slug, []):
                     pid = slot.get("id") or ""
                     if not pid:
                         continue
-                    po_id = f"{posts_tab_id}.po{poi}"
+                    if is_canonical_id(pid):
+                        # Already the one true id, minted at creation — use as-is.
+                        po_id = pid
+                    else:
+                        # Pre-migration id: derive a display position (unstable,
+                        # only until this post is regenerated with a real id).
+                        legacy_poi += 1
+                        po_id = f"{posts_tab_id}.po{legacy_poi}"
                     label = slot.get("working_title") or slot.get("pillar") or pid
                     reg._add(po_id, label, kind="post", parent=posts_tab_id, meta=slot.get("status"),
                              ref={"post": pid, "profile": prf_slug, "tab": "posts"})
@@ -470,10 +530,11 @@ class IdRegistry:
             for prod_row in proj_row.get("products") or []:
                 if prod_row.get("slug"):
                     prod_slugs.add(prod_row["slug"])
-            for pdi, pslug2 in enumerate(sorted(prod_slugs), 1):
+            for pslug2 in sorted(prod_slugs):
                 if reg.get(lk_prod(pslug2)):
                     continue
-                pd_id = f"{prod_sec_id}.pd{pdi}"
+                pd_n = allocate(registry, f"product:{pslug}", pslug2)
+                pd_id = f"{prod_sec_id}.pd{pd_n}"
                 reg._add(pd_id, pslug2, kind="prod", parent=prod_sec_id,
                          ref={"product": pslug2, "section": "product"})
                 reg._bind(lk_prod(pslug2), pd_id)
@@ -488,14 +549,17 @@ class IdRegistry:
                 pd_id = reg.get(lk_prod(pslug2))
                 if not pd_id:
                     continue
-                for ft_n, feat in enumerate(sorted(feats, key=lambda x: x.get("title") or ""), 1):
+                for feat in sorted(feats, key=lambda x: x.get("title") or ""):
                     title = feat.get("title") or "untitled"
                     tk = slug_key(title)
+                    ft_n = allocate(registry, f"feature:{pslug2}", tk)
                     ft_id = f"{pd_id}.ft{ft_n}"
                     reg._add(ft_id, title, kind="feat", parent=pd_id, meta=feat.get("status"),
                              ref={"product": pslug2, "title_key": tk})
                     reg._bind(lk_feature(pslug2, tk), ft_id)
 
+        if root:
+            save_id_registry(root, registry)
         return reg
 
 
@@ -696,46 +760,110 @@ def _stamp(prefix: str, existing: set[str]) -> str:
     return out
 
 
-def next_post_id(existing: set[str], *, manual: bool = True) -> str:
-    """Next post slot id unique within a profile's plans.
+def _max_baked_post_number(root: Path, project_slug: str, profile_slug: str, base: str) -> int:
+    """Highest po number already sitting in this profile's plan files.
 
-    Plan batches use post-NNN (see renumber_plan_posts). Manual adds use
-    post-m-YYYYMMDD-HHMMSS."""
-    if manual:
-        return _stamp("post-m-", existing)
-    n = 1
-    while f"post-{n:03d}" in existing:
-        n += 1
-    return f"post-{n:03d}"
-
-
-def renumber_plan_posts(posts: list[dict], existing: set[str]) -> None:
-    """Assign post-001… ids to a freshly generated plan batch."""
-    n = 1
-    for slot in posts:
-        while f"post-{n:03d}" in existing:
-            n += 1
-        pid = f"post-{n:03d}"
-        existing.add(pid)
-        slot["id"] = pid
-        n += 1
-
-
-def collect_profile_post_ids(profile_dir: Path) -> set[str]:
-    ids: set[str] = set()
-    content = profile_dir / "content"
+    The registry's per-profile counter is the normal source of the next
+    number, but it can fall behind reality — batch/migrated plans, or a
+    registry file that got reset, can bake `{base}.poN` ids straight into
+    plan JSON without ever calling mint_post_ids(). If the counter doesn't
+    know about those, it reissues an already-used N and two posts end up
+    sharing one id. Scanning plan files at mint time is the floor that
+    keeps every mint unique regardless of how the counter got here."""
+    content = root / "projects" / project_slug / "profiles" / profile_slug / "content"
     if not content.is_dir():
-        return ids
+        return 0
+    pat = re.compile(rf"^{re.escape(base)}\.po(\d+)$")
+    highest = 0
     for plan in content.glob("plan-*.json"):
         try:
-            import json
             data = json.loads(plan.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        for p in data.get("posts", []) if isinstance(data, dict) else []:
-            if p.get("id"):
-                ids.add(str(p["id"]))
+        for slot in data.get("posts", []) if isinstance(data, dict) else []:
+            m = pat.match(slot.get("id") or "")
+            if m:
+                highest = max(highest, int(m.group(1)))
+    return highest
+
+
+def mint_post_ids(root: Path, project_slug: str, profile_slug: str, n: int) -> list[str]:
+    """Mint n brand new post ids — each one IS the final composed id
+    (pr{N}.pf{N}.sec00.po{N}), the only id this post will ever have. No
+    separate internal/storage id, no later recomputation: IdRegistry.build
+    uses this string as-is once it's written into the plan JSON.
+
+    project/profile numbers come from the same persisted registry the
+    catalog builder reads, so they always agree. Before minting, the counter
+    is floored against ids already baked into plan files (see
+    _max_baked_post_number) so a stale/behind registry can never reissue one."""
+    registry = load_id_registry(root)
+    pr_n = allocate(registry, "project", project_slug)
+    pf_n = allocate(registry, f"profile:{project_slug}", profile_slug)
+    base = f"pr{pr_n}.pf{pf_n}.sec{PROF_TAB_NUM['posts']}"
+    scope = f"post:{project_slug}:{profile_slug}"
+    scope_map = registry.setdefault(scope, {"assigned": {}, "next": 1})
+    floor = _max_baked_post_number(root, project_slug, profile_slug, base) + 1
+    if scope_map["next"] < floor:
+        scope_map["next"] = floor
+    ids = [f"{base}.po{next_counter(registry, scope)}" for _ in range(n)]
+    save_id_registry(root, registry)
     return ids
+
+
+# --------------------------------------------------------------------------- #
+# workspace-wide duplicate guard — catches collisions no single mint call can
+# see (posts baked directly into plan files by batch/migration jobs, files
+# edited by hand, etc.)
+# --------------------------------------------------------------------------- #
+
+def find_duplicate_post_ids(root: Path) -> dict[str, list[str]]:
+    """Every composed post id that appears in more than one plan file,
+    anywhere in the workspace, mapped to the plan files that share it.
+
+    Reads plan-*.json directly rather than the SQLite index: the index is
+    keyed by id and upserts on reindex, so a genuine on-disk collision (two
+    posts, one id) silently collapses to whichever file was reindexed last —
+    invisible from the index alone, but a live bug for anyone acting on that
+    id (see mint_post_ids for how it happens)."""
+    seen: dict[str, list[str]] = {}
+    for plan in sorted(root.glob("projects/*/profiles/*/content/plan-*.json")):
+        try:
+            data = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for slot in data.get("posts", []) if isinstance(data, dict) else []:
+            pid = slot.get("id")
+            if pid:
+                seen.setdefault(pid, []).append(_rel_path(root, plan))
+    return {pid: files for pid, files in seen.items() if len(files) > 1}
+
+
+def find_duplicate_ids(root: Path, tree: list[dict], posts: list[dict] | None = None,
+                        *, features: list[dict] | None = None) -> list[str]:
+    """Workspace-wide duplicate-id guard across every kind, not just posts.
+
+    Post ids are checked against the raw plan files (find_duplicate_post_ids)
+    since those can collide without IdRegistry ever seeing both sides (the
+    SQLite-backed `posts` list it's normally built from has one row per id).
+    Every other kind (project/profile/channel/memo/experiment/product/
+    feature/doc/subsection/brief/field) is allocated from a natural key via
+    allocate(), which can't mint the same composed id for two different
+    keys within one scope — so IdRegistry.build() raising ValueError is
+    itself the guard for those; this just runs it and turns that crash into
+    a reportable message instead of an exception.
+
+    Returns a list of human-readable problem descriptions; empty means clean.
+    """
+    problems: list[str] = []
+    dupes = find_duplicate_post_ids(root)
+    for pid, files in sorted(dupes.items()):
+        problems.append(f"duplicate post id '{pid}' in: {', '.join(files)}")
+    try:
+        build_id_registry(tree, posts, root=root, features=features)
+    except ValueError as e:
+        problems.append(str(e))
+    return problems
 
 
 def next_milestone_id(existing: set[str]) -> str:

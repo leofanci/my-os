@@ -738,6 +738,21 @@ class Handler(BaseHTTPRequestHandler):
                 if not title:
                     return self._send(400, {"error": "title required"})
                 return self._send(200, {"ok": True, **fileops.add_subsection(proj, doc, title)})
+            if "/doc/" in path and path.endswith("/section"):
+                # /api/project/<slug>/doc/<intake|technical>/section
+                rest = path[len("/api/project/"):-len("/section")]
+                parts = rest.split("/doc/")
+                if len(parts) != 2:
+                    return self._send(400, {"error": "bad doc section path"})
+                proj, doc = parts[0].strip("/"), parts[1].strip("/")
+                title = (body.get("title") or "").strip()
+                text = body.get("body")
+                if text is None:
+                    text = body.get("text", "")
+                if not title:
+                    return self._send(400, {"error": "title required"})
+                return self._send(200, {"ok": True,
+                                        **fileops.update_doc_section(proj, doc, title, text)})
             if path.startswith("/api/project/") and path.endswith("/validation-tab/update"):
                 proj = path[len("/api/project/"):-len("/validation-tab/update")]
                 titles = body.get("subsections") or body.get("titles") or []

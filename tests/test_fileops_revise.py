@@ -147,12 +147,12 @@ class RevisePostTest(unittest.TestCase):
         brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
         with mock.patch.object(fileops, "revise_post", return_value={"id": "post-001"}) as rev:
             fileops.update_brief("post-001", "shorter caption")
-        rev.assert_called_once_with("post-001", "shorter caption")
+        rev.assert_called_once_with("post-001", "shorter caption", None)
 
     def test_update_brief_routes_to_generate_when_no_brief(self):
         with mock.patch.object(fileops, "generate_brief", return_value={"id": "post-001"}) as gen:
             fileops.update_brief("post-001", "focus on noir films")
-        gen.assert_called_once_with("post-001", "focus on noir films")
+        gen.assert_called_once_with("post-001", "focus on noir films", None)
 
     def test_update_brief_requires_instruction_for_existing(self):
         brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"

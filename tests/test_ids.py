@@ -12,11 +12,10 @@ from core.ids import (
     is_canonical_id,
     lk_post,
     lk_tab_proj,
+    mint_post_ids,
     next_activity_id,
     next_milestone_id,
-    next_post_id,
     parse_id,
-    renumber_plan_posts,
     resolve_section,
     section_tally,
 )
@@ -280,18 +279,59 @@ class TestIds(unittest.TestCase):
             self.assertEqual(smap["technical"]["Stack"], "pr1.sec06.doc1.ss1")
             self.assertEqual(smap["technical"]["Architecture"], "pr1.sec06.doc1.ss2")
 
-    def test_next_post_id_manual(self):
-        existing = {"post-m-20260701-120000"}
-        pid = next_post_id(existing, manual=True)
-        self.assertTrue(pid.startswith("post-m-"))
-        self.assertNotIn(pid, existing)
+    def test_mint_post_ids_composed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ids = mint_post_ids(root, "acme", "demo", 2)
+            self.assertEqual(ids, ["pr1.pf1.sec00.po1", "pr1.pf1.sec00.po2"])
+            self.assertTrue(all(is_canonical_id(i) for i in ids))
 
-    def test_renumber_plan_posts(self):
-        existing = {"post-001", "post-002"}
-        slots = [{"id": "draft-001"}, {"id": "draft-002"}]
-        renumber_plan_posts(slots, existing)
-        self.assertEqual(slots[0]["id"], "post-003")
-        self.assertEqual(slots[1]["id"], "post-004")
+    def test_mint_post_ids_persists_across_calls(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = mint_post_ids(root, "acme", "demo", 1)
+            second = mint_post_ids(root, "acme", "demo", 1)
+            self.assertEqual(first, ["pr1.pf1.sec00.po1"])
+            self.assertEqual(second, ["pr1.pf1.sec00.po2"])
+
+    def test_mint_post_ids_never_collide_across_profiles(self):
+        # Two profiles minting posts independently must never produce the
+        # same id — pr/pf numbers differ, so poN alone is never the whole id.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            a = mint_post_ids(root, "acme", "profile-a", 3)
+            b = mint_post_ids(root, "acme", "profile-b", 3)
+            self.assertFalse(set(a) & set(b))
+
+    def test_mint_post_ids_skips_ids_already_baked_in_plan_files(self):
+        # Simulates a batch/migrated plan that wrote poN ids straight into a
+        # plan file without ever calling mint_post_ids — the persisted
+        # registry counter is left behind reality. The next real mint must
+        # not reissue a number already sitting on disk.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            content = root / "projects" / "acme" / "profiles" / "demo" / "content"
+            content.mkdir(parents=True)
+            baked = {"posts": [{"id": f"pr1.pf1.sec00.po{n}"} for n in (1, 2, 3, 4, 5)]}
+            (content / "plan-batch.json").write_text(json.dumps(baked), encoding="utf-8")
+
+            new_id = mint_post_ids(root, "acme", "demo", 1)[0]
+            self.assertEqual(new_id, "pr1.pf1.sec00.po6")
+
+    def test_mint_post_ids_stays_ahead_after_backfill(self):
+        # Once the floor is crossed once, subsequent mints keep counting up
+        # from there rather than re-scanning back down to the old baked max.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            content = root / "projects" / "acme" / "profiles" / "demo" / "content"
+            content.mkdir(parents=True)
+            baked = {"posts": [{"id": "pr1.pf1.sec00.po10"}]}
+            (content / "plan-batch.json").write_text(json.dumps(baked), encoding="utf-8")
+
+            first = mint_post_ids(root, "acme", "demo", 1)[0]
+            second = mint_post_ids(root, "acme", "demo", 1)[0]
+            self.assertEqual(first, "pr1.pf1.sec00.po11")
+            self.assertEqual(second, "pr1.pf1.sec00.po12")
 
     def test_generated_stamp_ids(self):
         ms = next_milestone_id(set())

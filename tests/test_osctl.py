@@ -58,7 +58,7 @@ class T(unittest.TestCase):
 
         c, out = run(["add-post", "--profile", "demo",
                       "--working-title", "Idea A", "--channels", "demo-tiktok"])
-        self.assertEqual(c, 0); self.assertTrue(out["id"].startswith("post-m-"))
+        self.assertEqual(c, 0); self.assertTrue(out["id"].startswith("pr1.pf1.sec00.po"))
         self.assertEqual(len(db.profile_posts("demo")), 1)
 
     def test_create_profile_unknown_project_errors(self):

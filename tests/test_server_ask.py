@@ -1,4 +1,5 @@
-import io, unittest
+import io, tempfile, unittest
+from pathlib import Path
 from unittest import mock
 import dashboard.server as server
 
@@ -52,7 +53,11 @@ def _captured(body, tree=None):
             yield ("done", {"result": "ok"})
 
     h = _bare_handler(io.BytesIO())
-    with mock.patch.object(server, "get_chat_session", return_value=CaptureSession()), \
+    # build_id_registry persists numbering under {server.ROOT}/database/data/ —
+    # isolate it so fixture slugs (acme, demo, ...) never leak into the real repo.
+    with tempfile.TemporaryDirectory() as tmp, \
+         mock.patch.object(server, "get_chat_session", return_value=CaptureSession()), \
+         mock.patch.object(server, "ROOT", Path(tmp)), \
          mock.patch.object(server.db, "tree", return_value=tree or []):
         h._handle_ask(body)
     return seen
@@ -231,6 +236,18 @@ class SkillRouting(unittest.TestCase):
 
 
 class ComposeTurnPrompt(unittest.TestCase):
+    def setUp(self):
+        # compose_turn_prompt -> state_snapshot persists numbering under
+        # {server.ROOT}/database/data/ — isolate so fixture slugs (acme)
+        # never leak into the real repo's registry file.
+        self.tmp = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(server, "ROOT", Path(self.tmp.name))
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self.tmp.cleanup()
+
     def _sess(self, *, started=False, turn_count=0, last_skill=None):
         class S:
             pass
@@ -274,6 +291,18 @@ class ComposeTurnPrompt(unittest.TestCase):
 
 
 class StateSnapshot(unittest.TestCase):
+    def setUp(self):
+        # build_id_registry now persists numbering to {root}/database/data/
+        # id_registry.json — isolate ROOT so fixture slugs (acme, solo, p2)
+        # never leak into the real repo's registry file.
+        self.tmp = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(server, "ROOT", Path(self.tmp.name))
+        self._patch.start()
+
+    def tearDown(self):
+        self._patch.stop()
+        self.tmp.cleanup()
+
     def test_empty_tree(self):
         out = server.state_snapshot([])
         self.assertTrue(out.startswith("## Current GTM OS state"))
