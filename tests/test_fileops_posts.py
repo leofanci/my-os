@@ -62,6 +62,23 @@ class T(unittest.TestCase):
         self.assertEqual(post["working_title"], "Idea A")
         self.assertEqual(post["concept"], "why this now")
 
+    def test_post_defaults_brief_and_voice_ids(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        slot = fileops.read_detail(pid)["slot"]
+        self.assertEqual(slot["brief_id"], "br1")
+        self.assertEqual(slot["voice_id"], "vc1")
+
+    def test_post_can_specify_brief_and_voice_ids(self):
+        fileops.add_post("demo", {
+            "working_title": "Idea A", "channels": "demo-tiktok",
+            "brief_id": "br2", "voice_id": "vc2",
+        })
+        pid = db.profile_posts("demo")[0]["id"]
+        slot = fileops.read_detail(pid)["slot"]
+        self.assertEqual(slot["brief_id"], "br2")
+        self.assertEqual(slot["voice_id"], "vc2")
+
     def test_delete_works_at_approved_stage(self):
         # Deletion must work at any phase, not just on fresh ideas.
         fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})

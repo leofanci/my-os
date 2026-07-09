@@ -524,7 +524,8 @@ def read_detail(post_id, profile_slug=None):
     return {"slot": ctx["post"], "brief": brief, "profile_slug": ctx["profile_slug"]}
 
 
-_POST_FIELDS = ("date", "pillar", "working_title", "concept", "format", "objective", "platform")
+_POST_FIELDS = ("date", "pillar", "working_title", "concept", "format", "objective", "platform",
+                "brief_id", "voice_id")
 
 
 def add_post(profile_slug, fields):
@@ -551,6 +552,8 @@ def add_post(profile_slug, fields):
     channels = _parse_channels(fields.get("channels"))
     if channels:
         post["channels"] = channels
+    post.setdefault("brief_id", "br1")
+    post.setdefault("voice_id", "vc1")
     data["posts"].append(post)
     plan.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     reindex()
