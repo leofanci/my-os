@@ -53,6 +53,30 @@ APP_HTML = HERE / "app.html"
 
 RAIL = CHAT_RAIL
 
+# Profile "numbered artifact" routes (brief-specs, voices) — same CRUD shape
+# for both, so GET/POST dispatch loops over this instead of repeating
+# near-identical branches per kind. Every fn's positional signature lines up:
+# list(slug), get(slug, id), create(slug, text, platforms), update(slug, text,
+# id, platforms), delete(slug, id).
+_ARTIFACT_ROUTES = {
+    "brief-specs": {
+        "list_key": "specs",
+        "list": fileops.list_brief_specs,
+        "get": fileops.get_brief_spec,
+        "create": fileops.create_brief_spec,
+        "update": fileops.write_brief_spec,
+        "delete": fileops.delete_brief_spec,
+    },
+    "voices": {
+        "list_key": "voices",
+        "list": fileops.list_voices,
+        "get": fileops.get_voice,
+        "create": fileops.create_voice,
+        "update": fileops.update_voice,
+        "delete": fileops.delete_voice,
+    },
+}
+
 
 def _app_html_bytes() -> bytes:
     """Serve app.html with cache-busted asset URLs (mtime) so UI updates land."""
@@ -624,18 +648,14 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/platforms"):
                 slug = path[len("/api/profile/"):-len("/platforms")]
                 return self._send(200, {"platforms": fileops.profile_platforms(slug)})
-            if path.startswith("/api/profile/") and path.endswith("/brief-specs"):
-                slug = path[len("/api/profile/"):-len("/brief-specs")]
-                return self._send(200, {"specs": fileops.list_brief_specs(slug)})
-            if path.startswith("/api/profile/") and "/brief-specs/" in path:
-                slug, brief_id = path[len("/api/profile/"):].split("/brief-specs/", 1)
-                return self._send(200, fileops.get_brief_spec(slug, brief_id))
-            if path.startswith("/api/profile/") and path.endswith("/voices"):
-                slug = path[len("/api/profile/"):-len("/voices")]
-                return self._send(200, {"voices": fileops.list_voices(slug)})
-            if path.startswith("/api/profile/") and "/voices/" in path:
-                slug, voice_id = path[len("/api/profile/"):].split("/voices/", 1)
-                return self._send(200, fileops.get_voice(slug, voice_id))
+            if path.startswith("/api/profile/"):
+                for seg, cfg in _ARTIFACT_ROUTES.items():
+                    if path.endswith(f"/{seg}"):
+                        slug = path[len("/api/profile/"):-len(f"/{seg}")]
+                        return self._send(200, {cfg["list_key"]: cfg["list"](slug)})
+                    if f"/{seg}/" in path:
+                        slug, art_id = path[len("/api/profile/"):].split(f"/{seg}/", 1)
+                        return self._send(200, cfg["get"](slug, art_id))
             if path.startswith("/api/profile/"):
                 slug = path[len("/api/profile/"):]
                 return self._send(200, fileops.read_profile(slug))
@@ -663,36 +683,23 @@ class Handler(BaseHTTPRequestHandler):
             # brief-specs/voices routes must be checked before the generic profile
             # /update and /delete below — those match ANY /api/profile/.../update
             # or .../delete path, which would otherwise swallow these nested ones.
-            if path.startswith("/api/profile/") and "/brief-specs/" in path and path.endswith("/update"):
-                rest = path[len("/api/profile/"):-len("/update")]
-                slug, brief_id = rest.rstrip("/").split("/brief-specs/", 1)
-                text = body.get("text", "")
-                platforms = body.get("platforms")
-                return self._send(200, {"ok": True, **fileops.write_brief_spec(slug, text, brief_id, platforms)})
-            if path.startswith("/api/profile/") and "/brief-specs/" in path and path.endswith("/delete"):
-                rest = path[len("/api/profile/"):-len("/delete")]
-                slug, brief_id = rest.rstrip("/").split("/brief-specs/", 1)
-                return self._send(200, fileops.delete_brief_spec(slug, brief_id))
-            if path.startswith("/api/profile/") and path.endswith("/brief-specs"):
-                slug = path[len("/api/profile/"):-len("/brief-specs")]
-                text = body.get("text", "")
-                platforms = body.get("platforms", "all")
-                return self._send(200, {"ok": True, **fileops.create_brief_spec(slug, text, platforms)})
-            if path.startswith("/api/profile/") and "/voices/" in path and path.endswith("/update"):
-                rest = path[len("/api/profile/"):-len("/update")]
-                slug, voice_id = rest.rstrip("/").split("/voices/", 1)
-                text = body.get("text", "")
-                platforms = body.get("platforms")
-                return self._send(200, {"ok": True, **fileops.update_voice(slug, text, voice_id, platforms)})
-            if path.startswith("/api/profile/") and "/voices/" in path and path.endswith("/delete"):
-                rest = path[len("/api/profile/"):-len("/delete")]
-                slug, voice_id = rest.rstrip("/").split("/voices/", 1)
-                return self._send(200, fileops.delete_voice(slug, voice_id))
-            if path.startswith("/api/profile/") and path.endswith("/voices"):
-                slug = path[len("/api/profile/"):-len("/voices")]
-                text = body.get("text", "")
-                platforms = body.get("platforms", "all")
-                return self._send(200, {"ok": True, **fileops.create_voice(slug, text, platforms)})
+            if path.startswith("/api/profile/"):
+                for seg, cfg in _ARTIFACT_ROUTES.items():
+                    if f"/{seg}/" in path and path.endswith("/update"):
+                        rest = path[len("/api/profile/"):-len("/update")]
+                        slug, art_id = rest.rstrip("/").split(f"/{seg}/", 1)
+                        text = body.get("text", "")
+                        platforms = body.get("platforms")
+                        return self._send(200, {"ok": True, **cfg["update"](slug, text, art_id, platforms)})
+                    if f"/{seg}/" in path and path.endswith("/delete"):
+                        rest = path[len("/api/profile/"):-len("/delete")]
+                        slug, art_id = rest.rstrip("/").split(f"/{seg}/", 1)
+                        return self._send(200, cfg["delete"](slug, art_id))
+                    if path.endswith(f"/{seg}"):
+                        slug = path[len("/api/profile/"):-len(f"/{seg}")]
+                        text = body.get("text", "")
+                        platforms = body.get("platforms", "all")
+                        return self._send(200, {"ok": True, **cfg["create"](slug, text, platforms)})
             if path.startswith("/api/profile/") and path.endswith("/update"):
                 slug = path[len("/api/profile/"):-len("/update")]
                 return self._send(200, {"ok": True, **fileops.update_profile(slug, body)})
