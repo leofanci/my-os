@@ -13,29 +13,13 @@ chicken-and-egg problem the way there is for post ids.
 import re
 from pathlib import Path
 
+from core.numbered_profile_artifact import NumberedArtifactStore
+
 SPEC_DIR = "brief-specs"
 LEGACY_SPEC_FILENAME = "brief-spec.md"
 DEFAULT_BRIEF_ID = "br1"
-_BR_RE = re.compile(r"^br(\d+)\.md$")
-_MARKER_FILE = ".max_id"
 
-
-def _read_marker(spec_dir: Path) -> int:
-    f = spec_dir / _MARKER_FILE
-    if f.is_file():
-        try:
-            return int(f.read_text(encoding="utf-8").strip())
-        except ValueError:
-            pass
-    return 0
-
-
-def _bump_marker(spec_dir: Path, n: int) -> None:
-    """High-water mark of every br id ever minted — never moves backward, so
-    a deleted id (whose file is gone) still can't be reissued."""
-    if n > _read_marker(spec_dir):
-        spec_dir.mkdir(parents=True, exist_ok=True)
-        (spec_dir / _MARKER_FILE).write_text(str(n), encoding="utf-8")
+_STORE = NumberedArtifactStore(dir_name=SPEC_DIR, id_prefix="br")
 
 
 def _migrate_legacy_spec(profile_dir: Path) -> None:
@@ -50,39 +34,20 @@ def _migrate_legacy_spec(profile_dir: Path) -> None:
     legacy.unlink()
 
 
-def _split_frontmatter(text: str) -> tuple[dict, str]:
-    if text.startswith("---"):
-        parts = text.split("---", 2)
-        if len(parts) >= 3:
-            fm = {}
-            for line in parts[1].strip().splitlines():
-                if ":" in line:
-                    k, _, v = line.partition(":")
-                    fm[k.strip()] = v.strip()
-            return fm, parts[2].strip()
-    return {}, text.strip()
-
-
 def spec_file(profile_dir: Path, brief_id: str = DEFAULT_BRIEF_ID) -> Path:
     _migrate_legacy_spec(profile_dir)
-    return profile_dir / SPEC_DIR / f"{brief_id}.md"
+    return _STORE.file(profile_dir, brief_id)
 
 
 def read_spec_text(profile_dir: Path, brief_id: str = DEFAULT_BRIEF_ID) -> str:
     """Load the live brief spec from disk (always read at job time — never cache)."""
-    f = spec_file(profile_dir, brief_id)
-    if not f.exists():
-        return ""
-    _, body = _split_frontmatter(f.read_text(encoding="utf-8"))
-    return body
+    _migrate_legacy_spec(profile_dir)
+    return _STORE.read_text(profile_dir, brief_id)
 
 
 def read_spec_platforms(profile_dir: Path, brief_id: str = DEFAULT_BRIEF_ID) -> str:
-    f = spec_file(profile_dir, brief_id)
-    if not f.exists():
-        return "all"
-    fm, _ = _split_frontmatter(f.read_text(encoding="utf-8"))
-    return fm.get("platforms", "all")
+    _migrate_legacy_spec(profile_dir)
+    return _STORE.read_platforms(profile_dir, brief_id)
 
 
 def write_spec_text(profile_dir: Path, text: str, brief_id: str = DEFAULT_BRIEF_ID,
@@ -90,62 +55,29 @@ def write_spec_text(profile_dir: Path, text: str, brief_id: str = DEFAULT_BRIEF_
     """Persist a brief spec. platforms=None keeps whatever tag it already had
     (or "all" for a brand new one) — update-brief-spec without --platforms
     must not silently reset the tag."""
-    f = spec_file(profile_dir, brief_id)
-    f.parent.mkdir(parents=True, exist_ok=True)
-    if platforms is None:
-        platforms = read_spec_platforms(profile_dir, brief_id) if f.exists() else "all"
-    body = (text or "").strip()
-    f.write_text(f"---\nplatforms: {platforms}\n---\n{body}\n", encoding="utf-8")
-    m = _BR_RE.match(f.name)
-    if m:
-        _bump_marker(f.parent, int(m.group(1)))
+    _migrate_legacy_spec(profile_dir)
+    _STORE.write_text(profile_dir, text, brief_id, platforms)
 
 
 def list_brief_ids(profile_dir: Path) -> list[str]:
     """Every brief id for this profile, br1 first — br1 is always included
     even if nobody has written to it yet."""
     _migrate_legacy_spec(profile_dir)
-    nums = {1}
-    d = profile_dir / SPEC_DIR
-    if d.is_dir():
-        for f in d.iterdir():
-            m = _BR_RE.match(f.name)
-            if m:
-                nums.add(int(m.group(1)))
-    return [f"br{n}" for n in sorted(nums)]
+    return _STORE.list_ids(profile_dir)
 
 
 def next_brief_id(profile_dir: Path) -> str:
     """Next free brief id — br1 counts as occupied even before it has a file,
     so the first create-brief-spec call always mints br2, not a duplicate br1.
     Pure read: does not itself reserve anything (that happens when the caller
-    actually writes the file). Never reissues a deleted id — see _bump_marker."""
+    actually writes the file). Never reissues a deleted id."""
     _migrate_legacy_spec(profile_dir)
-    d = profile_dir / SPEC_DIR
-    nums = {1, _read_marker(d)}
-    if d.is_dir():
-        for f in d.iterdir():
-            m = _BR_RE.match(f.name)
-            if m:
-                nums.add(int(m.group(1)))
-    return f"br{max(nums) + 1}"
+    return _STORE.next_id(profile_dir)
 
 
 def delete_brief(profile_dir: Path, brief_id: str) -> None:
-    if brief_id == DEFAULT_BRIEF_ID:
-        # br1 is the permanent default slot — list_brief_ids() always reports
-        # it whether or not a file exists, so "deleting" it would silently
-        # reappear on the next list. Clear its content via write_spec_text
-        # instead of deleting it structurally.
-        raise ValueError(f"cannot delete {DEFAULT_BRIEF_ID} — it's the permanent default; clear its text instead")
-    ids = list_brief_ids(profile_dir)
-    if len(ids) <= 1:
-        raise ValueError("cannot delete the only remaining brief-spec")
-    if brief_id not in ids:
-        raise ValueError(f"brief '{brief_id}' not found")
-    f = profile_dir / SPEC_DIR / f"{brief_id}.md"
-    if f.exists():
-        f.unlink()
+    _migrate_legacy_spec(profile_dir)
+    _STORE.delete(profile_dir, brief_id, kind_label="brief-spec")
 
 
 def format_for_brief_prompt(spec_text: str) -> str:
