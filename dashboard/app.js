@@ -1,4 +1,5 @@
 const $ = s => document.querySelector(s);
+const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => (s==null?"":String(s)).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const EMPTY = "n/a";
 function normalizeDashes(s){ return String(s==null?"":s).replace(/\s*—\s*/g,", "); }
@@ -1227,11 +1228,32 @@ function selectProfileSetup(slug){ navigate(`#/profile/${slug}/setup`); }
 
 async function renderProfileSetup(slug){
   CURRENT_PROFILE_SLUG = slug;
-  const [profData] = await Promise.all([api(`/api/profile/${slug}`), ensureIdRegistry()]);
+  const [profData, specsRes, voicesRes, platformsRes] = await Promise.all([
+    api(`/api/profile/${slug}`),
+    api(`/api/profile/${slug}/brief-specs`),
+    api(`/api/profile/${slug}/voices`),
+    api(`/api/profile/${slug}/platforms`),
+    ensureIdRegistry(),
+  ]);
   const profName = profData.name||slug;
   const setupTabId = composedIdOnly(OSID.tabProf(slug, "setup"));
-  const voiceId = composedIdOnly(OSID.profVoice(slug));
-  const briefSpecId = composedIdOnly(OSID.profBriefSpec(slug));
+  const platformOpts = ["all", ...(platformsRes.platforms||[])];
+
+  function row(kind, item){ // kind: "voice" | "brief"
+    const composedId = kind==="voice" ? composedIdOnly(OSID.profVoice(slug, item.id)) : composedIdOnly(OSID.profBriefSpec(slug, item.id));
+    const opts = platformOpts.map(p=>`<option value="${esc(p)}" ${item.platforms===p?"selected":""}>${esc(p)}</option>`).join("");
+    return `<div class="setup-row" data-kind="${kind}" data-id="${esc(item.id)}" style="margin-bottom:14px;border:1px solid var(--hair);border-radius:12px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        ${flabel(item.id, composedId)}
+        <div>
+          <select class="setup-platform" style="font:inherit;border:1px solid var(--hair);border-radius:8px;padding:4px 8px">${opts}</select>
+          <button class="btn danger-btn setup-delete" style="margin-left:6px">Delete</button>
+        </div>
+      </div>
+      <textarea class="setup-text" style="width:100%;min-height:160px;border:1px solid var(--hair);border-radius:10px;padding:12px 14px;font:13.5px/1.7 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(item.text||"")}</textarea>
+    </div>`;
+  }
+
   $("#main").innerHTML = `${pageHeader("Profile setup", profName, `<button class="btn danger-btn" id="delProfBtn" style="color:#c0392b">Delete profile</button><button class="btn primary" id="saveProfBtn">Save</button>`, setupTabId || OSID.prof(slug))}
     <div class="scroll">
       <div style="max-width:740px">
@@ -1245,21 +1267,53 @@ async function renderProfileSetup(slug){
             <input id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Film reviews for movie lovers" style="width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px 13px;font:inherit;background:rgba(255,255,255,.82)">
           </div>
         </div>
-        ${flabel("Brand voice & tone", voiceId)}
-        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Describe how this brand speaks — personality, tone, things to always or never say, example phrases. This context is injected into every AI generation for this profile.</p>
-        <textarea id="ps-voice" style="width:100%;min-height:340px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.voice||"")}</textarea>
-        <div style="margin-top:26px">${flabel("Post brief spec", briefSpecId)}</div>
-        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Per-profile output rules for new posts only. Changing this does not alter briefs already written. Other profiles have their own spec file.</p>
-        <textarea id="ps-brief" placeholder="e.g. Captions 80–150 words, punchy first line. Max 8 hashtags. Prefer carousels (5–7 slides) with bold text overlays. Always end with a question CTA." style="width:100%;min-height:200px;border:1px solid var(--hair);border-radius:12px;padding:16px 18px;font:13.5px/1.75 var(--body);background:rgba(255,255,255,.82);resize:vertical">${esc(profData.brief_spec||"")}</textarea>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 6px">
+          <div>${flabel("Brand voice & tone")}</div>
+          <button class="btn" id="addVoiceBtn">+ Add voice</button>
+        </div>
+        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Describe how this brand speaks. Add a second voice if you want a distinct one for specific platforms — nothing auto-switches between them, you pick which to use each time you generate.</p>
+        <div id="voiceRows">${voicesRes.voices.map(v=>row("voice", v)).join("")}</div>
+
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:26px 0 6px">
+          <div>${flabel("Post brief spec")}</div>
+          <button class="btn" id="addBriefBtn">+ Add brief-spec</button>
+        </div>
+        <p style="font-size:12px;color:var(--dim);margin:0 0 10px;line-height:1.5">Per-profile output rules for new posts. Changing one does not alter briefs already written. Add a second one if you want separate rules for a platform — selection is always manual.</p>
+        <div id="briefRows">${specsRes.specs.map(s=>row("brief", s)).join("")}</div>
       </div>
     </div>`;
   wireIdChips($("#main"));
+
+  $("#addVoiceBtn").onclick = async()=>{
+    await jpost(`/api/profile/${slug}/voices`, {text:"", platforms:"all"});
+    renderProfileSetup(slug);
+  };
+  $("#addBriefBtn").onclick = async()=>{
+    await jpost(`/api/profile/${slug}/brief-specs`, {text:"", platforms:"all"});
+    renderProfileSetup(slug);
+  };
+  $$(".setup-delete").forEach(btn=>{
+    btn.onclick = async()=>{
+      const rowEl = btn.closest(".setup-row");
+      const kind = rowEl.dataset.kind, id = rowEl.dataset.id;
+      const path = kind==="voice" ? `voices/${id}/delete` : `brief-specs/${id}/delete`;
+      try{ await jpost(`/api/profile/${slug}/${path}`, {}); renderProfileSetup(slug); }
+      catch(e){ toast("✗ "+e.message); }
+    };
+  });
+
   $("#saveProfBtn").onclick = async()=>{
-    const profile={name:$("#ps-name").value, topic:$("#ps-topic").value, voice:$("#ps-voice").value};
-    const spec=$("#ps-brief").value;
+    const profile={name:$("#ps-name").value, topic:$("#ps-topic").value};
     try{
       await jpost(`/api/profile/${slug}/update`, profile);
-      await jpost(`/api/profile/${slug}/brief-spec`, {text: spec});
+      for(const rowEl of $$(".setup-row")){
+        const kind = rowEl.dataset.kind, id = rowEl.dataset.id;
+        const text = rowEl.querySelector(".setup-text").value;
+        const plat = rowEl.querySelector(".setup-platform").value;
+        const path = kind==="voice" ? `voices/${id}/update` : `brief-specs/${id}/update`;
+        await jpost(`/api/profile/${slug}/${path}`, {text, platforms:plat});
+      }
       toast("Saved ✓"); renderRail();
     }
     catch(e){ toast("✗ "+e.message); }
@@ -2521,11 +2575,16 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const sCap = CTX_SPEC_FULL;
     let body = `id: ${oid}\ntopic: ${d.topic || "—"}`;
     if (full) {
-      body += `\nvoice:\n${(d.voice || "").slice(0, vCap)}`;
-      body += `\nbrief-spec.md:\n`
-           + (d.brief_spec ? String(d.brief_spec).slice(0, sCap) : "(empty)");
+      const [voicesRes, specsRes] = await Promise.all([
+        api(`/api/profile/${slug}/voices`), api(`/api/profile/${slug}/brief-specs`),
+      ]);
+      const vc1 = (voicesRes.voices || []).find(v => v.id === "vc1") || {};
+      const br1 = (specsRes.specs || []).find(s => s.id === "br1") || {};
+      body += `\nvoice (vc1${voicesRes.voices.length > 1 ? ` — ${voicesRes.voices.length} total, get-voice --list for others` : ""}):\n${(vc1.text || "").slice(0, vCap)}`;
+      body += `\nbrief-spec (br1${specsRes.specs.length > 1 ? ` — ${specsRes.specs.length} total, get-brief-spec --list for others` : ""}):\n`
+           + (br1.text ? String(br1.text).slice(0, sCap) : "(empty)");
     } else {
-      body += `\n(voice/spec omitted — @mention profile or ask about content to inline; else osctl get-brief-spec / read-file)`;
+      body += `\n(voice/spec omitted — @mention profile or ask about content to inline; else osctl get-brief-spec / get-voice / read-file)`;
     }
     return `\n## ${label} "${d.name || slug}" (${oid})\n${body}\n`;
   }

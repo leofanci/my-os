@@ -61,8 +61,8 @@ const IdReg = {
   docSubsection(project, docKey, title) {
     return this.get(`sub:proj:${project}:${docKey}:${this.slugKey(title)}`);
   },
-  profBriefSpec(profile) { return this.get(`brief-spec:prof:${profile}`); },
-  profVoice(profile) { return this.get(`voice:prof:${profile}`); },
+  profBriefSpec(profile, id="br1") { return this.get(`brief-spec:prof:${profile}:${id}`); },
+  profVoice(profile, id="vc1") { return this.get(`voice:prof:${profile}:${id}`); },
   experiment(project, stem) { return this.get(`exp:proj:${project}:${stem}`); },
   feature(product, titleKey) { return this.get(`feat:prod:${product}:${titleKey}`); },
   feat(product, titleKey) { return this.feature(product, titleKey); },
