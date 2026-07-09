@@ -47,12 +47,14 @@ PROMPTS = HERE / "prompts"
 from core.brief_spec_util import (  # noqa: E402
     format_for_brief_prompt,
     format_for_plan_prompt,
+    list_brief_ids,
     merge_fields_from_slot,
     normalize_brief_for_spec,
     read_spec_text,
     validate_brief_obj,
 )
 from core.ids import mint_post_ids  # noqa: E402
+from core.voice_util import list_voice_ids, read_voice_text  # noqa: E402
 
 
 def _persist_brief(root: Path, post_id: str, brief: dict,
@@ -229,11 +231,12 @@ def find_channel_dir(root: Path, channel_slug: str) -> Path:
     return matches[0]
 
 
-def build_voice_cascade(profile_dir: Path, platforms: list = None) -> str:
+def build_voice_cascade(profile_dir: Path, platforms: list = None, voice_id: str = "vc1") -> str:
     """Compose the VOICE CASCADE: project voice + profile voice + channel guidelines.
 
     project voice    = projects/<slug>/project.md body
-    profile voice    = profiles/<slug>/profile.md body
+    profile voice    = voices/<voice_id>.md body (selection is always explicit —
+                        this never auto-picks a voice by platform)
     channel guidelines = channels/<channel-slug>/guidelines.md
                          (one file per channel whose platform matches `platforms`)
 
@@ -247,10 +250,10 @@ def build_voice_cascade(profile_dir: Path, platforms: list = None) -> str:
     if project_md.exists():
         parts.append("--- PROJECT VOICE ---\n" + project_md.read_text(encoding="utf-8").strip())
 
-    # profile voice
-    profile_md = profile_dir / "profile.md"
-    if profile_md.exists():
-        parts.append("--- PROFILE VOICE ---\n" + profile_md.read_text(encoding="utf-8").strip())
+    # profile voice — explicit voice_id, default vc1
+    voice_text = read_voice_text(profile_dir, voice_id).strip()
+    if voice_text:
+        parts.append("--- PROFILE VOICE ---\n" + voice_text)
 
     # channel guidelines (for the relevant platforms)
     channels_dir = profile_dir / "channels"
@@ -315,6 +318,18 @@ def recent_history(content_dir: Path, limit: int = 20) -> str:
 # --------------------------------------------------------------------------- #
 # job builders
 # --------------------------------------------------------------------------- #
+def _parse_counts(raw: str) -> dict | None:
+    """Parse "br1:5,br2:2" into {"br1": 5, "br2": 2}; empty/unparseable -> None."""
+    if not raw.strip():
+        return None
+    out = {}
+    for part in raw.split(","):
+        k, _, v = part.partition(":")
+        if k.strip() and v.strip().isdigit():
+            out[k.strip()] = int(v.strip())
+    return out or None
+
+
 def channel_slug_map(profile_dir: Path) -> dict:
     """Map platform name -> channel slug for a profile (e.g. 'tiktok' ->
     'acme-tiktok'), so a generated plan that names channels by
@@ -332,7 +347,21 @@ def channel_slug_map(profile_dir: Path) -> dict:
     return out
 
 
-def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focus):
+def _assign_split_ids(counts: dict | None, default_id: str, n: int) -> list[str]:
+    """Distribute `n` minted posts across ids per `counts` (id -> how many),
+    in order; any shortfall (or no counts requested) falls back to default_id."""
+    if not counts:
+        return [default_id] * n
+    out = []
+    for bid, cnt in counts.items():
+        out.extend([bid] * cnt)
+    while len(out) < n:
+        out.append(default_id)
+    return out[:n]
+
+
+def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focus,
+            brief_counts: dict | None = None, voice_counts: dict | None = None):
     profile_dir = find_profile_dir(root, profile_slug)
     profile_md = profile_dir / "profile.md"
     if not profile_md.exists():
@@ -350,6 +379,8 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
     # platforms" means a slot should target BOTH channels, not split into one post
     # per platform. Without this the calendar drifts from how the posts are produced.
     brief_spec = read_spec_text(profile_dir).strip()
+    brief_ids = list_brief_ids(profile_dir)
+    voice_ids = list_voice_ids(profile_dir)
 
     base = (PROMPTS / "plan.txt").read_text(encoding="utf-8")
     params = (
@@ -363,6 +394,14 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         f"{recent_history(content_dir)}\n"
     )
     params += format_for_plan_prompt(brief_spec)
+    if len(brief_ids) > 1:
+        counts = brief_counts or {brief_ids[0]: cadence * len(platforms)}
+        params += "\n--- BRIEF-SPEC SPLIT (mint this many posts per brief id) ---\n"
+        params += "\n".join(f"{bid}: {n}" for bid, n in counts.items()) + "\n"
+    if len(voice_ids) > 1:
+        counts = voice_counts or {voice_ids[0]: cadence * len(platforms)}
+        params += "\n--- VOICE SPLIT (mint this many posts per voice id) ---\n"
+        params += "\n".join(f"{vid}: {n}" for vid, n in counts.items()) + "\n"
     obj = run_job(base + params, voice_text, validate_plan)
 
     # Normalize channel refs: the model often emits platform names ('tiktok')
@@ -388,6 +427,13 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
     for post, pid in zip(obj.get("posts", []), new_ids):
         post["id"] = pid
 
+    n_posts = len(obj.get("posts", []))
+    assigned_briefs = _assign_split_ids(brief_counts, brief_ids[0], n_posts)
+    assigned_voices = _assign_split_ids(voice_counts, voice_ids[0], n_posts)
+    for post, bid, vid in zip(obj.get("posts", []), assigned_briefs, assigned_voices):
+        post["brief_id"] = bid
+        post["voice_id"] = vid
+
     fname = "plan-" + re.sub(r"[^0-9a-zA-Z]+", "-", period).strip("-") + ".json"
     out = content_dir / fname
     out.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -407,7 +453,8 @@ def find_slot(content_dir: Path, post_id: str):
     return None
 
 
-def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = ""):
+def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = "",
+             brief_id: str | None = None, voice_id: str | None = None):
     profile_dir = find_profile_dir(root, profile_slug)
     profile_md = profile_dir / "profile.md"
     if not profile_md.exists():
@@ -417,6 +464,10 @@ def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = "")
     if slot is None:
         raise JobError(f"slot '{post_id}' not found in any plan-*.json under {content_dir}")
 
+    # Explicit flag wins; else whatever this post was minted with; else the default.
+    brief_id = brief_id or slot.get("brief_id") or "br1"
+    voice_id = voice_id or slot.get("voice_id") or "vc1"
+
     constraints = json.loads((PROMPTS / "platform-constraints.json").read_text(encoding="utf-8"))
     # slots may target multiple channels; use first channel's platform for constraints
     slot_channels = slot.get("channels") or []
@@ -424,11 +475,11 @@ def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = "")
     plat_cfg = constraints.get(plat, {}) if plat else {}
 
     # VOICE CASCADE: project + profile + channel guidelines for the relevant platform
-    voice_text = build_voice_cascade(profile_dir, [plat] if plat else None)
+    voice_text = build_voice_cascade(profile_dir, [plat] if plat else None, voice_id)
 
     # Per-profile brief spec: free-text requirements (caption length, hashtag
     # count, format leanings) that every post for this profile must honor.
-    brief_spec = read_spec_text(profile_dir).strip()
+    brief_spec = read_spec_text(profile_dir, brief_id).strip()
     base = (PROMPTS / "brief.txt").read_text(encoding="utf-8").replace(
         "{{PROFILE_BRIEF_SPEC}}", format_for_brief_prompt(brief_spec)
     )
@@ -568,12 +619,20 @@ def main():
     pp.add_argument("--platforms", default="instagram", help="comma-separated platform names")
     pp.add_argument("--cadence", default=3, type=int, help="posts per platform per week")
     pp.add_argument("--focus", default=None, help="optional creative steer for this period")
+    pp.add_argument("--brief-counts", default="",
+                    help='e.g. "br1:5,br2:2" — omit to use one brief for everything')
+    pp.add_argument("--voice-counts", default="",
+                    help='e.g. "vc1:5,vc2:2" — omit to use one voice for everything')
 
     pb = sub.add_parser("brief", help="expand one approved slot into full content")
     pb.add_argument("profile", help="profile slug")
     pb.add_argument("post_id", help="slot id from plan-*.json")
     pb.add_argument("--instruction", default=None,
                     help="optional free-form direction from the user")
+    pb.add_argument("--spec", dest="brief_id", default=None,
+                    help="brief-spec id to use, e.g. br2 (default: post's stored id, else br1)")
+    pb.add_argument("--voice", dest="voice_id", default=None,
+                    help="voice id to use, e.g. vc2 (default: post's stored id, else vc1)")
 
     pv = sub.add_parser("revise", help="revise an existing slot or brief with an instruction")
     pv.add_argument("profile", help="profile slug")
@@ -589,9 +648,11 @@ def main():
     try:
         if args.job == "plan":
             platforms = [p.strip() for p in args.platforms.split(",") if p.strip()]
-            do_plan(root, args.profile, args.period, platforms, args.cadence, args.focus)
+            do_plan(root, args.profile, args.period, platforms, args.cadence, args.focus,
+                    _parse_counts(args.brief_counts), _parse_counts(args.voice_counts))
         elif args.job == "brief":
-            do_brief(root, args.profile, args.post_id, args.instruction or "")
+            do_brief(root, args.profile, args.post_id, args.instruction or "",
+                     args.brief_id, args.voice_id)
         elif args.job == "revise":
             do_revise(root, args.profile, args.post_id, args.instruction)
         else:  # refine-guidelines

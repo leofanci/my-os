@@ -52,6 +52,36 @@ class DoPlanTest(unittest.TestCase):
         self.assertEqual(post["status"], "planned")
         self.assertEqual(post["channels"], ["demo-tiktok"])
 
+    def test_brief_and_voice_counts_split_across_minted_posts(self):
+        write(self.root / "projects/acme/profiles/demo/brief-specs/br1.md", "---\nplatforms: all\n---\nDefault.")
+        write(self.root / "projects/acme/profiles/demo/brief-specs/br2.md", "---\nplatforms: tiktok\n---\nTikTok only.")
+        write(self.root / "projects/acme/profiles/demo/voices/vc1.md", "---\nplatforms: all\n---\nDefault voice.")
+        generate.run_job = lambda *a, **k: {
+            "period": "p", "profile": "demo",
+            "posts": [
+                {"id": f"draft-{i:03d}", "date": "2026-07-01", "pillar": "curiosity",
+                 "channels": ["demo-tiktok"], "working_title": f"T{i}", "concept": "C"}
+                for i in range(5)
+            ],
+        }
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None,
+                          brief_counts={"br1": 3, "br2": 2})
+        posts = self._plan_file()["posts"]
+        self.assertEqual([p["brief_id"] for p in posts], ["br1", "br1", "br1", "br2", "br2"])
+        self.assertEqual([p["voice_id"] for p in posts], ["vc1"] * 5)  # only one voice exists — no split needed
+
+    def test_no_split_requested_uses_first_brief_and_voice_for_everyone(self):
+        write(self.root / "projects/acme/profiles/demo/brief-specs/br2.md", "---\nplatforms: tiktok\n---\nSecond.")
+        generate.run_job = lambda *a, **k: {
+            "period": "p", "profile": "demo",
+            "posts": [{"id": "draft-001", "date": "2026-07-01", "pillar": "curiosity",
+                       "channels": ["demo-tiktok"], "working_title": "T", "concept": "C"}],
+        }
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None)
+        post = self._plan_file()["posts"][0]
+        self.assertEqual(post["brief_id"], "br1")
+        self.assertEqual(post["voice_id"], "vc1")
+
 
 if __name__ == "__main__":
     unittest.main()
