@@ -621,6 +621,21 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/posts"):
                 slug = path[len("/api/profile/"):-len("/posts")]
                 return self._send(200, db.profile_posts(slug))
+            if path.startswith("/api/profile/") and path.endswith("/platforms"):
+                slug = path[len("/api/profile/"):-len("/platforms")]
+                return self._send(200, {"platforms": fileops.profile_platforms(slug)})
+            if path.startswith("/api/profile/") and path.endswith("/brief-specs"):
+                slug = path[len("/api/profile/"):-len("/brief-specs")]
+                return self._send(200, {"specs": fileops.list_brief_specs(slug)})
+            if "/brief-specs/" in path:
+                slug, brief_id = path[len("/api/profile/"):].split("/brief-specs/", 1)
+                return self._send(200, fileops.get_brief_spec(slug, brief_id))
+            if path.startswith("/api/profile/") and path.endswith("/voices"):
+                slug = path[len("/api/profile/"):-len("/voices")]
+                return self._send(200, {"voices": fileops.list_voices(slug)})
+            if "/voices/" in path:
+                slug, voice_id = path[len("/api/profile/"):].split("/voices/", 1)
+                return self._send(200, fileops.get_voice(slug, voice_id))
             if path.startswith("/api/profile/"):
                 slug = path[len("/api/profile/"):]
                 return self._send(200, fileops.read_profile(slug))
@@ -645,10 +660,45 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/profile/") and path.endswith("/posts"):
                 slug = path[len("/api/profile/"):-len("/posts")]
                 return self._send(200, {"ok": True, **fileops.add_post(slug, body)})
+            # brief-specs/voices routes must be checked before the generic profile
+            # /update and /delete below — those match ANY /api/profile/.../update
+            # or .../delete path, which would otherwise swallow these nested ones.
+            if "/brief-specs/" in path and path.endswith("/update"):
+                rest = path[len("/api/profile/"):-len("/update")]
+                slug, brief_id = rest.rstrip("/").split("/brief-specs/", 1)
+                text = body.get("text", "")
+                platforms = body.get("platforms")
+                return self._send(200, {"ok": True, **fileops.write_brief_spec(slug, text, brief_id, platforms)})
+            if "/brief-specs/" in path and path.endswith("/delete"):
+                rest = path[len("/api/profile/"):-len("/delete")]
+                slug, brief_id = rest.rstrip("/").split("/brief-specs/", 1)
+                return self._send(200, fileops.delete_brief_spec(slug, brief_id))
+            if path.startswith("/api/profile/") and path.endswith("/brief-specs"):
+                slug = path[len("/api/profile/"):-len("/brief-specs")]
+                text = body.get("text", "")
+                platforms = body.get("platforms", "all")
+                return self._send(200, {"ok": True, **fileops.create_brief_spec(slug, text, platforms)})
+            if "/voices/" in path and path.endswith("/update"):
+                rest = path[len("/api/profile/"):-len("/update")]
+                slug, voice_id = rest.rstrip("/").split("/voices/", 1)
+                text = body.get("text", "")
+                platforms = body.get("platforms")
+                return self._send(200, {"ok": True, **fileops.update_voice(slug, text, voice_id, platforms)})
+            if "/voices/" in path and path.endswith("/delete"):
+                rest = path[len("/api/profile/"):-len("/delete")]
+                slug, voice_id = rest.rstrip("/").split("/voices/", 1)
+                return self._send(200, fileops.delete_voice(slug, voice_id))
+            if path.startswith("/api/profile/") and path.endswith("/voices"):
+                slug = path[len("/api/profile/"):-len("/voices")]
+                text = body.get("text", "")
+                platforms = body.get("platforms", "all")
+                return self._send(200, {"ok": True, **fileops.create_voice(slug, text, platforms)})
             if path.startswith("/api/profile/") and path.endswith("/update"):
                 slug = path[len("/api/profile/"):-len("/update")]
                 return self._send(200, {"ok": True, **fileops.update_profile(slug, body)})
             if path.startswith("/api/profile/") and path.endswith("/brief-spec"):
+                # legacy single-spec path — kept so any not-yet-updated caller still
+                # hits br1 rather than 404ing.
                 slug = path[len("/api/profile/"):-len("/brief-spec")]
                 text = body.get("text")
                 if text is None:
