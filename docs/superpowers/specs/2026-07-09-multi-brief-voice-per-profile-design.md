@@ -27,11 +27,11 @@ Not in scope: automatic platform-matching or layered/merged specs. Selection is 
 ### 1. Storage
 
 Per profile:
-- `briefs/br{N}.md` — one file per brief-spec. Frontmatter `platforms: all` or `platforms: instagram,tiktok` (validated against that profile's actual channel platforms at write time) + body = spec text (same content that used to live in `brief-spec.md`).
+- `brief-specs/br{N}.md` — one file per brief-spec (named to avoid collision with the existing per-post `content/briefs/{post-id}.json` output dir). Frontmatter `platforms: all` or `platforms: instagram,tiktok` (validated against that profile's actual channel platforms at write time) + body = spec text (same content that used to live in `brief-spec.md`).
 - `voices/vc{N}.md` — one file per voice. Same shape: `platforms:` frontmatter + body = voice text (what used to live in `profile.md`'s body).
 - `profile.md` keeps only `name`/`topic`/`project` frontmatter; body is no longer the voice (see migration below).
 
-`N` is minted once via `next_counter(registry, f"brief:{profile_slug}")` (or `f"voice:{profile_slug}"`) at creation time and baked straight into the filename — mirrors how `mint_post_ids` bakes a post's final id into the plan JSON. `IdRegistry.build` never re-derives the number: it lists `briefs/*.md` / `voices/*.md`, parses `N` from each filename, and uses it as-is. Deleting `br2` never renumbers `br3`; a later new brief becomes `br4` (`next_counter` is monotonic and never reused, same guarantee the registry already gives posts/memos/experiments).
+`N` is minted once via `next_counter(registry, f"brief:{profile_slug}")` (or `f"voice:{profile_slug}"`) at creation time and baked straight into the filename — mirrors how `mint_post_ids` bakes a post's final id into the plan JSON. `IdRegistry.build` never re-derives the number: it lists `brief-specs/*.md` / `voices/*.md`, parses `N` from each filename, and uses it as-is. Deleting `br2` never renumbers `br3`; a later new brief becomes `br4` (`next_counter` is monotonic and never reused, same guarantee the registry already gives posts/memos/experiments).
 
 ### 2. IDs
 
@@ -58,7 +58,7 @@ Per profile:
 
 - `generate-brief --id <post-id> [--spec br2] [--voice vc2]` — omitted flags fall back to the post's stored `brief_id`/`voice_id`, which falls back to `br1`/`vc1` if the post has none yet.
 - `build_voice_cascade` gains a `voice_id` param (default `vc1`) and reads `voices/vc{id}.md` instead of `profile.md`'s body for the "PROFILE VOICE" section; everything else (project voice, channel guidelines) is unchanged.
-- `read_spec_text`/`format_for_brief_prompt` take a `brief_id` param (default `br1`) and read `briefs/br{id}.md`.
+- `read_spec_text`/`format_for_brief_prompt` take a `brief_id` param (default `br1`) and read `brief-specs/br{id}.md`.
 - Chat: "generate this post's brief using br2" resolves in the same way a user would type `--spec br2` — no separate code path from the terminal/manual one.
 
 ### 6. Bulk plan generation (`generate.py do_plan`, `generate-plan`, the "how many posts/week" flow)
@@ -73,8 +73,8 @@ Per profile:
 
 ### 8. Migration
 
-One-time, on first read of a profile that hasn't been migrated (detected by the absence of `briefs/`/`voices/` dirs):
-- `brief-spec.md` (if present) → `briefs/br1.md`, `platforms: all`.
+One-time, on first read of a profile that hasn't been migrated (detected by the absence of `brief-specs/`/`voices/` dirs):
+- `brief-spec.md` (if present) → `brief-specs/br1.md`, `platforms: all`.
 - `profile.md` body (if non-empty) → `voices/vc1.md`, `platforms: all`.
 - `profile.md` is rewritten to keep only its frontmatter, empty body.
 - Existing posts get no retroactive `brief_id`/`voice_id` (they predate the concept); reads default to `br1`/`vc1` for posts missing the field, same as the global default.
@@ -89,7 +89,7 @@ One-time, on first read of a profile that hasn't been migrated (detected by the 
 
 ## Affected files
 
-- `core/ids.py` — `IdRegistry.build`: loop over `briefs/`/`voices/` dirs instead of hardcoding `br1`/`vc1`; new `create_brief_id`/`create_voice_id` helpers using `next_counter`.
+- `core/ids.py` — `IdRegistry.build`: loop over `brief-specs/`/`voices/` dirs instead of hardcoding `br1`/`vc1`; new `create_brief_id`/`create_voice_id` helpers using `next_counter`.
 - `core/brief_spec_util.py` — `spec_file`/`read_spec_text`/`write_spec_text` take a `brief_id` param; platform frontmatter parse/validate.
 - New `core/voice_util.py` (mirrors `brief_spec_util.py`) for voice file read/write/validate — keeps brief and voice symmetric at the code level too.
 - `dashboard/fileops.py` — `read_profile`/`update_profile` drop voice; new `create_brief_spec`/`update_brief_spec`/`delete_brief_spec`/`create_voice`/`update_voice`/`delete_voice`/`list_briefs`/`list_voices`.
@@ -97,7 +97,7 @@ One-time, on first read of a profile that hasn't been migrated (detected by the 
 - `generate.py` — `build_voice_cascade`, `do_plan`, `do_brief` gain `brief_id`/`voice_id` params; `do_plan` prompts for per-brief/per-voice counts when >1 exists.
 - `dashboard/app.js` — Profile Setup panel repeatable rows; post editor brief/voice selectors (conditional on >1 existing).
 - `dashboard/ai_rules.py` — `BRIEF_SPEC` const rewritten for the new command table; drop the `update-profile --voice` note.
-- `core/ids.py` migration helper (or a small standalone migration function) for the one-time `brief-spec.md`/`profile.md` body → `briefs/br1.md`/`voices/vc1.md` move.
+- `core/ids.py` migration helper (or a small standalone migration function) for the one-time `brief-spec.md`/`profile.md` body → `brief-specs/br1.md`/`voices/vc1.md` move.
 
 ## Tests
 
