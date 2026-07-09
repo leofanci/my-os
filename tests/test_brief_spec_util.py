@@ -5,9 +5,13 @@ from pathlib import Path
 from core.brief_spec_util import (
     _carousel_slide_bounds,
     allowed_brief_keys,
+    delete_brief,
     format_for_brief_prompt,
+    list_brief_ids,
     merge_fields_from_slot,
+    next_brief_id,
     parse_spec_fields,
+    read_spec_platforms,
     read_spec_text,
     slot_format,
     validate_brief_obj,
@@ -233,6 +237,58 @@ class ValidateBriefObjTest(unittest.TestCase):
         }
         errs = validate_brief_obj(b, "post-001", spec)
         self.assertIn("must match gen_prompts count", errs[0])
+
+
+class BriefSpecStorageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.profile_dir = Path(self.tmp.name) / "profile"
+        self.profile_dir.mkdir(parents=True)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_write_and_read_default_br1(self):
+        write_spec_text(self.profile_dir, "Captions under 100 words.")
+        self.assertEqual(read_spec_text(self.profile_dir).strip(), "Captions under 100 words.")
+        self.assertEqual(read_spec_platforms(self.profile_dir), "all")
+        self.assertTrue((self.profile_dir / "brief-specs" / "br1.md").is_file())
+
+    def test_write_and_read_second_brief_with_platforms(self):
+        write_spec_text(self.profile_dir, "TikTok: under 40 words.", brief_id="br2", platforms="tiktok")
+        self.assertEqual(read_spec_text(self.profile_dir, "br2").strip(), "TikTok: under 40 words.")
+        self.assertEqual(read_spec_platforms(self.profile_dir, "br2"), "tiktok")
+        # br1 unaffected
+        self.assertEqual(read_spec_text(self.profile_dir, "br1").strip(), "")
+
+    def test_update_without_platforms_preserves_existing_tag(self):
+        write_spec_text(self.profile_dir, "v1", brief_id="br1", platforms="instagram")
+        write_spec_text(self.profile_dir, "v2", brief_id="br1")  # no platforms arg
+        self.assertEqual(read_spec_platforms(self.profile_dir, "br1"), "instagram")
+        self.assertEqual(read_spec_text(self.profile_dir, "br1").strip(), "v2")
+
+    def test_list_brief_ids_always_includes_br1(self):
+        self.assertEqual(list_brief_ids(self.profile_dir), ["br1"])
+        write_spec_text(self.profile_dir, "x", brief_id="br3")
+        self.assertEqual(list_brief_ids(self.profile_dir), ["br1", "br3"])
+
+    def test_next_brief_id_skips_occupied_and_never_reuses(self):
+        self.assertEqual(next_brief_id(self.profile_dir), "br2")  # br1 implicit, so next is br2
+        write_spec_text(self.profile_dir, "x", brief_id="br2")
+        self.assertEqual(next_brief_id(self.profile_dir), "br3")
+        delete_brief(self.profile_dir, "br2")
+        self.assertEqual(next_brief_id(self.profile_dir), "br3")  # br2 never reused
+
+    def test_delete_brief_rejects_last_one(self):
+        with self.assertRaises(ValueError):
+            delete_brief(self.profile_dir, "br1")
+
+    def test_legacy_brief_spec_md_migrates_on_first_touch(self):
+        (self.profile_dir / "brief-spec.md").write_text("Legacy rules.", encoding="utf-8")
+        self.assertEqual(read_spec_text(self.profile_dir).strip(), "Legacy rules.")
+        self.assertEqual(read_spec_platforms(self.profile_dir), "all")
+        self.assertFalse((self.profile_dir / "brief-spec.md").exists())
+        self.assertTrue((self.profile_dir / "brief-specs" / "br1.md").is_file())
 
 
 if __name__ == "__main__":
