@@ -31,7 +31,7 @@ Per profile:
 - `voices/vc{N}.md` — one file per voice. Same shape: `platforms:` frontmatter + body = voice text (what used to live in `profile.md`'s body).
 - `profile.md` keeps only `name`/`topic`/`project` frontmatter; body is no longer the voice (see migration below).
 
-`N` is minted once via `next_counter(registry, f"brief:{profile_slug}")` (or `f"voice:{profile_slug}"`) at creation time and baked straight into the filename — mirrors how `mint_post_ids` bakes a post's final id into the plan JSON. `IdRegistry.build` never re-derives the number: it lists `brief-specs/*.md` / `voices/*.md`, parses `N` from each filename, and uses it as-is. Deleting `br2` never renumbers `br3`; a later new brief becomes `br4` (`next_counter` is monotonic and never reused, same guarantee the registry already gives posts/memos/experiments).
+**Implementation note (post-review correction):** the section above described minting `N` via `core/ids.py`'s `next_counter`/`id_registry.json` mechanism. What actually shipped is simpler: each profile's `brief-specs/.max_id` (and `voices/.max_id`) holds the highest `N` ever minted, bumped on every write, never decremented on delete. `next_brief_id`/`next_voice_id` read `max(1, marker, existing files) + 1`. Reasoning for the deviation: posts need `next_counter` because their id must be assigned *before* the plan JSON that will hold it exists (the id-registry file bridges that gap). A brief-spec/voice has no such gap — minting IS writing the file, in the same call — so a tiny per-directory marker is sufficient and avoids coupling this feature to the id-registry file's lifecycle. `IdRegistry.build` still never re-derives the number: it lists `brief-specs/*.md` / `voices/*.md`, parses `N` from each filename, and uses it as-is. Deleting `br2` never renumbers `br3`; a later new brief becomes `br4` (the marker is monotonic and never reused).
 
 ### 2. IDs
 
@@ -82,14 +82,14 @@ One-time, on first read of a profile that hasn't been migrated (detected by the 
 ## Decisions
 
 - **Manual selection only** — confirmed with the user; no platform auto-matching, no layered merge. Keeps the mental model to "pick one," not "reason about precedence."
-- **Numbering via `next_counter`, baked into the filename** — reuses the persisted-registry mechanism already being introduced elsewhere in `core/ids.py` for exactly this "mint once, never re-derive" shape, instead of a second scanning-based scheme (like `next_memo_version`'s glob-and-regex approach).
+- **Numbering via a per-directory `.max_id` marker, baked into the filename** — shipped simpler than originally planned (see the implementation note above): unlike posts, minting a brief/voice writes its file in the same call, so there's no chicken-and-egg gap that requires `core/ids.py`'s shared `next_counter`/`id_registry.json`. A plain monotonic marker file gives the same "never reissue a deleted id" guarantee with no cross-module coupling. Tradeoff accepted: two independent "never reuse this number" mechanisms now exist in the codebase (the JSON id-registry and these per-profile marker files) rather than one — acceptable here since briefs/voices number in the single digits per profile, not hundreds.
 - **`platforms` validated against the profile's real channels** — so the dropdown in the dashboard is a real list, not free text that can drift from what channels actually exist.
 - **Post tracks `brief_id`/`voice_id`** — confirmed with the user; makes "what produced this post" inspectable and regeneration deterministic by default.
 - **`update-profile --voice` removed, not kept as a shim** — voice is no longer a profile identity field; keeping the old flag pointing at `vc1` would mean two ways to edit the same thing forever. `create-voice`/`update-voice` fully replace it.
 
 ## Affected files
 
-- `core/ids.py` — `IdRegistry.build`: loop over `brief-specs/`/`voices/` dirs instead of hardcoding `br1`/`vc1`; new `create_brief_id`/`create_voice_id` helpers using `next_counter`.
+- `core/ids.py` — `IdRegistry.build`: loop over `brief-specs/`/`voices/` dirs (via `list_brief_ids`/`list_voice_ids`) instead of hardcoding `br1`/`vc1`. Minting (`next_brief_id`/`next_voice_id`, `.max_id` marker) lives in `core/brief_spec_util.py`/`core/voice_util.py`, not `core/ids.py` — see implementation note above.
 - `core/brief_spec_util.py` — `spec_file`/`read_spec_text`/`write_spec_text` take a `brief_id` param; platform frontmatter parse/validate.
 - New `core/voice_util.py` (mirrors `brief_spec_util.py`) for voice file read/write/validate — keeps brief and voice symmetric at the code level too.
 - `dashboard/fileops.py` — `read_profile`/`update_profile` drop voice; new `create_brief_spec`/`update_brief_spec`/`delete_brief_spec`/`create_voice`/`update_voice`/`delete_voice`/`list_briefs`/`list_voices`.
@@ -97,7 +97,7 @@ One-time, on first read of a profile that hasn't been migrated (detected by the 
 - `generate.py` — `build_voice_cascade`, `do_plan`, `do_brief` gain `brief_id`/`voice_id` params; `do_plan` prompts for per-brief/per-voice counts when >1 exists.
 - `dashboard/app.js` — Profile Setup panel repeatable rows; post editor brief/voice selectors (conditional on >1 existing).
 - `dashboard/ai_rules.py` — `BRIEF_SPEC` const rewritten for the new command table; drop the `update-profile --voice` note.
-- `core/ids.py` migration helper (or a small standalone migration function) for the one-time `brief-spec.md`/`profile.md` body → `brief-specs/br1.md`/`voices/vc1.md` move.
+- `core/brief_spec_util.py` / `core/voice_util.py`: `_migrate_legacy_spec`/`_migrate_legacy_voice`, the one-time `brief-spec.md`/`profile.md` body → `brief-specs/br1.md`/`voices/vc1.md` move, run lazily on first read/write (not a standalone command).
 
 ## Tests
 
