@@ -45,9 +45,9 @@ class BriefSpecSyncTest(unittest.TestCase):
         prof_dir = self.root / "projects/acme/profiles/demo"
         self.assertEqual(read_spec_text(prof_dir).strip(), text)
         self.assertEqual(fileops.read_brief_spec("demo").strip(), text)
-        self.assertEqual(fileops.read_profile("demo")["brief_spec"].strip(), text)
+        self.assertEqual(fileops.get_brief_spec("demo")["text"].strip(), text)
         self.assertEqual(fileops.brief_spec_relpath("demo"),
-                         "projects/acme/profiles/demo/brief-spec.md")
+                         "projects/acme/profiles/demo/brief-specs/br1.md")
 
     def test_spec_change_does_not_touch_existing_brief_files(self):
         fileops.write_brief_spec("demo", "- caption")

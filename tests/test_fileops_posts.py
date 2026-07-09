@@ -74,7 +74,7 @@ class T(unittest.TestCase):
 
     def test_brief_spec_roundtrip(self):
         fileops.write_brief_spec("demo", "Captions under 100 words.")
-        self.assertEqual(fileops.read_profile("demo")["brief_spec"].strip(),
+        self.assertEqual(fileops.get_brief_spec("demo")["text"].strip(),
                          "Captions under 100 words.")
 
     def test_set_brief_creates_file_and_briefs_post(self):

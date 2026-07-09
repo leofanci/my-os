@@ -28,11 +28,23 @@ from pathlib import Path
 
 from core.brief_spec_util import (
     allowed_brief_keys,
+    delete_brief,
+    list_brief_ids,
     merge_fields_from_slot,
+    next_brief_id,
     normalize_brief_for_spec,
+    read_spec_platforms,
     read_spec_text,
     validate_brief_obj,
     write_spec_text,
+)
+from core.voice_util import (
+    delete_voice as _delete_voice_file,
+    list_voice_ids,
+    next_voice_id,
+    read_voice_platforms,
+    read_voice_text,
+    write_voice_text,
 )
 from core.ids import (
     build_id_registry,
@@ -141,6 +153,39 @@ def _channel_dir(slug):
         if candidate.is_dir():
             return candidate
     raise ActionError(f"channel '{slug}' not found")
+
+
+def profile_platforms(slug: str) -> list[str]:
+    """Every distinct platform among this profile's channels (for validating
+    a brief-spec/voice's `platforms` tag against what actually exists)."""
+    profile_dir = _profile_dir(slug)
+    channels_dir = profile_dir / "channels"
+    if not channels_dir.is_dir():
+        return []
+    platforms = []
+    for channel_dir in sorted(channels_dir.iterdir()):
+        channel_md = channel_dir / "channel.md"
+        if not channel_md.is_file():
+            continue
+        fm, _ = _parse_frontmatter(channel_md.read_text(encoding="utf-8"))
+        p = fm.get("platform", "").strip()
+        if p and p not in platforms:
+            platforms.append(p)
+    return platforms
+
+
+def _validate_platforms_tag(slug: str, platforms: str) -> None:
+    platforms = (platforms or "all").strip()
+    if platforms == "all":
+        return
+    valid = set(profile_platforms(slug))
+    requested = {p.strip() for p in platforms.split(",") if p.strip()}
+    unknown = requested - valid
+    if unknown:
+        raise ActionError(
+            f"unknown platform(s) {sorted(unknown)} for profile '{slug}' — "
+            f"this profile's channels are: {sorted(valid) or '(none)'}"
+        )
 
 
 def _parse_channels(raw):
@@ -328,34 +373,113 @@ def _parse_frontmatter(text):
     return fm, body
 
 
-def brief_spec_relpath(slug):
-    """Repo-relative path to the profile's brief-spec.md (single source of truth)."""
-    return str(_profile_dir(slug).relative_to(ROOT) / "brief-spec.md")
+def brief_spec_relpath(slug, brief_id="br1"):
+    """Repo-relative path to one of the profile's brief-spec files."""
+    profile_dir = _profile_dir(slug)
+    return str((profile_dir / "brief-specs" / f"{brief_id}.md").relative_to(ROOT))
 
 
-def read_brief_spec(slug):
-    """Live brief spec for this profile only — each profile has its own brief-spec.md."""
-    return read_spec_text(_profile_dir(slug))
+def read_brief_spec(slug, brief_id="br1"):
+    """Live brief spec text for this profile + id (default br1)."""
+    return read_spec_text(_profile_dir(slug), brief_id)
 
 
-def write_brief_spec(slug, text):
-    """Write brief-spec.md. Profile Setup and chat use this same path."""
-    write_spec_text(_profile_dir(slug), text)
-    return {"slug": slug, "path": brief_spec_relpath(slug)}
+def get_brief_spec(slug: str, brief_id: str = "br1") -> dict:
+    profile_dir = _profile_dir(slug)
+    return {
+        "slug": slug, "id": brief_id,
+        "path": brief_spec_relpath(slug, brief_id),
+        "text": read_spec_text(profile_dir, brief_id),
+        "platforms": read_spec_platforms(profile_dir, brief_id),
+    }
+
+
+def list_brief_specs(slug: str) -> list[dict]:
+    profile_dir = _profile_dir(slug)
+    return [get_brief_spec(slug, bid) for bid in list_brief_ids(profile_dir)]
+
+
+def write_brief_spec(slug, text, brief_id="br1", platforms=None):
+    """Write one brief-spec file. Profile Setup and chat use this same path."""
+    profile_dir = _profile_dir(slug)
+    if platforms is not None:
+        _validate_platforms_tag(slug, platforms)
+    write_spec_text(profile_dir, text, brief_id, platforms)
+    return {"slug": slug, "id": brief_id, "path": brief_spec_relpath(slug, brief_id)}
+
+
+# Back-compat name used by existing callers that pass no id (Profile Setup,
+# older osctl behavior) — same as write_brief_spec with brief_id="br1".
+def update_brief_spec(slug, text, brief_id="br1", platforms=None):
+    return write_brief_spec(slug, text, brief_id, platforms)
+
+
+def create_brief_spec(slug: str, text: str, platforms: str = "all") -> dict:
+    profile_dir = _profile_dir(slug)
+    _validate_platforms_tag(slug, platforms)
+    brief_id = next_brief_id(profile_dir)
+    write_spec_text(profile_dir, text, brief_id, platforms)
+    return {"slug": slug, "brief_id": brief_id, "path": brief_spec_relpath(slug, brief_id)}
+
+
+def delete_brief_spec(slug: str, brief_id: str) -> dict:
+    profile_dir = _profile_dir(slug)
+    try:
+        delete_brief(profile_dir, brief_id)
+    except ValueError as e:
+        raise ActionError(str(e)) from e
+    return {"slug": slug, "brief_id": brief_id, "deleted": True}
+
+
+def get_voice(slug: str, voice_id: str = "vc1") -> dict:
+    profile_dir = _profile_dir(slug)
+    return {
+        "slug": slug, "id": voice_id,
+        "text": read_voice_text(profile_dir, voice_id),
+        "platforms": read_voice_platforms(profile_dir, voice_id),
+    }
+
+
+def list_voices(slug: str) -> list[dict]:
+    profile_dir = _profile_dir(slug)
+    return [get_voice(slug, vid) for vid in list_voice_ids(profile_dir)]
+
+
+def create_voice(slug: str, text: str, platforms: str = "all") -> dict:
+    profile_dir = _profile_dir(slug)
+    _validate_platforms_tag(slug, platforms)
+    voice_id = next_voice_id(profile_dir)
+    write_voice_text(profile_dir, text, voice_id, platforms)
+    return {"slug": slug, "voice_id": voice_id}
+
+
+def update_voice(slug: str, text: str, voice_id: str = "vc1", platforms: str = None) -> dict:
+    profile_dir = _profile_dir(slug)
+    if platforms is not None:
+        _validate_platforms_tag(slug, platforms)
+    write_voice_text(profile_dir, text, voice_id, platforms)
+    return {"slug": slug, "voice_id": voice_id}
+
+
+def delete_voice(slug: str, voice_id: str) -> dict:
+    profile_dir = _profile_dir(slug)
+    try:
+        _delete_voice_file(profile_dir, voice_id)
+    except ValueError as e:
+        raise ActionError(str(e)) from e
+    return {"slug": slug, "voice_id": voice_id, "deleted": True}
 
 
 def read_profile(slug):
-    """Read profile.md and return name, topic, voice, project, and brief spec."""
+    """Read profile.md and return name, topic, project. Voice and brief-spec
+    live in voices/ and brief-specs/ now — use list_voices/list_brief_specs."""
     d = _profile_dir(slug)
     f = d / "profile.md"
     if not f.exists():
-        return {"slug": slug, "name": slug, "topic": "", "voice": "",
-                "project": "", "brief_spec": ""}
-    fm, body = _parse_frontmatter(f.read_text(encoding="utf-8"))
+        return {"slug": slug, "name": slug, "topic": "", "project": ""}
+    fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8"))
     return {"slug": slug, "name": fm.get("name", slug),
-            "topic": fm.get("topic", ""), "voice": body,
-            "project": fm.get("project", ""),
-            "brief_spec": read_brief_spec(slug)}
+            "topic": fm.get("topic", ""), "project": fm.get("project", "")}
 
 
 def read_channel_guidelines(slug):
@@ -735,25 +859,23 @@ def create_profile(project_slug: str, slug: str, fields: dict) -> dict:
         raise ActionError(f"profile '{slug}' already exists")
     name = (fields.get("name") or slug).strip()
     topic = (fields.get("topic") or "").strip()
-    voice = (fields.get("voice") or "").strip()
     for sub in ["content/briefs", "channels"]:
         (profile_dir / sub).mkdir(parents=True, exist_ok=True)
-    md = f"---\nname: {name}\ntopic: {topic}\nproject: {project_slug}\n---\n{voice}\n"
+    md = f"---\nname: {name}\ntopic: {topic}\nproject: {project_slug}\n---\n"
     (profile_dir / "profile.md").write_text(md, encoding="utf-8")
     reindex()
     return {"slug": slug, "project": project_slug}
 
 
 def update_profile(slug: str, fields: dict) -> dict:
-    """Rewrite profile.md frontmatter (name/topic) and body (voice), keep structure."""
+    """Rewrite profile.md frontmatter (name/topic), keep structure."""
     profile_dir = _profile_dir(slug)  # raises if not found
     f = profile_dir / "profile.md"
     fm, _ = _parse_frontmatter(f.read_text(encoding="utf-8")) if f.exists() else ({}, "")
     name = (fields.get("name") or fm.get("name") or slug).strip()
     topic = (fields.get("topic") if fields.get("topic") is not None else fm.get("topic", "")).strip()
     project = fm.get("project", "")
-    voice = (fields.get("voice") if fields.get("voice") is not None else "").strip()
-    md = f"---\nname: {name}\ntopic: {topic}\nproject: {project}\n---\n{voice}\n"
+    md = f"---\nname: {name}\ntopic: {topic}\nproject: {project}\n---\n"
     f.write_text(md, encoding="utf-8")
     reindex()
     return {"slug": slug}
