@@ -20,7 +20,7 @@ Each turn: COMPACT state index only — not full content. Fetch on demand:
 - `get-posts [--profile <slug>]` — post ids, dates, statuses
 - `get-project --slug <slug>` — memos, experiments, features, activities, `sections` + `subsections`
 - `resolve-id --id pr1.sec02` — section artifacts + paths
-- `read-file --path <repo-relative>` — profile.md, brief JSON, intake.md, brief-spec.md, etc.
+- `read-file --path <repo-relative>` — profile.md, brief JSON, intake.md, brief-specs/br{N}.md, voices/vc{N}.md, etc.
 - WebSearch / WebFetch — only on research turns; use for live external data"""
 
 # --------------------------------------------------------------------------- #
@@ -38,14 +38,15 @@ WRITES_TABLE = """| What | Command |
 | Roadmap (full replace) | `update-roadmap --product <prod-slug>` (--text or stdin) |
 | Experiment patch | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` |
 | Post slide row | `add-slide --id <post-id> --overlay "<text>"` |
-| Profile voice/name/topic | `update-profile --slug <slug> [--name] [--topic] [--voice]` |
-| Brief spec | `update-brief-spec --profile <slug> --text "<full spec>"` or stdin |
+| Profile name/topic | `update-profile --slug <slug> [--name] [--topic]` |
+| Brief spec (one of several) | `create-brief-spec` / `update-brief-spec --profile <slug> [--id br2] [--platforms ...] --text "..."` |
+| Voice (one of several) | `create-voice` / `update-voice --profile <slug> [--id vc2] [--platforms ...] --text "..."` |
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
 | Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` |
 
-Banned: direct file writes, `set-brief`, `patch-brief`, editing `briefs/*.json` or `brief-spec.md` by hand."""
+Banned: direct file writes, `set-brief`, `patch-brief`, editing `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md` by hand."""
 
 WRITE_GATE = """## Write gate (mandatory — same pipeline as posts)
 Posts never duplicate full copy in chat: ideas land as `planned` slots in Posts UI → user reviews there → brief → publish.
@@ -73,11 +74,9 @@ Source: `core.project_schemas.MEMO_SECTION` + `core.ids.PROJECT_SECTION_LAYOUT`.
 | pf.sec00 | Profile Posts | post slots | `generate-plan`, `add-post` | project tabs |
 | vw02 | Calendar/Ops | user-confirmed scheduled work | `create-activity`, `create-milestone` | experiments, memos |"""
 
-BRIEF_SPEC = """## Brief spec
-Path: `projects/<project>/profiles/<profile>/brief-spec.md`. New posts only; existing briefs grandfathered.
-- Read: `get-brief-spec --profile <slug>`
-- Write: `update-brief-spec` — get first, minimal edit (verbatim except user's change), full file back.
-Voice → `update-profile --voice`, not brief-spec."""
+BRIEF_SPEC = """## Brief spec & voice (several per profile ok, `platforms:` tag info only)
+`brief-specs/br{N}.md` / `voices/vc{N}.md`. `get/create-brief-spec --id brN`, `update-brief-spec --id brN --text ...`, minimal-edit, default br1. Same for voice (vc1).
+Always explicit, default br1/vc1; post remembers its pair. New posts only; existing grandfathered."""
 
 POST_BRIEFS = """## Post briefs (NL — never ask user for JSON)
 - `update-brief --id <post-id> --instruction "..."` — primary (create or change)
@@ -91,7 +90,7 @@ MUTATION_CMDS = (
     "update-validation-tab, "
     "add-slide, add-post, create-activity, create-milestone, mark-done, update-post, set-status, "
     "update-project, update-profile, update-channel, update-milestone, update-brief, generate-brief, "
-    "generate-plan, revise-post, update-brief-spec"
+    "generate-plan, revise-post, update-brief-spec, create-brief-spec, create/update-voice"
 )
 
 SUBSECTIONS = """## Tab subsections (per project)
@@ -162,7 +161,7 @@ Never write content files directly. All mutations go through osctl:
 
 {SUBSECTIONS}
 
-Brief spec file: `projects/<project>/profiles/<profile>/brief-spec.md`.
+Brief specs: `projects/<project>/profiles/<profile>/brief-specs/br{{N}}.md`. Voices: `.../voices/vc{{N}}.md`.
 
 {SCHEMAS}
 

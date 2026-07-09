@@ -2,7 +2,8 @@
 
 ## PUBLIC REPO: zero usage data (absolute)
 
-Repo is public. NEVER write real venture/profile/product/channel names, post content, or any user data into tracked files: code, tests, docs, comments, examples, placeholders, commit messages. Real data lives only in gitignored `projects/`. Fixtures and examples use generic slugs only: `demo`, `acme`, `profile-a`, `profile-b`. Enforced by `tests/test_no_usage_data.py`, run it before every commit.
+Repo is public. NEVER write real venture/profile/product/channel names, post content, or any user data into tracked files: code, tests, docs, comments, examples, placeholders, commit messages. Real data lives only in gitignored `projects/`. Fixtures and examples use generic slugs only: `demo`, `acme`, `profile-a`, `profile-b`. Enforced by `tests/test_no_usage_data.py`, run it before every commit. Do not use a second branch.
+
 
 ## Response style
 
@@ -36,17 +37,18 @@ Never write content files directly. All mutations go through osctl:
 | Roadmap (full replace) | `update-roadmap --product <prod-slug>` (--text or stdin) |
 | Experiment patch | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` |
 | Post slide row | `add-slide --id <post-id> --overlay "<text>"` |
-| Profile voice/name/topic | `update-profile --slug <slug> [--name] [--topic] [--voice]` |
-| Brief spec | `update-brief-spec --profile <slug> --text "<full spec>"` or stdin |
+| Profile name/topic | `update-profile --slug <slug> [--name] [--topic]` |
+| Brief spec (one of several) | `create-brief-spec` / `update-brief-spec --profile <slug> [--id br2] [--platforms ...] --text "..."` |
+| Voice (one of several) | `create-voice` / `update-voice --profile <slug> [--id vc2] [--platforms ...] --text "..."` |
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
 | Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` |
 
-Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json` or `brief-spec.md`.
+Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md`.
 
-Brief spec ONE file per profile: `projects/<project>/profiles/<profile>/brief-spec.md`. Changing it does not rewrite existing post briefs.
-To edit it from NL: `get-brief-spec` first, then MINIMAL EDIT — keep every line the user did not touch verbatim, change only what they asked, never rewrite/reword the rest.
+A profile can have several brief-specs and several voices (`br1`, `br2`, ... / `vc1`, `vc2`, ...), each optionally tagged `platforms:` (`all` or a comma list from that profile's channels). Tag is informational only — selection between multiple is always manual, never auto-matched. Default is br1/vc1 when nothing is specified; a post remembers which pair produced it. Path: `projects/<project>/profiles/<profile>/brief-specs/br{N}.md` and `.../voices/vc{N}.md`. Changing one does not rewrite existing post briefs.
+To edit one from NL: `get-brief-spec --id <id>` first, then MINIMAL EDIT — keep every line the user did not touch verbatim, change only what they asked, never rewrite/reword the rest.
 
 **Write gate (same as posts):** routing + short summary in chat → user approves tab placement → osctl writes content once (review in dashboard, not chat). Never paste full memo/intake/roadmap text in chat and again in osctl. Full rules: `dashboard/ai_rules.py` WRITE_GATE + TAB_ROUTING.
 
