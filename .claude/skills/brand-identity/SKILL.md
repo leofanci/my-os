@@ -1,16 +1,23 @@
 ---
 name: brand-identity
-description: Create or refresh a profile voice (profile.md) and/or channel guidelines through interview or from a channel-strategy mandate. Use for new profiles, "define my profile voice", or when content output feels off-brand.
+description: Create or refresh a profile voice (voices/vc{N}.md) and/or channel guidelines through interview or from a channel-strategy mandate. Use for new profiles, "define my profile voice", or when content output feels off-brand.
 ---
 
 # Profile Voice & Channel Guidelines
 
-Goal: produce `projects/<project-slug>/profiles/<profile-slug>/profile.md` — the
-profile voice injected (as part of the VOICE CASCADE) into every content job.
-Quality here determines all content quality downstream.
+Goal: produce `projects/<project-slug>/profiles/<profile-slug>/voices/vc1.md` (the
+default voice — a profile can have more than one, see below) via `create-voice`/
+`update-voice --profile <slug> [--id vcN] --text "..."`. Never write voices/*.md
+by hand. Quality here determines all content quality downstream.
 
-VOICE CASCADE: project voice (project.md body) → profile voice (profile.md body)
-→ channel guidelines (channels/<channel-slug>/guidelines.md)
+VOICE CASCADE: project voice (project.md body) → profile voice (voices/vc{N}.md,
+default vc1) → channel guidelines (channels/<channel-slug>/guidelines.md)
+
+A profile can have several voices (vc1, vc2, ...), each tagged `platforms:`
+(`all` or a comma list) for the human's reference — selection between them is
+always manual, never auto-matched. Default this skill to vc1 unless the user
+asks for a second, platform-specific voice, in which case use `create-voice`
+(mints the next id, no --id flag) instead of overwriting vc1.
 
 ## Two entry paths
 - **From a project**: read the channel-strategy memo's social_media_mandate.brand_brief_seed
@@ -31,12 +38,12 @@ VOICE CASCADE: project voice (project.md body) → profile voice (profile.md bod
 9. References: 3 posts that nailed it, admired accounts, accounts NOT to resemble
 
 ## Channel guidelines (per channel, optional but recommended)
-After writing profile.md, offer to draft `channels/<channel-slug>/guidelines.md`
+After writing the voice, offer to draft `channels/<channel-slug>/guidelines.md`
 for each channel this profile uses. Each guidelines.md has a `## General` section
 (cross-channel rules) and one `## <Platform>` section per platform covered.
 
 ## File locations
-- `projects/<project-slug>/profiles/<profile-slug>/profile.md`
+- `projects/<project-slug>/profiles/<profile-slug>/voices/vc1.md` (via `create-voice`/`update-voice`, not written by hand)
 - `projects/<project-slug>/profiles/<profile-slug>/channels/<channel-slug>/guidelines.md`
 
 ## Rules

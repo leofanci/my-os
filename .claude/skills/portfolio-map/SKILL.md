@@ -33,7 +33,9 @@ projects/<project-slug>/
 For each new profile under a project:
 ```
 projects/<project-slug>/profiles/<profile-slug>/
-    profile.md          ← frontmatter: name, topic; body = profile voice
+    profile.md          ← frontmatter only: name, topic, project (no body)
+    voices/              ← vc1.md, vc2.md, ... (via create-voice/update-voice — see brand-identity skill)
+    brief-specs/         ← br1.md, br2.md, ... (via create-brief-spec/update-brief-spec — see content-brief skill)
     content/            ← plan-<period>.json, briefs/
     channels/           ← channel sub-folders
 ```
@@ -66,14 +68,13 @@ status: idea | prototype | live | revenue
 <overall project voice — injected as first layer of VOICE CASCADE>
 ```
 
-`profile.md`:
+`profile.md` (frontmatter only, no body — voice lives in `voices/vc1.md`, see brand-identity skill):
 ```yaml
 ---
 name: <Profile Name>
 topic: <one-line topic/niche>
 project: <project-slug>
 ---
-<profile voice — pillars, tone, audience, platform goals, CTAs, hard rules>
 ```
 
 `channel.md`:

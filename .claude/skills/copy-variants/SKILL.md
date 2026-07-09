@@ -5,7 +5,7 @@ description: Adapt one piece of content across channels/platforms, or generate h
 
 # Copy Variants
 
-Read the profile's VOICE CASCADE first (project.md + profile.md + relevant
+Read the profile's VOICE CASCADE first (project.md + voices/vc1.md + relevant
 channel guidelines) — variants must stay on-voice and respect per-channel rules.
 
 ## Modes
