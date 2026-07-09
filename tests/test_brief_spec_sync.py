@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import index
-from core.brief_spec_util import read_spec_text, SPEC_FILENAME
+from core.brief_spec_util import read_spec_text, SPEC_DIR
 from tests.test_index_projects import write
 import dashboard.fileops as fileops
 import dashboard.db as db
@@ -31,12 +31,12 @@ class BriefSpecSyncTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def _spec_path(self):
-        return self.root / "projects/acme/profiles/demo" / SPEC_FILENAME
+        return self.root / "projects/acme/profiles/demo" / SPEC_DIR / "br1.md"
 
     def test_write_brief_spec_hits_canonical_file(self):
         text = "Rules from write_brief_spec."
         fileops.write_brief_spec("demo", text)
-        self.assertEqual(self._spec_path().read_text().strip(), text)
+        self.assertIn(text, self._spec_path().read_text())
 
     def test_all_read_paths_match_disk(self):
         text = "Caption max 120 chars.\n- slides\n- caption"

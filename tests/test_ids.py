@@ -11,6 +11,8 @@ from core.ids import (
     build_project_sections,
     is_canonical_id,
     lk_post,
+    lk_prof_brief_spec,
+    lk_prof_voice,
     lk_tab_proj,
     mint_post_ids,
     next_activity_id,
@@ -84,13 +86,32 @@ class TestIds(unittest.TestCase):
             self.assertIsNone(reg.get("fld:chan:demo-ig:platform"))
             self.assertEqual(reg.get("prof:demo"), "pr1.pf1")
             self.assertEqual(reg.get("tab:prof:demo:setup"), "pr1.pf1.sec01")
-            self.assertEqual(reg.get("brief-spec:prof:demo"), "pr1.pf1.sec01.br1")
-            self.assertEqual(reg.get("voice:prof:demo"), "pr1.pf1.sec01.vc1")
+            self.assertEqual(reg.get(lk_prof_brief_spec("demo")), "pr1.pf1.sec01.br1")
+            self.assertEqual(reg.get(lk_prof_voice("demo")), "pr1.pf1.sec01.vc1")
             self.assertEqual(reg.get("chan:demo-ig"), "pr1.pf1.ch1")
             self.assertEqual(reg.get("sl:post:post-001:working_title"), "pr1.pf1.sec00.po1.sl01")
             self.assertEqual(reg.get("sl:post:post-001:concept"), "pr1.pf1.sec00.po1.sl02")
             self.assertIsNone(reg.get("sl:post:post-001:format"))
             self.assertIsNone(reg.get("sl:post:post-001:channels"))
+
+    def test_registry_multiple_briefs_and_voices(self):
+        tree = [{
+            "slug": "acme", "name": "Acme",
+            "profiles": [{"slug": "demo", "name": "Demo", "channels": []}],
+            "products": [],
+        }]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            profile_dir = root / "projects" / "acme" / "profiles" / "demo"
+            (profile_dir / "brief-specs").mkdir(parents=True)
+            (profile_dir / "brief-specs" / "br2.md").write_text("---\nplatforms: tiktok\n---\nx\n", encoding="utf-8")
+            (profile_dir / "voices").mkdir(parents=True)
+            (profile_dir / "voices" / "vc2.md").write_text("---\nplatforms: all\n---\ny\n", encoding="utf-8")
+            reg = build_id_registry(tree, [], root=root)
+            self.assertEqual(reg.get(lk_prof_brief_spec("demo", "br1")), "pr1.pf1.sec01.br1")
+            self.assertEqual(reg.get(lk_prof_brief_spec("demo", "br2")), "pr1.pf1.sec01.br2")
+            self.assertEqual(reg.get(lk_prof_voice("demo", "vc1")), "pr1.pf1.sec01.vc1")
+            self.assertEqual(reg.get(lk_prof_voice("demo", "vc2")), "pr1.pf1.sec01.vc2")
 
     def test_post_channels_bind_to_channel_entity_not_field_id(self):
         tree = [{

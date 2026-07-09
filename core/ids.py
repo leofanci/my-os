@@ -55,8 +55,10 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from core.brief_spec_util import list_brief_ids
 from core.project_schemas import MEMO_SECTION, MEMO_TYPES, canonical_memo_types_by_section
 from core.subsections import DOC_KEYS, load_config, subsections_for_doc
+from core.voice_util import list_voice_ids
 
 # --------------------------------------------------------------------------- #
 # static catalogs (UI skeleton — dynamic entities appended at runtime)
@@ -129,7 +131,7 @@ CHANNEL_TABS = (
 
 # Entity metadata edited via pr/pf/ch id — not registered as sub-field ids.
 PROJECT_META = ("name", "kind", "priority", "status", "hours_per_week", "voice")
-PROFILE_META = ("name", "topic", "voice", "brief-spec")
+PROFILE_META = ("name", "topic")
 CHANNEL_META = ("platform", "handle", "name", "bio", "guidelines")
 # Plan-slot keys that may exist on a post (UI / fileops). Not all get composed ids.
 POST_SLOT_FIELDS = ("working_title", "concept", "date", "format", "pillar", "objective", "channels")
@@ -209,12 +211,12 @@ def lk_fld_prof(profile: str, field: str) -> str:
     return f"fld:prof:{profile}:{field}"
 
 
-def lk_prof_brief_spec(profile: str) -> str:
-    return f"brief-spec:prof:{profile}"
+def lk_prof_brief_spec(profile: str, brief_id: str = "br1") -> str:
+    return f"brief-spec:prof:{profile}:{brief_id}"
 
 
-def lk_prof_voice(profile: str) -> str:
-    return f"voice:prof:{profile}"
+def lk_prof_voice(profile: str, voice_id: str = "vc1") -> str:
+    return f"voice:prof:{profile}:{voice_id}"
 
 
 def lk_fld_chan(channel: str, field: str) -> str:
@@ -481,14 +483,19 @@ class IdRegistry:
                     reg._bind(lk_tab_prof(prf_slug, tkey), cid)
 
                 setup_tab_id = f"{pf_id}.sec{PROF_TAB_NUM['setup']}"
-                br_spec_id = f"{setup_tab_id}.br1"
-                reg._add(br_spec_id, "brief spec", kind="brief_spec", parent=setup_tab_id,
-                         ref={"profile": prf_slug, "field": "brief-spec"})
-                reg._bind(lk_prof_brief_spec(prf_slug), br_spec_id)
-                voice_id = f"{setup_tab_id}.vc1"
-                reg._add(voice_id, "voice", kind="voice", parent=setup_tab_id,
-                         ref={"profile": prf_slug, "field": "voice"})
-                reg._bind(lk_prof_voice(prf_slug), voice_id)
+                prof_dir = (root / "projects" / pslug / "profiles" / prf_slug) if root else None
+                brief_ids = list_brief_ids(prof_dir) if prof_dir and prof_dir.is_dir() else ["br1"]
+                for bid in brief_ids:
+                    br_cid = f"{setup_tab_id}.{bid}"
+                    reg._add(br_cid, "brief spec", kind="brief_spec", parent=setup_tab_id,
+                             ref={"profile": prf_slug, "field": "brief-spec", "brief_id": bid})
+                    reg._bind(lk_prof_brief_spec(prf_slug, bid), br_cid)
+                voice_ids = list_voice_ids(prof_dir) if prof_dir and prof_dir.is_dir() else ["vc1"]
+                for vid in voice_ids:
+                    vc_cid = f"{setup_tab_id}.{vid}"
+                    reg._add(vc_cid, "voice", kind="voice", parent=setup_tab_id,
+                             ref={"profile": prf_slug, "field": "voice", "voice_id": vid})
+                    reg._bind(lk_prof_voice(prf_slug, vid), vc_cid)
 
                 for ch_row in prof_row.get("channels") or []:
                     cslug = ch_row.get("slug") or ""
