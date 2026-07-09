@@ -124,6 +124,12 @@ def next_voice_id(profile_dir: Path) -> str:
 
 
 def delete_voice(profile_dir: Path, voice_id: str) -> None:
+    if voice_id == DEFAULT_VOICE_ID:
+        # vc1 is the permanent default slot — list_voice_ids() always reports
+        # it whether or not a file exists, so "deleting" it would silently
+        # reappear on the next list. Clear its content via write_voice_text
+        # instead of deleting it structurally.
+        raise ValueError(f"cannot delete {DEFAULT_VOICE_ID} — it's the permanent default; clear its text instead")
     ids = list_voice_ids(profile_dir)
     if len(ids) <= 1:
         raise ValueError("cannot delete the only remaining voice")

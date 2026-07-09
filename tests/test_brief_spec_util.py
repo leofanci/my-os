@@ -283,6 +283,14 @@ class BriefSpecStorageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             delete_brief(self.profile_dir, "br1")
 
+    def test_delete_brief_rejects_br1_even_when_others_exist(self):
+        # br1 is the permanent default slot — list_brief_ids() always reports
+        # it, so "deleting" it while br2 exists would silently reappear.
+        write_spec_text(self.profile_dir, "second", brief_id="br2")
+        with self.assertRaises(ValueError):
+            delete_brief(self.profile_dir, "br1")
+        self.assertEqual(list_brief_ids(self.profile_dir), ["br1", "br2"])
+
     def test_legacy_brief_spec_md_migrates_on_first_touch(self):
         (self.profile_dir / "brief-spec.md").write_text("Legacy rules.", encoding="utf-8")
         self.assertEqual(read_spec_text(self.profile_dir).strip(), "Legacy rules.")

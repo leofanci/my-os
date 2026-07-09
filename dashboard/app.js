@@ -1241,7 +1241,12 @@ async function renderProfileSetup(slug){
 
   function row(kind, item){ // kind: "voice" | "brief"
     const composedId = kind==="voice" ? composedIdOnly(OSID.profVoice(slug, item.id)) : composedIdOnly(OSID.profBriefSpec(slug, item.id));
-    const opts = platformOpts.map(p=>`<option value="${esc(p)}" ${item.platforms===p?"selected":""}>${esc(p)}</option>`).join("");
+    // The dropdown only lists single platforms + "all", but the backend allows
+    // a comma list (e.g. "instagram,tiktok"). If the stored tag isn't one of
+    // the listed options, add it as its own option so Save can't silently
+    // downgrade it to "all" just because the user never touched the dropdown.
+    const knownOpts = item.platforms && platformOpts.includes(item.platforms) ? platformOpts : [...platformOpts, item.platforms].filter(Boolean);
+    const opts = knownOpts.map(p=>`<option value="${esc(p)}" ${item.platforms===p?"selected":""}>${esc(p)}</option>`).join("");
     return `<div class="setup-row" data-kind="${kind}" data-id="${esc(item.id)}" style="margin-bottom:14px;border:1px solid var(--hair);border-radius:12px;padding:14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         ${flabel(item.id, composedId)}
@@ -1286,12 +1291,12 @@ async function renderProfileSetup(slug){
   wireIdChips($("#main"));
 
   $("#addVoiceBtn").onclick = async()=>{
-    await jpost(`/api/profile/${slug}/voices`, {text:"", platforms:"all"});
-    renderProfileSetup(slug);
+    try{ await jpost(`/api/profile/${slug}/voices`, {text:"", platforms:"all"}); renderProfileSetup(slug); }
+    catch(e){ toast("✗ "+e.message); }
   };
   $("#addBriefBtn").onclick = async()=>{
-    await jpost(`/api/profile/${slug}/brief-specs`, {text:"", platforms:"all"});
-    renderProfileSetup(slug);
+    try{ await jpost(`/api/profile/${slug}/brief-specs`, {text:"", platforms:"all"}); renderProfileSetup(slug); }
+    catch(e){ toast("✗ "+e.message); }
   };
   $$(".setup-delete").forEach(btn=>{
     btn.onclick = async()=>{

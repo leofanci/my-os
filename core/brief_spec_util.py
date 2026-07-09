@@ -132,6 +132,12 @@ def next_brief_id(profile_dir: Path) -> str:
 
 
 def delete_brief(profile_dir: Path, brief_id: str) -> None:
+    if brief_id == DEFAULT_BRIEF_ID:
+        # br1 is the permanent default slot — list_brief_ids() always reports
+        # it whether or not a file exists, so "deleting" it would silently
+        # reappear on the next list. Clear its content via write_spec_text
+        # instead of deleting it structurally.
+        raise ValueError(f"cannot delete {DEFAULT_BRIEF_ID} — it's the permanent default; clear its text instead")
     ids = list_brief_ids(profile_dir)
     if len(ids) <= 1:
         raise ValueError("cannot delete the only remaining brief-spec")

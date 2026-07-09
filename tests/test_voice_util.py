@@ -42,6 +42,12 @@ class VoiceStorageTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             delete_voice(self.profile_dir, "vc1")
 
+    def test_delete_rejects_vc1_even_when_others_exist(self):
+        write_voice_text(self.profile_dir, "second", voice_id="vc2")
+        with self.assertRaises(ValueError):
+            delete_voice(self.profile_dir, "vc1")
+        self.assertEqual(list_voice_ids(self.profile_dir), ["vc1", "vc2"])
+
     def test_legacy_profile_body_migrates_on_first_touch(self):
         (self.profile_dir / "profile.md").write_text(
             "---\nname: Demo\ntopic: film\nproject: acme\n---\nLegacy voice text.\n",
