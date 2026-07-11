@@ -596,6 +596,10 @@ def _sync_slot_identity_to_brief(brief: dict, slot: dict) -> None:
 def update_post(post_id, fields, profile_slug=None):
     """Edit plan-slot fields and, when a brief exists, patch brief JSON in one save."""
     ctx = find_post(post_id, profile_slug)
+    if "date" in fields:
+        new_date = (fields.get("date") or "").strip()
+        if new_date != (ctx["post"].get("date") or "") and ctx["post"].get("status") == "published":
+            raise ActionError("cannot change the date of a published post")
     for k in _POST_FIELDS:
         if k in fields:
             v = (fields.get(k) or "").strip()

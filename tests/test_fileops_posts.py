@@ -229,5 +229,37 @@ class T(unittest.TestCase):
             fileops.set_status(pid, to)  # must not raise at any step
         self.assertEqual(db.profile_posts("demo")[0]["status"], "rejected")
 
+    def test_clear_date_on_non_published_post_succeeds(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
+                                  "date": "2026-07-15"})
+        pid = db.profile_posts("demo")[0]["id"]
+        fileops.update_post(pid, {"date": ""})
+        slot = fileops.read_detail(pid)["slot"]
+        self.assertNotIn("date", slot)
+
+    def test_change_date_on_published_post_raises(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
+                                  "date": "2026-07-15"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved", "published"):
+            fileops.set_status(pid, to)
+        with self.assertRaises(fileops.ActionError) as ctx:
+            fileops.update_post(pid, {"date": ""})
+        self.assertIn("cannot change the date of a published post", str(ctx.exception))
+        self.assertEqual(fileops.read_detail(pid)["slot"]["date"], "2026-07-15")
+
+    def test_unchanged_date_on_published_post_does_not_raise(self):
+        # The edit form always submits the date field, even when the user only
+        # touched another field — an unchanged value must not trip the guard.
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
+                                  "date": "2026-07-15"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved", "published"):
+            fileops.set_status(pid, to)
+        fileops.update_post(pid, {"date": "2026-07-15", "pillar": "curiosity"})
+        slot = fileops.read_detail(pid)["slot"]
+        self.assertEqual(slot["date"], "2026-07-15")
+        self.assertEqual(slot["pillar"], "curiosity")
+
 if __name__ == "__main__":
     unittest.main()
