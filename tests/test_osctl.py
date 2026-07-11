@@ -154,6 +154,18 @@ class T(unittest.TestCase):
             "cadence": "3",
         })
 
+    def test_generate_plan_forwards_dates_flag(self):
+        run(["create-project", "--slug", "acme"])
+        run(["create-profile", "--project", "acme", "--slug", "demo"])
+        with mock.patch.object(fileops, "run_plan",
+                               return_value={"profile_slug": "demo", "stdout": "ok"}) as plan:
+            run(["generate-plan", "--profile", "demo",
+                 "--period", "2026-07-01 to 2026-07-14", "--dates"])
+        plan.assert_called_once_with("demo", {
+            "period": "2026-07-01 to 2026-07-14",
+            "dates": True,
+        })
+
     def test_brief_spec_roundtrip_via_osctl(self):
         run(["create-project", "--slug", "acme"])
         run(["create-profile", "--project", "acme", "--slug", "demo"])

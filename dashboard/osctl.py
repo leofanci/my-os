@@ -424,6 +424,8 @@ def _build_parser():
                    help='e.g. "br1:5,br2:2" — only meaningful when the profile has >1 brief-spec')
     p.add_argument("--voice-counts", default="", dest="voice_counts",
                    help='e.g. "vc1:5,vc2:2" — only meaningful when the profile has >1 voice')
+    p.add_argument("--dates", action="store_true",
+                   help="assign a date to each post (default: leave unscheduled)")
     def _generate_plan(a):
         params = {"period": a.period}
         if a.platforms:
@@ -436,6 +438,8 @@ def _build_parser():
             params["brief_counts"] = a.brief_counts
         if a.voice_counts:
             params["voice_counts"] = a.voice_counts
+        if a.dates:
+            params["dates"] = True
         return fileops.run_plan(a.profile, params)
     p.set_defaults(_run=_generate_plan)
 

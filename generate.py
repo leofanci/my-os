@@ -659,6 +659,9 @@ def main():
     pp.add_argument("--platforms", default="instagram", help="comma-separated platform names")
     pp.add_argument("--cadence", default=3, type=int, help="posts per platform per week")
     pp.add_argument("--focus", default=None, help="optional creative steer for this period")
+    pp.add_argument("--dates", action="store_true",
+                    help="assign a date to each minted post, spread across the period "
+                         "(default: leave every post unscheduled)")
     pp.add_argument("--brief-counts", default="",
                     help='e.g. "br1:5,br2:2" — omit to use one brief for everything')
     pp.add_argument("--voice-counts", default="",
@@ -693,7 +696,8 @@ def main():
         if args.job == "plan":
             platforms = [p.strip() for p in args.platforms.split(",") if p.strip()]
             do_plan(root, args.profile, args.period, platforms, args.cadence, args.focus,
-                    _parse_counts(args.brief_counts), _parse_counts(args.voice_counts))
+                    _parse_counts(args.brief_counts), _parse_counts(args.voice_counts),
+                    assign_dates=args.dates)
         elif args.job == "brief":
             do_brief(root, args.profile, args.post_id, args.instruction or "",
                      args.brief_id, args.voice_id)

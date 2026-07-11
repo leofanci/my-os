@@ -1554,6 +1554,8 @@ def _plan_args(profile_slug, params):
     voice_counts = (params.get("voice_counts") or "").strip()
     if voice_counts:
         args += ["--voice-counts", voice_counts]
+    if params.get("dates"):
+        args += ["--dates"]
     return args
 
 
