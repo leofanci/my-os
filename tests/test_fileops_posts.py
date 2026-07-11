@@ -203,5 +203,31 @@ class T(unittest.TestCase):
         self.assertEqual(alpha_ctx["profile_slug"], "alpha")
         self.assertEqual(alpha_ctx["post"]["working_title"], "Alpha title")
 
+    def test_publish_without_date_raises(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved"):
+            fileops.set_status(pid, to)
+        with self.assertRaises(fileops.ActionError) as ctx:
+            fileops.set_status(pid, "published")
+        self.assertIn("add a date first", str(ctx.exception))
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "approved")
+
+    def test_publish_with_date_succeeds(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
+                                  "date": "2026-07-15"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved"):
+            fileops.set_status(pid, to)
+        fileops.set_status(pid, "published")
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "published")
+
+    def test_non_publish_transitions_unaffected_by_missing_date(self):
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved", "rejected"):
+            fileops.set_status(pid, to)  # must not raise at any step
+        self.assertEqual(db.profile_posts("demo")[0]["status"], "rejected")
+
 if __name__ == "__main__":
     unittest.main()

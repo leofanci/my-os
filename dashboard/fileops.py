@@ -292,6 +292,8 @@ def set_status(post_id, new_status, profile_slug=None):
             f"illegal transition {current} -> {new_status}"
             f" (allowed: {sorted(ALLOWED_TRANSITIONS.get(current, set())) or 'none'})"
         )
+    if new_status == "published" and not ctx["post"].get("date"):
+        raise ActionError(f"cannot publish '{post_id}' — add a date first")
     ctx["post"]["status"] = new_status
     _write_plan(ctx)
     reindex()
