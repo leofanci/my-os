@@ -186,6 +186,7 @@ const ROUTES = [
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
+  [/^\/unscheduled$/,                           ()       => { setState("unscheduled"); renderUnscheduled(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
   [/^\/project\/([^/]+)\/edit$/,                ([s])    => renderEditProject(s)],
   [/^\/project\/([^/]+)\/delete$/,              ([s])    => renderConfirmDeleteProject(s)],
@@ -402,6 +403,7 @@ async function renderRail(){
     <nav class="nav">
       <a data-view="needs"><span class="ico">◉</span> Needs you</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
+      <a data-view="unscheduled"><span class="ico">◷</span> Unscheduled</a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
     </nav>
     <div class="rail-hdr"><span class="label">Projects</span>
@@ -451,6 +453,7 @@ async function refreshViews(){
   const v = STATE.view;
   if (v === "calendar") return renderTimeline();
   if (v === "operations") return renderOperations();
+  if (v === "unscheduled") return renderUnscheduled();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return renderProfile(STATE.profile);
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -1264,6 +1267,67 @@ async function writeAllIdeas(slug){
     _writingAll = false;
     renderRail();
   }
+}
+
+// Cross-profile bucket: every non-published post with no date, grouped by
+// profile. Reuses the already-loaded _POSTS index (no new API call) and the
+// same nextActionFor() publish gate as the profile list / post detail views.
+async function renderUnscheduled(){
+  const rows = _POSTS.filter(p=>p.status!=="published" && !p.date);
+  let FILTER = "all";
+  const count = g => rows.filter(p=>STAGE_GROUP[p.status]===g).length;
+  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Unscheduled</h1></div></div>
+    <div style="padding:0 24px 8px;font-size:12px;color:var(--dim)">${rows.length} posts with no date</div>
+    <div class="scroll">
+      <div class="filters">
+        <span class="chip on" data-f="all">All <span class="n">${rows.length}</span></span>
+        <span class="chip" data-f="ideas">💡 Ideas <span class="n">${count("ideas")}</span></span>
+        <span class="chip" data-f="drafts">✍ Drafts <span class="n">${count("drafts")}</span></span>
+      </div>
+      <div id="uns-list"></div>
+    </div>`;
+
+  function drawList(){
+    const visible = rows.filter(p=>FILTER==="all"||STAGE_GROUP[p.status]===FILTER);
+    const el = $("#uns-list");
+    if(!visible.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing unscheduled.</div>`; return; }
+    const bySlug = {};
+    visible.forEach(p=>{ (bySlug[p.profile_slug]=bySlug[p.profile_slug]||[]).push(p); });
+    const slugs = Object.keys(bySlug).sort((a,b)=>
+      (bySlug[a][0].profile_name||a).localeCompare(bySlug[b][0].profile_name||b));
+    el.innerHTML = slugs.map(slug=>{
+      const g = bySlug[slug], name = g[0].profile_name||slug;
+      const rowsHtml = g.map(p=>{
+        const pk=STATUS_PILL_CLASS[p.status]||"idea";
+        const na=nextActionFor(p);
+        const title = p.working_title || p.pillar || p.id;
+        const isIdea = p.status==="planned"||p.status==="approved_slot";
+        const sub = isIdea ? (p.concept || "Just an idea — not written yet") : (p.brief_path?"Written — click to view":"");
+        return `<div class="post">
+          <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
+          <div class="t" data-view="${p.id}" data-slug="${esc(slug)}" style="cursor:pointer;min-width:0">${esc(title)}<small>${esc(sub)}</small></div>
+          ${na?`<button class="go" data-act="${p.id}" data-slug="${esc(slug)}">${esc(na.label)}</button>`:""}
+          <button class="more" data-menu="${p.id}" data-slug="${esc(slug)}">Edit</button></div>`;
+      }).join("");
+      return `<div class="pcard" style="margin-bottom:14px">
+        <div style="font:700 12px/1 var(--body);color:var(--ink2);margin-bottom:8px;cursor:pointer" data-profile-jump="${esc(slug)}">${esc(name)}</div>
+        <div class="rowc">${rowsHtml}</div></div>`;
+    }).join("");
+    el.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>{
+      const id=b.dataset.act, slug=b.dataset.slug, p=rows.find(r=>r.id===id), na=p?nextActionFor(p):null;
+      if(!na) return;
+      if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
+      try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
+        else{ await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
+        renderRail(); renderUnscheduled(); }catch(e){ toast("✗ "+e.message); }
+    });
+    el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.menu}/edit`,{profileSlug:b.dataset.slug}));
+    el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:b.dataset.slug}));
+    el.querySelectorAll("[data-profile-jump]").forEach(b=>b.onclick=()=>navigate(`#/profile/${b.dataset.profileJump}`));
+  }
+  $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f;
+    $("#main").querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===c)); drawList(); });
+  drawList();
 }
 
 function selectProfileSetup(slug){ navigate(`#/profile/${slug}/setup`); }
