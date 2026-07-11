@@ -82,6 +82,42 @@ class DoPlanTest(unittest.TestCase):
         self.assertEqual(post["brief_id"], "br1")
         self.assertEqual(post["voice_id"], "vc1")
 
+    def test_default_strips_dates_even_if_model_emits_them(self):
+        # assign_dates defaults to False — a fresh plan must come out unscheduled
+        # even if the model ignores the instruction and includes a date anyway.
+        generate.run_job = lambda *a, **k: {
+            "period": "p", "profile": "demo",
+            "posts": [{"id": "draft-001", "date": "2026-07-01", "pillar": "curiosity",
+                       "channels": ["tiktok"], "working_title": "T", "concept": "C"}],
+        }
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None)
+        post = self._plan_file()["posts"][0]
+        self.assertNotIn("date", post)
+
+    def test_assign_dates_true_keeps_model_dates(self):
+        generate.run_job = lambda *a, **k: {
+            "period": "p", "profile": "demo",
+            "posts": [{"id": "draft-001", "date": "2026-07-01", "pillar": "curiosity",
+                       "channels": ["tiktok"], "working_title": "T", "concept": "C"}],
+        }
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None,
+                          assign_dates=True)
+        post = self._plan_file()["posts"][0]
+        self.assertEqual(post["date"], "2026-07-01")
+
+    def test_prompt_reflects_date_assignment_flag(self):
+        captured = {}
+        def fake_run_job(prompt, voice, validate, **k):
+            captured["prompt"] = prompt
+            return {"period": "p", "profile": "demo", "posts": []}
+        generate.run_job = fake_run_job
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None)
+        self.assertIn("Do NOT include a \"date\" field", captured["prompt"])
+        captured.clear()
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14", ["tiktok"], 3, None,
+                          assign_dates=True)
+        self.assertIn("Assign each post a realistic date", captured["prompt"])
+
 
 if __name__ == "__main__":
     unittest.main()

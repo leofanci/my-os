@@ -10,6 +10,9 @@ cheap to review; full briefs come later for approved slots only.
 Rules:
 - Use ONLY pillars that appear in the profile voice. Never invent a pillar.
 - Respect the parameters block below (period, platforms, cadence, focus).
+- Whether posts get a `date` is controlled by the DATE ASSIGNMENT note in the
+  parameters block below. When told not to assign dates, omit the `date` key
+  from every post object entirely — do not guess a placeholder date.
 - Do not repeat concepts from the recent-history block.
 - Spread posts sensibly across the period and platforms.
 - Each post targets one or more channels (identified by channel slug).

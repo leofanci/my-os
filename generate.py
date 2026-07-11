@@ -361,7 +361,8 @@ def _assign_split_ids(counts: dict | None, default_id: str, n: int) -> list[str]
 
 
 def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focus,
-            brief_counts: dict | None = None, voice_counts: dict | None = None):
+            brief_counts: dict | None = None, voice_counts: dict | None = None,
+            assign_dates: bool = False):
     profile_dir = find_profile_dir(root, profile_slug)
     profile_md = profile_dir / "profile.md"
     if not profile_md.exists():
@@ -389,7 +390,12 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         f"platforms: {', '.join(platforms)}\n"
         f"cadence (posts per platform per week): {cadence}\n"
         f"focus: {focus or '(none)'}\n"
-        "\n--- RECENT HISTORY (do not repeat) ---\n"
+        "\n--- DATE ASSIGNMENT ---\n"
+        + ("Assign each post a realistic date (YYYY-MM-DD), spread sensibly across the period.\n"
+           if assign_dates else
+           "Do NOT include a \"date\" field on any post — this batch is unscheduled; "
+           "the user will assign dates later.\n")
+        + "\n--- RECENT HISTORY (do not repeat) ---\n"
         f"{recent_history(content_dir)}\n"
     )
     if len(brief_ids) > 1:
@@ -438,6 +444,8 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
         post["status"] = "planned"
         if not post.get("format"):
             post["format"] = "carousel"
+        if not assign_dates:
+            post.pop("date", None)
 
     project_slug = profile_dir.parent.parent.name
     new_ids = mint_post_ids(root, project_slug, profile_slug, len(obj.get("posts", [])))
@@ -525,6 +533,23 @@ def do_brief(root: Path, profile_slug: str, post_id: str, instruction: str = "",
     print(f"wrote brief for {post_id}")
 
 
+def _update_slot_fields(content_dir: Path, post_id: str, fields: dict) -> bool:
+    """Merge `fields` into the matching slot's plan-*.json in place. Returns True if found."""
+    for plan in sorted(content_dir.glob("plan-*.json")):
+        try:
+            data = json.loads(plan.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for p in data.get("posts", []) if isinstance(data, dict) else []:
+            if p.get("id") == post_id:
+                for k, v in fields.items():
+                    if k != "id":
+                        p[k] = v
+                plan.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+                return True
+    return False
+
+
 def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str,
               brief_id: str | None = None, voice_id: str | None = None):
     """Revise an existing slot (idea) or brief (draft) using a user instruction.
@@ -579,24 +604,17 @@ def do_revise(root: Path, profile_slug: str, post_id: str, instruction: str,
     obj = run_job(base + params, voice_text, validate)
 
     if is_draft:
+        # working_title lives on the plan slot, not the brief — pull it out before
+        # persisting so allowed_brief_keys doesn't silently drop it, then sync separately.
+        working_title = (obj.pop("working_title", None) or "").strip()
         _persist_brief(root, post_id, obj, bump_version_if_exists=False, set_status=False)
+        if working_title:
+            _update_slot_fields(content_dir, post_id, {"working_title": working_title})
         print(f"revised brief for {post_id}")
     else:
-        # Merge revised fields back into the plan file slot in place.
-        for plan in sorted(content_dir.glob("plan-*.json")):
-            try:
-                data = json.loads(plan.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
-                continue
-            for p in data.get("posts", []) if isinstance(data, dict) else []:
-                if p.get("id") == post_id:
-                    for k, v in obj.items():
-                        if k != "id":
-                            p[k] = v
-                    plan.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-                    print(f"revised slot for {post_id}")
-                    return
-        raise JobError(f"could not write back slot '{post_id}' to any plan file")
+        if not _update_slot_fields(content_dir, post_id, obj):
+            raise JobError(f"could not write back slot '{post_id}' to any plan file")
+        print(f"revised slot for {post_id}")
 
 
 def do_refine_guidelines(root: Path, channel_slug: str, raw_text: str) -> str:
