@@ -73,10 +73,12 @@ const MEMO_FIELD_LABELS_FALLBACK={
   cheapest_next_test:"Next test", willingness_to_pay_signal:"WTP signal",
   pace_recommendation:"Pace", riskiest_assumption:"Riskiest assumption",
   recommendation:"Call", summary:null, evidence:"Evidence",
+  segment:"Segment", sam:"SAM", som:"SOM", sizing_confidence:"Confidence",
 };
 const MEMO_FIELD_ORDER_FALLBACK={
   "problem-validation":["problem_statement","who_has_it","_status","current_workaround","willingness_to_pay_signal","cheapest_next_test","evidence","recommendation"],
   assessment:["pace_recommendation","riskiest_assumption","recommendation"],
+  "market-sizing":["segment","sam","som","sizing_confidence","recommendation"],
   _default:["summary","recommendation"],
 };
 
@@ -106,9 +108,28 @@ function renderMemoEvidence(list){
   return `<div class="memo-field"><b>Evidence</b><ul class="memo-list">${items}</ul></div>`;
 }
 
+const SAM_LABELS={population:"Population",reach_filter:"Reach filter",arpu_assumption:"ARPU",
+  annual_revenue_low:"Revenue (low)",annual_revenue_mid:"Revenue (mid)",annual_revenue_high:"Revenue (high)"};
+const SOM_LABELS={capture_rate:"Capture rate",customers_year1:"Customers (yr1)",mrr_year1:"MRR (yr1)",
+  arr_year1:"ARR (yr1)",what_changes_the_number:"What changes it"};
+function renderMemoKV(obj,labels){
+  if(!obj||typeof obj!=="object") return "";
+  const rows=Object.entries(obj).filter(([,v])=>v!=null&&v!=="")
+    .map(([k,v])=>`<li><b>${esc(labels[k]||k)}</b> ${formatInlineMd(String(v))}</li>`).join("");
+  return rows?`<ul class="memo-list">${rows}</ul>`:"";
+}
+
 function renderMemoValue(key,val){
   if(val==null||val==="") return "";
   if(key==="evidence"&&Array.isArray(val)) return renderMemoEvidence(val);
+  if(key==="sam"&&val&&typeof val==="object"&&!Array.isArray(val)){
+    const kv=renderMemoKV(val,SAM_LABELS);
+    return kv?`<div class="memo-field"><b>SAM</b>${kv}</div>`:"";
+  }
+  if(key==="som"&&val&&typeof val==="object"&&!Array.isArray(val)){
+    const kv=renderMemoKV(val,SOM_LABELS);
+    return kv?`<div class="memo-field"><b>SOM</b>${kv}</div>`:"";
+  }
   if(Array.isArray(val)){
     if(!val.length) return "";
     const items=val.map(v=>`<li>${typeof v==="object"?esc(JSON.stringify(v)):formatInlineMd(v)}</li>`).join("");
@@ -1004,7 +1025,7 @@ function evDetail(r){
     catch(e){ toast("✗ "+e.message); }
   };
   const goBtn=d.querySelector("[data-ev-go]");
-  if(goBtn) goBtn.onclick=()=>selectProfile(r.entity_slug);
+  if(goBtn) goBtn.onclick=()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug});
   const delBtn=d.querySelector("[data-ev-del]");
   if(delBtn) delBtn.onclick=async()=>{
     d.remove();
@@ -1051,8 +1072,8 @@ async function renderTimeline(){
   for(let i=0;i<42;i++){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), k=iso(d), out=d.getMonth()!==CAL.m;
     const evs=(byDay[k]||[]).map(r=>{
-      const done=evDone(r)?" done":"";
-      return `<div class="ev ${esc(r.kind)}${done}" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>${esc(r.title||r.kind)}</div>`;
+      const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev ${esc(r.kind)}${evDone(r)?" done":""}`;
+      return `<div class="${cls}" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>${esc(r.title||r.kind)}</div>`;
     }).join("");
     cells+=`<div class="day${out?" out":""}${k===today?" today":""}"><div class="n">${d.getDate()}</div>${evs}</div>`;
     if(i>=34&&d.getMonth()!==CAL.m&&(i+1)%7===0) break;
@@ -1081,13 +1102,27 @@ async function renderTimeline(){
 }
 
 const STAGE_GROUP = {planned:"ideas",approved_slot:"ideas",briefed:"drafts",approved:"drafts",published:"published",rejected:"archived"};
+// One distinct color per pipeline stage, shared by the calendar and the profile post list.
+const STATUS_PILL_CLASS = {planned:"idea",approved_slot:"idea",briefed:"draft",approved:"ready",published:"published",rejected:"archived"};
 const NEXT = {
   planned:{label:"Write it →",brief:1}, approved_slot:{label:"Write it →",brief:1},
   briefed:{label:"Review →",to:"approved"}, approved:{label:"Publish →",to:"published"},
   published:null, rejected:{label:"Restore",to:"planned"},
 };
 
+// Wraps NEXT with the publish-requires-a-date rule: an approved, undated post
+// still shows an action button, but it routes to the edit form instead of
+// firing the publish transition. Shared by every view that renders a post's
+// next-action button (profile list, post detail, Unscheduled bucket).
+function nextActionFor(p){
+  const n = NEXT[p.status];
+  if(!n) return null;
+  if(p.status==="approved" && !p.date) return {label:"Add date to publish", blocked:true};
+  return {label:n.label, blocked:false, to:n.to, brief:n.brief};
+}
+
 const PLATFORM_ICON = {instagram:"📸",tiktok:"🎵",x:"𝕏",linkedin:"in",youtube:"▶",facebook:"f"};
+const PROFILE_SCROLL = {};  // slug -> last scrollTop of the post list, so back-navigation restores position
 async function renderProfile(slug, initChanFilter){
   CURRENT_PROFILE_SLUG = slug;
   const [posts, profData] = await Promise.all([
@@ -1149,8 +1184,8 @@ async function renderProfile(slug, initChanFilter){
     drawSelBar();
     if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
     el.innerHTML = list.map(p=>{
-      const grp=STAGE_GROUP[p.status], pk=({ideas:"idea",drafts:"draft",published:"ready",archived:"idea"})[grp]||"idea";
-      const n=NEXT[p.status];
+      const pk=STATUS_PILL_CLASS[p.status]||"idea";
+      const na=nextActionFor(p);
       const title = p.working_title || p.pillar || p.id;
       const isIdea = p.status==="planned"||p.status==="approved_slot";
       const sub = isIdea ? (p.concept || "Just an idea — not written yet") : (p.brief_path?"Written — click to view":"");
@@ -1162,7 +1197,7 @@ async function renderProfile(slug, initChanFilter){
         <input type="checkbox" class="selbox" data-sel="${p.id}" ${SELECTED.has(p.id)?"checked":""} title="Select" style="margin:0 2px;width:16px;height:16px;flex:none;cursor:pointer">
         <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
         <div class="t" data-view="${p.id}" style="cursor:pointer;min-width:0">${postChip?`<div style="margin-bottom:4px">${postChip}</div>`:""}${esc(title)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
-        ${n?`<button class="go" data-act="${p.id}">${n.label}</button>`:""}
+        ${na?`<button class="go" data-act="${p.id}">${esc(na.label)}</button>`:""}
         <button class="more" data-menu="${p.id}">Edit</button></div>`;
     }).join("");
     el.querySelectorAll("[data-sel]").forEach(b=>b.onclick=e=>{ e.stopPropagation();
@@ -1173,9 +1208,10 @@ async function renderProfile(slug, initChanFilter){
     el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:slug}));
   }
   function byId(id){ return posts.find(p=>p.id===id)||{}; }
-  async function doNext(id){ const p=byId(id), n=NEXT[p.status]; if(!n) return;
-    try{ if(n.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else { await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:n.to})}); toast("✓ "+plainStatus(n.to)); }
+  async function doNext(id){ const p=byId(id), na=nextActionFor(p); if(!na) return;
+    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
+    try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
+      else { await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
       renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f;
@@ -1194,6 +1230,12 @@ async function renderProfile(slug, initChanFilter){
   $("#addIdea").onclick=()=>navigate(`#/profile/${slug}/add`);
   $("#genIdeas").onclick=()=>navigate(`#/profile/${slug}/generate`);
   drawList();
+
+  const scrollEl = $("#main .scroll");
+  if(scrollEl){
+    if(PROFILE_SCROLL[slug]!=null) scrollEl.scrollTop = PROFILE_SCROLL[slug];
+    scrollEl.addEventListener("scroll", ()=>{ PROFILE_SCROLL[slug]=scrollEl.scrollTop; });
+  }
 }
 
 // Write every idea-stage post into a full brief, ONE AT A TIME, refreshing the
@@ -1573,7 +1615,7 @@ async function renderPostDetail(id, profileSlug){
   const slot=detail.slot||{}, brief=detail.brief||null;
   CURRENT_PROFILE_SLUG = profileSlug || detail.profile_slug || null;
   CURRENT_POST = { id, slot, brief };
-  const st=slot.status||"planned", n=NEXT[st];
+  const st=slot.status||"planned", na=nextActionFor({...slot, status:st});
   const title=slot.working_title||slot.pillar||id;
   const canRevise=["planned","approved_slot","briefed","approved"].includes(st);
   const meta=[["Date",slot.date],["Format",slot.format],["Pillar",slot.pillar],
@@ -1586,14 +1628,14 @@ async function renderPostDetail(id, profileSlug){
   const crumb=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{}).name||profileSlug||"Back";
   const btns=[
     `<button class="btn danger-btn" id="pd-del">Delete</button>`,
-    n?`<button class="btn primary" id="pd-next">${esc(n.label)}</button>`:"",
+    na?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
     canRevise?`<button class="btn" id="pd-revise">✨ Revise</button>`:"",
     `<button class="btn" id="pd-edit">Edit</button>`,
   ].filter(Boolean).join("");
   $("#main").innerHTML=`${pageHeader(title,crumb,btns, OSID.post(id))}
     <div class="scroll" style="max-width:640px">
       <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">${meta}${chanMeta}</div>
-      ${renderBriefBody(slot,brief,n,id)}</div>`;
+      ${renderBriefBody(slot,brief,na,id)}</div>`;
   wireIdChips($("#main"));
   const addSlide=document.getElementById("pd-add-slide");
   if(addSlide) addSlide.onclick=async()=>{
@@ -1609,9 +1651,10 @@ async function renderPostDetail(id, profileSlug){
   document.getElementById("pd-edit").onclick=()=>navigate(`#/post/${id}/edit`,{profileSlug});
   const rdBtn=document.getElementById("pd-revise"); if(rdBtn) rdBtn.onclick=()=>navigate(`#/post/${id}/revise`,{profileSlug});
   const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
+    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug}); }
     nb.disabled=true;
-    try{ if(n.brief){ toast("Writing via claude -p…",true); await api(postUrl(id,profileSlug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else{ await api(postUrl(id,profileSlug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:n.to})}); toast("✓ "+plainStatus(n.to)); }
+    try{ if(na.brief){ toast("Writing via claude -p…",true); await api(postUrl(id,profileSlug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
+      else{ await api(postUrl(id,profileSlug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
       navigate(`#/post/${id}`,{profileSlug}); }
     catch(e){ nb.disabled=false; toast("✗ "+e.message); }
   };
@@ -1632,7 +1675,7 @@ async function renderEditPost(id, profileSlug){
       <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:14px">Slot</div>
       ${flabel("Title")}${finput("working_title",slot.working_title||"",'placeholder="short internal label"')}
       ${flabel("Concept")}${fta("concept",slot.concept||"",3,'placeholder="what this post does and why"')}
-      ${flabel("Date")}${finput("date",slot.date||"",'type="date"')}
+      ${flabel("Date")}<div style="display:flex;gap:8px;align-items:center">${finput("date",slot.date||"",`type="date"${slot.status==="published"?" disabled":""}`)}${slot.status!=="published"?`<button type="button" class="btn" id="ep-clear-date" style="flex:none">Clear date</button>`:""}</div>
       ${flabel("Format")}${finput("format",slot.format||"carousel",'placeholder="carousel | reel | short"')}
       ${flabel("Pillar")}${finput("pillar",slot.pillar||"")}
       ${flabel("Objective")}${finput("objective",slot.objective||"")}
@@ -1651,6 +1694,8 @@ async function renderEditPost(id, profileSlug){
       toast("Saved ✓"); navigate(`#/post/${id}`,{profileSlug}); }catch(e){ toast("✗ "+e.message); }
   };
   document.getElementById("ep-del").onclick=()=>navigate(`#/post/${id}/delete`,{profileSlug});
+  const clearDateBtn=document.getElementById("ep-clear-date");
+  if(clearDateBtn) clearDateBtn.onclick=()=>{ $("#main input[name=date]").value=""; };
 }
 
 // ── Revise with AI ───────────────────────────────────────────────────────────
@@ -1995,6 +2040,10 @@ async function renderGenerateIdeas(slug){
       </p>
       ${flabel("Period start")}${finput("period_start",isoDay(start),'type="date" required')}
       ${flabel("Period end")}${finput("period_end",isoDay(end),'type="date" required')}
+      <div style="display:flex;align-items:center;gap:8px;margin:2px 0 16px">
+        <input type="checkbox" id="gi-dates" style="width:16px;height:16px;cursor:pointer">
+        <label for="gi-dates" style="font-size:13px;color:var(--ink2);cursor:pointer">Assign dates to posts (spread across the period above)</label>
+      </div>
       ${flabel("Platforms")}${finput("platforms",channels.map(c=>c.platform).join(","),'placeholder="tiktok,instagram"')}
       ${flabel("Cadence (posts per platform / week)")}${finput("cadence","",'placeholder="3"')}
       ${flabel("Focus (optional)")}${finput("focus","",'placeholder="push the launch"')}
@@ -2003,6 +2052,7 @@ async function renderGenerateIdeas(slug){
     const btn=document.getElementById("gi-save"), data=formVals($("#main"));
     btn.disabled=true; btn.textContent="Generating…";
     const payload={period:`${data.period_start} to ${data.period_end}`,platforms:data.platforms,cadence:data.cadence,focus:data.focus};
+    if(document.getElementById("gi-dates").checked) payload.dates = true;
     toast("⏳ Generating ideas via claude -p… (10–30s)",true);
     navigate(`#/profile/${slug}`);  // navigate away immediately; job runs in background
     try{ await api(`/api/profile/${slug}/plan`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
@@ -2314,10 +2364,9 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
 
   async function refreshChatStatus(base){
     try {
-      const { turn_count, max_turns } = await fetch("/api/chat-session").then(r => r.json());
-      const n = turn_count || 0, max = max_turns || 6;
-      const warn = n >= max - 1 ? " · ⌫ clears model memory" : "";
-      statusEl.textContent = (base || "Ready") + ` · turn ${n}/${max}${warn}`;
+      const { turn_count } = await fetch("/api/chat-session").then(r => r.json());
+      const n = turn_count || 0;
+      statusEl.textContent = (base || "Ready") + ` · turn ${n}`;
     } catch {
       if (base) statusEl.textContent = base;
     }
