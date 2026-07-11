@@ -6,18 +6,18 @@ from tests.test_index_projects import write
 SLOT = {
     "id": "post-001", "status": "planned", "date": "2026-07-01",
     "pillar": "curiosity", "channels": ["demo-tiktok"],
-    "working_title": "Why films lie", "concept": "Explores how cinema distorts history.",
+    "working_title": "Topic A angle", "concept": "Explores angle A of the demo topic.",
 }
 
 BRIEF = {
     "id": "post-001", "channels": ["demo-tiktok"], "platform": "tiktok",
     "format": "reel", "objective": "educate", "pillar": "curiosity",
-    "hook": "Films lie — here's proof.",
+    "hook": "Original hook line.",
     "structure": ["scene 1", "scene 2"],
-    "caption": "Did you know movies distort history?",
+    "caption": "Original caption text.",
     "cta": "Follow for more.",
-    "hashtags": ["#film", "#history"],
-    "visual_brief": {"description": "archival clips", "mood": "serious",
+    "hashtags": ["#demo", "#topic"],
+    "visual_brief": {"description": "sample footage", "mood": "neutral",
                      "format_specs": "9:16", "text_overlays": [], "genai_prompt_draft": ""},
     "notes_for_human": "",
 }
@@ -54,19 +54,19 @@ class DoReviseTest(unittest.TestCase):
         captured = {}
         def fake_run_job(prompt, voice, validate, **k):
             captured["prompt"] = prompt
-            return {"id": "post-001", "working_title": "How films lie to you",
-                    "concept": "Explores deliberate distortion.", "date": "2026-07-01",
+            return {"id": "post-001", "working_title": "Topic A angle, revised",
+                    "concept": "Explores angle A with a sharper framing.", "date": "2026-07-01",
                     "pillar": "curiosity", "channels": ["demo-tiktok"]}
         generate.run_job = fake_run_job
 
         generate.do_revise(self.root, "demo", "post-001", "make the title more provocative")
 
         slot = self._read_slot()
-        self.assertEqual(slot["working_title"], "How films lie to you")
+        self.assertEqual(slot["working_title"], "Topic A angle, revised")
         self.assertIn("REVISION INSTRUCTION", captured["prompt"])
         self.assertIn("make the title more provocative", captured["prompt"])
         self.assertIn("CURRENT SLOT", captured["prompt"])
-        self.assertIn("Why films lie", captured["prompt"])
+        self.assertIn("Topic A angle", captured["prompt"])
 
     def test_revise_idea_voice_cascade_in_stdin(self):
         voices = {}
@@ -100,7 +100,7 @@ class DoReviseTest(unittest.TestCase):
         brief_path.parent.mkdir(parents=True, exist_ok=True)
         brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
 
-        revised = {**BRIEF, "hook": "Cinema rewrites history — here's the proof."}
+        revised = {**BRIEF, "hook": "Revised, punchier hook line."}
         captured = {}
         def fake_run_job(prompt, voice, validate, **k):
             captured["prompt"] = prompt
@@ -110,10 +110,34 @@ class DoReviseTest(unittest.TestCase):
         generate.do_revise(self.root, "demo", "post-001", "punchier hook")
 
         saved = self._read_brief()
-        self.assertEqual(saved["hook"], "Cinema rewrites history — here's the proof.")
+        self.assertEqual(saved["hook"], "Revised, punchier hook line.")
         self.assertIn("CURRENT BRIEF", captured["prompt"])
         self.assertIn("punchier hook", captured["prompt"])
-        self.assertIn("Films lie", captured["prompt"])  # original hook present in prompt
+        self.assertIn("Original hook line", captured["prompt"])  # original hook present in prompt
+
+    def test_revise_draft_syncs_working_title_to_slot(self):
+        brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
+
+        revised = {**BRIEF, "working_title": "Topic A angle, punchier"}
+        generate.run_job = lambda p, v, validate, **k: dict(revised)
+
+        generate.do_revise(self.root, "demo", "post-001", "punchier title")
+
+        self.assertEqual(self._read_slot()["working_title"], "Topic A angle, punchier")
+        saved = self._read_brief()
+        self.assertNotIn("working_title", saved)  # not persisted into the brief itself
+
+    def test_revise_draft_without_title_change_leaves_slot_title(self):
+        brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"
+        brief_path.parent.mkdir(parents=True, exist_ok=True)
+        brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
+
+        generate.run_job = lambda p, v, validate, **k: dict(BRIEF)
+        generate.do_revise(self.root, "demo", "post-001", "punchier hook")
+
+        self.assertEqual(self._read_slot()["working_title"], "Topic A angle")
 
     def test_revise_draft_prompt_includes_platform_constraints(self):
         brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"

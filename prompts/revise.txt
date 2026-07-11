@@ -16,6 +16,9 @@ Rules:
 - Honor the channel guidelines and platform constraints.
 - Honor the profile brief spec if provided.
 - For a BRIEF: return the complete revised brief JSON (same schema as input). Preserve the id.
+  If the instruction asks to change the internal working title/label, also include a
+  top-level "working_title" key with the new short label — it is synced to the post's
+  plan entry, not stored in the brief itself. Omit it if the title wasn't asked to change.
 - For a SLOT: return the revised slot fields as JSON {id, working_title, concept, date, pillar, channels}.
   Include all fields (even unchanged ones). Preserve the id.
 
