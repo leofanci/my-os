@@ -186,7 +186,6 @@ const ROUTES = [
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
-  [/^\/unscheduled$/,                           ()       => { setState("unscheduled"); renderUnscheduled(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
   [/^\/project\/([^/]+)\/edit$/,                ([s])    => renderEditProject(s)],
   [/^\/project\/([^/]+)\/delete$/,              ([s])    => renderConfirmDeleteProject(s)],
@@ -195,10 +194,17 @@ const ROUTES = [
   [/^\/project\/([^/]+)\/technical\/new$/,       ([s])    => renderNewTechnical(s)],
   [/^\/project\/([^/]+)\/technical\/subsection\/new$/, ([s]) => renderNewDocSubsection(s, "technical")],
   [/^\/project\/([^/]+)\/technical\/subsection\/edit\/([^/]+)$/, ([s,k]) => renderEditDocSubsection(s, "technical", k, _NAV_EXTRAS)],
+  [/^\/project\/([^/]+)\/intake\/subsection\/edit\/([^/]+)$/, ([s,k]) => renderEditDocSubsection(s, "intake", k, _NAV_EXTRAS)],
   [/^\/project\/([^/]+)\/memo\/new\/([^/]+)$/,   ([s,t])  => renderNewMemo(s,t)],
+  [/^\/project\/([^/]+)\/memo\/([^/]+)\/(\d+)\/edit$/,   ([s,t,v]) => renderEditMemo(s,t,v)],
+  [/^\/project\/([^/]+)\/memo\/([^/]+)\/(\d+)\/delete$/, ([s,t,v]) => renderConfirmDeleteMemo(s,t,v)],
   [/^\/project\/([^/]+)\/experiment\/new$/,     ([s])    => renderNewExperiment(s)],
+  [/^\/project\/([^/]+)\/experiment\/([^/]+)\/edit$/,   ([s,stem]) => renderEditExperiment(s,stem)],
+  [/^\/project\/([^/]+)\/experiment\/([^/]+)\/delete$/, ([s,stem]) => renderConfirmDeleteExperiment(s,stem)],
   [/^\/project\/([^/]+)\/product\/new$/,          ([s])    => renderNewProduct(s)],
   [/^\/product\/([^/]+)\/feature\/new$/,         ([ps])   => renderNewFeature(ps, _NAV_EXTRAS.projectSlug)],
+  [/^\/product\/([^/]+)\/feature\/([^/]+)\/edit$/,   ([ps,fid]) => renderEditFeature(ps,fid,_NAV_EXTRAS.projectSlug)],
+  [/^\/product\/([^/]+)\/feature\/([^/]+)\/delete$/, ([ps,fid]) => renderConfirmDeleteFeature(ps,fid,_NAV_EXTRAS.projectSlug)],
   [/^\/project\/([^/]+)\/([^/]+)$/,             ([s,k])  => { setState("section",{project:s,section:k}); OPEN.projects.add(s); saveOpen(); renderProjectSection(s,k); }],
   [/^\/profile\/([^/]+)\/setup$/,               ([s])    => { setState("profileSetup",{profile:s}); _expandProfile(s); renderProfileSetup(s); }],
   [/^\/profile\/([^/]+)\/delete$/,              ([s])    => renderConfirmDeleteProfile(s)],
@@ -333,20 +339,27 @@ async function ensureSchemas(force=false){
   return _SCHEMAS;
 }
 
-function renderSchemaField(spec){
+function renderSchemaField(spec, values={}){
   const key = spec.key;
   const label = spec.label || humanizeKey(key);
   const req = spec.required ? " required" : "";
   const ph = spec.placeholder ? ` placeholder="${esc(spec.placeholder)}"` : "";
+  let val = values[key];
   if (spec.type === "textarea" || spec.type === "evidence") {
     const hint = spec.type === "evidence" ? ' placeholder="One signal per line"' : ph;
-    return `${flabel(label)}${fta(key, "", spec.rows || 3, hint + req)}`;
+    // evidence is stored as [{signal,source,strength}, ...]; the form only
+    // edits the signal text (one per line), same as what saving re-creates
+    // via _coerce_evidence — so flatten to text for display, not [object Object].
+    if (spec.type === "evidence" && Array.isArray(val)) {
+      val = val.map(e => (e && typeof e === "object") ? (e.signal || "") : String(e)).join("\n");
+    }
+    return `${flabel(label)}${fta(key, val ?? "", spec.rows || 3, hint + req)}`;
   }
   if (spec.type === "select") {
     const opts = (spec.options || []).map(o => [o, o === "" ? "—" : (o.charAt(0).toUpperCase() + o.slice(1))]);
-    return `${flabel(label)}${fsel(key, opts, spec.default || opts[0]?.[0] || "")}`;
+    return `${flabel(label)}${fsel(key, opts, val ?? (spec.default || opts[0]?.[0] || ""))}`;
   }
-  return `${flabel(label)}${finput(key, "", ph + req)}`;
+  return `${flabel(label)}${finput(key, val ?? "", ph + req)}`;
 }
 
 function schemaFields(kind, memoType=null){
@@ -403,7 +416,6 @@ async function renderRail(){
     <nav class="nav">
       <a data-view="needs"><span class="ico">◉</span> Needs you</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
-      <a data-view="unscheduled"><span class="ico">◷</span> Unscheduled</a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
     </nav>
     <div class="rail-hdr"><span class="label">Projects</span>
@@ -453,7 +465,6 @@ async function refreshViews(){
   const v = STATE.view;
   if (v === "calendar") return renderTimeline();
   if (v === "operations") return renderOperations();
-  if (v === "unscheduled") return renderUnscheduled();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return renderProfile(STATE.profile);
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -616,17 +627,6 @@ function renderSecGroup(label, inner, id=null, actions=""){
   return `<div class="sec-group">${head}${inner}</div>`;
 }
 
-function stripLeadingDocTitle(raw){
-  const lines = String(raw || "").replace(/\r\n/g, "\n").split("\n");
-  let i = 0;
-  while (i < lines.length && !lines[i].trim()) i++;
-  if (i < lines.length && /^#\s+/.test(lines[i].trim())) {
-    i++;
-    while (i < lines.length && !lines[i].trim()) i++;
-  }
-  return lines.slice(i).join("\n");
-}
-
 function docArtifactId(projectSlug, artifact){
   const p = artifact?.path || "";
   let key = "";
@@ -689,7 +689,7 @@ function docSubsectionId(projectSlug, p, docKey, title){
 }
 
 function renderMdSubsections(projectSlug, p, docKey, text, opts = {}){
-  const order = projectDocSubsections(p, docKey);
+  const order = opts.titles || projectDocSubsections(p, docKey);
   const parsed = Object.fromEntries(parseMdSections(text || "").map(s => [s.title, s.body]));
   let html = "";
   order.forEach(title => {
@@ -714,16 +714,59 @@ function wireDocSubsectionEditButtons(projectSlug){
   });
 }
 
-function filterIntakeSections(text, allowedTitles){
-  const allow = new Set(allowedTitles);
-  return parseMdSections(text)
-    .filter(s => allow.has(s.title) && s.body.trim())
-    .map(s => `## ${s.title}\n\n${s.body.trim()}`)
-    .join("\n\n");
-}
-
 function memoArtifactId(projectSlug, memo){
   return composedIdOnly(memo.id, OSID.memo(projectSlug, memo.type, memo.version));
+}
+
+function memoCardActions(slug, memo){
+  if (!memo) return "";
+  return `<button type="button" class="btn" data-edit-memo="${esc(slug)}" data-memo-type="${esc(memo.type)}" data-memo-version="${esc(memo.version)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>` +
+         `<button type="button" class="btn danger-btn" data-del-memo="${esc(slug)}" data-memo-type="${esc(memo.type)}" data-memo-version="${esc(memo.version)}" style="padding:4px 10px;font-size:11px">🗑</button>`;
+}
+
+function wireMemoCardButtons(){
+  $("#main").querySelectorAll("[data-edit-memo]").forEach(btn => {
+    btn.onclick = () => navigate(`#/project/${btn.dataset.editMemo}/memo/${btn.dataset.memoType}/${btn.dataset.memoVersion}/edit`);
+  });
+  $("#main").querySelectorAll("[data-del-memo]").forEach(btn => {
+    btn.onclick = () => navigate(`#/project/${btn.dataset.delMemo}/memo/${btn.dataset.memoType}/${btn.dataset.memoVersion}/delete`);
+  });
+}
+
+function memoBackSection(memoType){
+  return memoType === "problem-validation" ? "validation" : memoType === "assessment" ? "overview" : "pricing";
+}
+
+async function renderEditMemo(projectSlug, memoType, version){
+  await ensureSchemas();
+  const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
+  const label = memoTypeLabel(memoType);
+  const p = await api(`/api/project/${projectSlug}`);
+  const memo = (p.memos || []).find(m => m.type === memoType && String(m.version) === String(version));
+  if (!memo) { $("#main").innerHTML = `<div class="scroll"><p class="memo-empty">Memo not found.</p></div>`; return; }
+  const fields = schemaFields("memo", memoType);
+  const values = memo.body || {};
+  const formHtml = fields.map(f => renderSchemaField(f, values)).join("");
+  $("#main").innerHTML = `${pageHeader(`Edit · ${label}`, projName, `<button class="btn primary" id="em2-save">Save</button>`, memoArtifactId(projectSlug, memo))}
+    <div class="scroll"><div class="fpage">${formHtml}</div></div>`;
+  document.getElementById("em2-save").onclick = async () => {
+    try {
+      await jpost(`/api/project/${projectSlug}/memo/${memoType}/${version}/update`, formVals($("#main")));
+      toast("Saved ✓");
+      await renderRail(); navigate(`#/project/${projectSlug}/${memoBackSection(memoType)}`);
+    } catch (e) { toast("✗ " + e.message); }
+  };
+}
+
+async function renderConfirmDeleteMemo(projectSlug, memoType, version){
+  const label = memoTypeLabel(memoType);
+  confirmPage(`Delete ${label}`, `Delete this ${label.toLowerCase()} memo (v${version})? This cannot be undone.`, async () => {
+    try {
+      await jpost(`/api/project/${projectSlug}/memo/${memoType}/${version}/delete`, {});
+      toast("Deleted ✓");
+      await renderRail(); navigate(`#/project/${projectSlug}/${memoBackSection(memoType)}`);
+    } catch (e) { toast("✗ " + e.message); }
+  });
 }
 
 const ROADMAP_SECTION_ORDER_FALLBACK = [
@@ -758,27 +801,6 @@ function renderMemoCard(projectSlug, memo, opts = {}){
   return `<div class="pcard">${renderArtifactHead(title, id)}<div class="sec-body memo-body">${body}</div></div>`;
 }
 
-function fileCardTitle(artifact){
-  const p=artifact.path||"";
-  if(p.endsWith("intake.md")) return "Venture intake";
-  if(p.endsWith("technical.md")) return "Technical";
-  if(p.endsWith("project.md")) return "Project";
-  return (artifact.label||"").split("/").pop()||"File";
-}
-
-function renderFileCard(artifact, projectSlug, opts = {}){
-  const title = fileCardTitle(artifact);
-  let raw = artifact.text;
-  if (opts.headless && raw != null) raw = stripLeadingDocTitle(raw);
-  const mdOpts = opts.headless ? { dropH1: true } : {};
-  const content = raw != null ? formatMdDoc(raw, mdOpts) : `<p class="memo-empty">Could not load file.</p>`;
-  const id = docArtifactId(projectSlug, artifact);
-  if (opts.headless) {
-    return `<div class="pcard"><div class="sec-body memo-body">${content}</div></div>`;
-  }
-  return `<div class="pcard">${renderArtifactHead(title, id)}<div class="sec-body memo-body">${content}</div></div>`;
-}
-
 function renderOverviewSection(slug, p, sec){
   const e = p.entity || {};
   const pv = latestMemo(p, "problem-validation");
@@ -794,7 +816,8 @@ function renderOverviewSection(slug, p, sec){
   html += renderSecGroup("GTM assessment",
     (as && ab.riskiest_assumption) ? renderMemoCard(slug, as, { title: "GTM assessment", headless: true })
       : `<div class="sec-missing">No assessment memo · <span class="sec-hint"><code>/gtm-assessment</code></span></div>`,
-    (as && ab.riskiest_assumption) ? memoArtifactId(slug, as) : null);
+    (as && ab.riskiest_assumption) ? memoArtifactId(slug, as) : null,
+    (as && ab.riskiest_assumption) ? memoCardActions(slug, as) : "");
   return html;
 }
 
@@ -802,15 +825,13 @@ function renderValidationSection(slug, p, sec){
   const intake = (sec.artifacts || []).find(a => a.kind === "file" && (a.path || "").endsWith("strategy/intake.md"));
   const pv = latestMemo(p, "problem-validation");
   let html = "";
-  const intakeFiltered = intake ? filterIntakeSections(intake.text, validationTabSubsections(p)) : "";
-  html += renderSecGroup("Venture intake",
-    intakeFiltered
-      ? renderFileCard({ ...intake, text: intakeFiltered }, slug, { headless: true })
-      : `<div class="sec-missing">No validation intake yet · <span class="sec-hint"><code>/venture-intake</code></span></div>`,
-    docArtifactId(slug, intake));
+  html += intake
+    ? `<div class="sec-subsections">${renderMdSubsections(slug, p, "intake", intake.text, { editable: true, titles: validationTabSubsections(p) })}</div>`
+    : renderSecGroup("Venture intake", `<div class="sec-missing">No validation intake yet · <span class="sec-hint"><code>/venture-intake</code></span></div>`, docArtifactId(slug, intake));
   html += renderSecGroup("Problem validation",
     pv ? renderMemoCard(slug, pv, { headless: true }) : `<div class="sec-missing">No memo yet · <span class="sec-hint"><code>/problem-validation</code></span></div>`,
-    pv ? memoArtifactId(slug, pv) : null);
+    pv ? memoArtifactId(slug, pv) : null,
+    pv ? memoCardActions(slug, pv) : "");
   return html;
 }
 
@@ -832,7 +853,52 @@ function renderExperimentCard(slug, x){
   if (x.result) body += `<div><b>Result</b> · ${esc(x.result)}</div>`;
   if (b.success_criteria) body += `<div><b>Success</b> · ${esc(b.success_criteria)}</div>`;
   if (b.kill_criteria) body += `<div><b>Kill</b> · ${esc(b.kill_criteria)}</div>`;
-  return `<div class="pcard">${renderArtifactHead(x.assumption || stem, id)}<div class="sec-body">${body}</div></div>`;
+  return `<div class="pcard">${renderArtifactHead(x.assumption || stem, id, experimentCardActions(slug, stem))}<div class="sec-body">${body}</div></div>`;
+}
+
+function experimentCardActions(slug, stem){
+  return `<button type="button" class="btn" data-edit-exp="${esc(slug)}" data-exp-stem="${esc(stem)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>` +
+         `<button type="button" class="btn danger-btn" data-del-exp="${esc(slug)}" data-exp-stem="${esc(stem)}" style="padding:4px 10px;font-size:11px">🗑</button>`;
+}
+
+function wireExperimentCardButtons(){
+  $("#main").querySelectorAll("[data-edit-exp]").forEach(btn => {
+    btn.onclick = () => navigate(`#/project/${btn.dataset.editExp}/experiment/${btn.dataset.expStem}/edit`);
+  });
+  $("#main").querySelectorAll("[data-del-exp]").forEach(btn => {
+    btn.onclick = () => navigate(`#/project/${btn.dataset.delExp}/experiment/${btn.dataset.expStem}/delete`);
+  });
+}
+
+async function renderEditExperiment(projectSlug, stem){
+  await ensureSchemas();
+  const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
+  const p = await api(`/api/project/${projectSlug}`);
+  const exp = (p.experiments || []).find(x => (x.stem || "") === stem);
+  if (!exp) { $("#main").innerHTML = `<div class="scroll"><p class="memo-empty">Experiment not found.</p></div>`; return; }
+  const values = exp.body || {};
+  const formHtml = schemaFields("experiment").map(f => renderSchemaField(f, values)).join("");
+  $("#main").innerHTML = `${pageHeader("Edit experiment", projName, `<button class="btn primary" id="ee-save">Save</button>`, composedIdOnly(exp.id, OSID.experiment(projectSlug, stem)))}
+    <div class="scroll"><div class="fpage">${formHtml}</div></div>`;
+  document.getElementById("ee-save").onclick = async () => {
+    const data = formVals($("#main"));
+    if (!data.assumption?.trim()) return toast("Assumption is required");
+    try {
+      await jpost(`/api/project/${projectSlug}/experiment/${stem}/update`, data);
+      toast("Saved ✓");
+      await renderRail(); navigate(`#/project/${projectSlug}/experiments`);
+    } catch (e) { toast("✗ " + e.message); }
+  };
+}
+
+async function renderConfirmDeleteExperiment(projectSlug, stem){
+  confirmPage("Delete experiment", "Delete this experiment? This cannot be undone.", async () => {
+    try {
+      await jpost(`/api/project/${projectSlug}/experiment/${stem}/delete`, {});
+      toast("Deleted ✓");
+      await renderRail(); navigate(`#/project/${projectSlug}/experiments`);
+    } catch (e) { toast("✗ " + e.message); }
+  });
 }
 
 function renderExperimentsSection(slug, p, sec){
@@ -860,7 +926,7 @@ function renderPricingSection(slug, p){
     const inner = m
       ? renderMemoCard(slug, m, { headless: true })
       : `<div class="sec-missing">No ${esc(label.toLowerCase())} memo yet · <span class="sec-hint"><code>/${esc(skill)}</code></span></div>`;
-    html += renderSecGroup(label, inner, m ? memoArtifactId(slug, m) : null);
+    html += renderSecGroup(label, inner, m ? memoArtifactId(slug, m) : null, m ? memoCardActions(slug, m) : "");
   });
   return html;
 }
@@ -873,7 +939,58 @@ function renderFeatureCard(prod, f){
   const body = f.why
     ? `<div class="sec-body">${esc(f.why)}</div>`
     : `<div class="sec-body memo-empty">No description — add after title in roadmap: <code>Title — one-line why</code></div>`;
-  return `<div class="pcard">${renderArtifactHead(f.title, fid)}${badges}${body}</div>`;
+  return `<div class="pcard">${renderArtifactHead(f.title, fid, featureCardActions(prod.slug, f))}${badges}${body}</div>`;
+}
+
+function featureCardActions(productSlug, feature){
+  const fid = OSID.slugKey(feature.title);
+  return `<button type="button" class="btn" data-edit-feat="${esc(productSlug)}" data-feat-id="${esc(fid)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>` +
+         `<button type="button" class="btn danger-btn" data-del-feat="${esc(productSlug)}" data-feat-id="${esc(fid)}" style="padding:4px 10px;font-size:11px">🗑</button>`;
+}
+
+function wireFeatureCardButtons(projectSlug){
+  $("#main").querySelectorAll("[data-edit-feat]").forEach(btn => {
+    btn.onclick = () => navigate(`#/product/${btn.dataset.editFeat}/feature/${btn.dataset.featId}/edit`, { projectSlug });
+  });
+  $("#main").querySelectorAll("[data-del-feat]").forEach(btn => {
+    btn.onclick = () => navigate(`#/product/${btn.dataset.delFeat}/feature/${btn.dataset.featId}/delete`, { projectSlug });
+  });
+}
+
+async function renderEditFeature(productSlug, featureId, projectSlug){
+  await ensureSchemas();
+  const back = projectSlug ? `#/project/${projectSlug}/product` : "#/calendar";
+  let fields = schemaFields("feature");
+  let p = null;
+  if (projectSlug) {
+    try { p = await api(`/api/project/${projectSlug}`); if (p.feature?.length) fields = p.feature; } catch (_) { /* global schema defaults */ }
+  }
+  const feat = (p?.features || []).find(f => OSID.slugKey(f.title) === featureId && f.product_slug === productSlug);
+  if (!feat) { $("#main").innerHTML = `<div class="scroll"><p class="memo-empty">Feature not found.</p></div>`; return; }
+  const values = { title: feat.title, why: feat.why || "", section: feat.roadmap_section || "", priority: feat.priority || "" };
+  const formHtml = fields.map(f => renderSchemaField(f, values)).join("");
+  $("#main").innerHTML = `${pageHeader("Edit feature", productSlug, `<button class="btn primary" id="ef-save">Save</button>`, composedIdOnly(feat.id, OSID.feat(productSlug, featureId)))}
+    <div class="scroll"><div class="fpage">${formHtml}</div></div>`;
+  document.getElementById("ef-save").onclick = async () => {
+    const data = formVals($("#main"));
+    if (!data.title?.trim()) return toast("Title is required");
+    try {
+      await jpost(`/api/product/${productSlug}/feature/${featureId}/update`, data);
+      toast("Saved ✓");
+      await renderRail(); navigate(back);
+    } catch (e) { toast("✗ " + e.message); }
+  };
+}
+
+async function renderConfirmDeleteFeature(productSlug, featureId, projectSlug){
+  const back = projectSlug ? `#/project/${projectSlug}/product` : "#/calendar";
+  confirmPage("Delete feature", "Delete this feature from the roadmap? This cannot be undone.", async () => {
+    try {
+      await jpost(`/api/product/${productSlug}/feature/${featureId}/delete`, {});
+      toast("Deleted ✓");
+      await renderRail(); navigate(back);
+    } catch (e) { toast("✗ " + e.message); }
+  });
 }
 
 function renderProductSection(slug, p){
@@ -993,7 +1110,10 @@ async function renderProjectSection(slug, section){
     };
   });
   if (section === "product") wireProductFeatureButtons(slug);
-  if (section === "technical") wireDocSubsectionEditButtons(slug);
+  if (section === "product") wireFeatureCardButtons(slug);
+  if (section === "technical" || section === "validation") wireDocSubsectionEditButtons(slug);
+  if (section === "experiments") wireExperimentCardButtons();
+  if (["overview", "validation", "pricing"].includes(section)) wireMemoCardButtons();
   wireIdChips($("#main"));
 }
 
@@ -1136,8 +1256,14 @@ async function renderProfile(slug, initChanFilter){
   const profNode = _TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===slug)||{channels:[]};
   const channels = profNode.channels||[];
   const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
+  const unsCount = () => posts.filter(p=>p.status!=="published" && !p.date).length;
   let FILTER = "all";
   let CHAN_FILTER = initChanFilter||null;
+  const stageOf = p => FILTER==="unscheduled" ? (p.status!=="published" && !p.date)
+    : (FILTER==="all" || STAGE_GROUP[p.status]===FILTER);
+  const matchFilter = p => stageOf(p) && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER)));
+  // newest first: dated posts by date desc, undated (unscheduled) float to top
+  const byRecency = (a,b) => (a.date||"9999").localeCompare(b.date||"9999") * -1;
   const SELECTED = new Set();  // post ids ticked for bulk actions
   const chanSection = `<div class="pcard" style="margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1159,14 +1285,14 @@ async function renderProfile(slug, initChanFilter){
         <span class="chip" data-f="ideas">💡 Ideas <span class="n">${count("ideas")}</span></span>
         <span class="chip" data-f="drafts">✍ Drafts <span class="n">${count("drafts")}</span></span>
         <span class="chip" data-f="published">✓ Published <span class="n">${count("published")}</span></span>
+        <span class="chip" data-f="unscheduled">◷ Unscheduled <span class="n">${unsCount()}</span></span>
       </div>
       <div id="selbar"></div>
       <div class="rowc" id="list"></div></div>`;
 
   function drawSelBar(){
     const bar = $("#selbar"); if(!bar) return;
-    const visible = posts.filter(p=>(FILTER==="all"||STAGE_GROUP[p.status]===FILTER)
-      && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER))));
+    const visible = posts.filter(matchFilter);
     // prune selections no longer visible so the count is honest
     [...SELECTED].forEach(id=>{ if(!visible.some(p=>p.id===id)) SELECTED.delete(id); });
     if(!SELECTED.size){ bar.innerHTML=""; return; }
@@ -1181,8 +1307,7 @@ async function renderProfile(slug, initChanFilter){
   }
 
   function drawList(){
-    const list = posts.filter(p=>(FILTER==="all"||STAGE_GROUP[p.status]===FILTER)
-      && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER))));
+    const list = posts.filter(matchFilter).sort(byRecency);
     const el = $("#list");
     drawSelBar();
     if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
@@ -1267,67 +1392,6 @@ async function writeAllIdeas(slug){
     _writingAll = false;
     renderRail();
   }
-}
-
-// Cross-profile bucket: every non-published post with no date, grouped by
-// profile. Reuses the already-loaded _POSTS index (no new API call) and the
-// same nextActionFor() publish gate as the profile list / post detail views.
-async function renderUnscheduled(){
-  const rows = _POSTS.filter(p=>p.status!=="published" && !p.date);
-  let FILTER = "all";
-  const count = g => rows.filter(p=>STAGE_GROUP[p.status]===g).length;
-  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Unscheduled</h1></div></div>
-    <div style="padding:0 24px 8px;font-size:12px;color:var(--dim)">${rows.length} posts with no date</div>
-    <div class="scroll">
-      <div class="filters">
-        <span class="chip on" data-f="all">All <span class="n">${rows.length}</span></span>
-        <span class="chip" data-f="ideas">💡 Ideas <span class="n">${count("ideas")}</span></span>
-        <span class="chip" data-f="drafts">✍ Drafts <span class="n">${count("drafts")}</span></span>
-      </div>
-      <div id="uns-list"></div>
-    </div>`;
-
-  function drawList(){
-    const visible = rows.filter(p=>FILTER==="all"||STAGE_GROUP[p.status]===FILTER);
-    const el = $("#uns-list");
-    if(!visible.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing unscheduled.</div>`; return; }
-    const bySlug = {};
-    visible.forEach(p=>{ (bySlug[p.profile_slug]=bySlug[p.profile_slug]||[]).push(p); });
-    const slugs = Object.keys(bySlug).sort((a,b)=>
-      (bySlug[a][0].profile_name||a).localeCompare(bySlug[b][0].profile_name||b));
-    el.innerHTML = slugs.map(slug=>{
-      const g = bySlug[slug], name = g[0].profile_name||slug;
-      const rowsHtml = g.map(p=>{
-        const pk=STATUS_PILL_CLASS[p.status]||"idea";
-        const na=nextActionFor(p);
-        const title = p.working_title || p.pillar || p.id;
-        const isIdea = p.status==="planned"||p.status==="approved_slot";
-        const sub = isIdea ? (p.concept || "Just an idea — not written yet") : (p.brief_path?"Written — click to view":"");
-        return `<div class="post">
-          <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
-          <div class="t" data-view="${p.id}" data-slug="${esc(slug)}" style="cursor:pointer;min-width:0">${esc(title)}<small>${esc(sub)}</small></div>
-          ${na?`<button class="go" data-act="${p.id}" data-slug="${esc(slug)}">${esc(na.label)}</button>`:""}
-          <button class="more" data-menu="${p.id}" data-slug="${esc(slug)}">Edit</button></div>`;
-      }).join("");
-      return `<div class="pcard" style="margin-bottom:14px">
-        <div style="font:700 12px/1 var(--body);color:var(--ink2);margin-bottom:8px;cursor:pointer" data-profile-jump="${esc(slug)}">${esc(name)}</div>
-        <div class="rowc">${rowsHtml}</div></div>`;
-    }).join("");
-    el.querySelectorAll("[data-act]").forEach(b=>b.onclick=async()=>{
-      const id=b.dataset.act, slug=b.dataset.slug, p=rows.find(r=>r.id===id), na=p?nextActionFor(p):null;
-      if(!na) return;
-      if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
-      try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-        else{ await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
-        renderRail(); renderUnscheduled(); }catch(e){ toast("✗ "+e.message); }
-    });
-    el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.menu}/edit`,{profileSlug:b.dataset.slug}));
-    el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:b.dataset.slug}));
-    el.querySelectorAll("[data-profile-jump]").forEach(b=>b.onclick=()=>navigate(`#/profile/${b.dataset.profileJump}`));
-  }
-  $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f;
-    $("#main").querySelectorAll(".chip").forEach(x=>x.classList.toggle("on",x===c)); drawList(); });
-  drawList();
 }
 
 function selectProfileSetup(slug){ navigate(`#/profile/${slug}/setup`); }
@@ -1882,7 +1946,7 @@ async function renderNewDocSubsection(projectSlug, docKey){
 
 async function renderEditDocSubsection(projectSlug, docKey, titleKey, extras = {}){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
-  const tab = docKey === "technical" ? "technical" : docKey;
+  const tab = docKey === "intake" ? "validation" : docKey;
   const p = await api(`/api/project/${projectSlug}`);
   const order = projectDocSubsections(p, docKey);
   const title = extras.subTitle
