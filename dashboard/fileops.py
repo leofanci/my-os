@@ -94,9 +94,23 @@ def parse_subsections_arg(raw: str) -> list[str]:
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _db_module():
+    """Return the `db` module matching however THIS copy of fileops was
+    imported (server.py's bare `import fileops` vs. `import dashboard.fileops`
+    elsewhere) — each gets its own separate `db` import too, so callers must
+    fetch the one THIS copy of fileops would use, not a fixed dotted path, or
+    a ROOT/DB_PATH override on one copy silently misses the other's `db`.
+    """
+    if __name__ == "dashboard.fileops":
+        from dashboard import db  # noqa: WPS433 — avoid import cycle at module load
+    else:
+        import db  # noqa: WPS433 — bare-imported fileops (server.py's sys.path setup)
+    return db
+
+
 def _composed_id(lookup_key: str) -> str:
     """Map internal lookup key → composed id after reindex."""
-    from dashboard import db  # noqa: WPS433 — avoid import cycle at module load
+    db = _db_module()
     reg = build_id_registry(db.tree(), db.posts(), root=ROOT)
     return reg.get(lookup_key) or lookup_key
 
@@ -201,8 +215,7 @@ def _post_profile_hint(post_id: str, profile_slug: str | None = None) -> str | N
     if profile_slug and str(profile_slug).strip():
         return str(profile_slug).strip()
     try:
-        import dashboard.db as db
-
+        db = _db_module()
         rows = db._rows("SELECT profile_slug FROM posts WHERE id = ?", (post_id,))
         if rows:
             return rows[0]["profile_slug"]
@@ -556,7 +569,12 @@ def add_post(profile_slug, fields):
         data = {"posts": []}
     project_slug = profile_dir.parent.parent.name
     pid = mint_post_ids(ROOT, project_slug, profile_slug, 1)[0]
-    post = {"id": pid, "status": "planned"}
+    status = (fields.get("status") or "planned").strip()
+    if status not in ("planned", "published"):
+        raise ActionError(f"add_post status must be planned or published, got '{status}'")
+    if status == "published" and not (fields.get("date") or "").strip():
+        raise ActionError("cannot log a published post without a date")
+    post = {"id": pid, "status": status}
     for k in _POST_FIELDS:
         v = (fields.get(k) or "").strip()
         if v:
@@ -1334,6 +1352,46 @@ def create_memo(project_slug: str, memo_type: str, fields: dict | None = None,
     return {"id": _composed_id(key), "type": mtype, "version": version, "path": rel, "project": project_slug}
 
 
+def update_memo(project_slug: str, memo_type: str, version: int, fields: dict) -> dict:
+    """Patch an existing memo version JSON in place (same version, not a new one)."""
+    mtype = (memo_type or "").strip()
+    if mtype not in MEMO_TYPES:
+        raise ActionError(f"unknown memo type '{mtype}'")
+    memo_dir = _project_dir(project_slug) / "strategy" / "memos"
+    path = memo_dir / f"{mtype}-v{int(version)}.json"
+    if not path.exists():
+        raise ActionError(f"memo '{mtype}' v{version} not found")
+    existing = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(existing, dict):
+        raise ActionError(f"memo '{mtype}' v{version} is not a JSON object")
+    merged = dict(existing)
+    if fields:
+        merged.update({k: v for k, v in fields.items() if v is not None})
+    body = normalize_memo_body(mtype, merged, version=int(version))
+    path.write_text(dumps_json(body), encoding="utf-8")
+    reindex()
+    rel = str(path.relative_to(ROOT))
+    return {
+        "id": _composed_id(lk_memo(project_slug, mtype, int(version))),
+        "type": mtype,
+        "version": int(version),
+        "path": rel,
+        "project": project_slug,
+    }
+
+
+def delete_memo(project_slug: str, memo_type: str, version: int) -> dict:
+    mtype = (memo_type or "").strip()
+    if mtype not in MEMO_TYPES:
+        raise ActionError(f"unknown memo type '{mtype}'")
+    path = _project_dir(project_slug) / "strategy" / "memos" / f"{mtype}-v{int(version)}.json"
+    if not path.exists():
+        raise ActionError(f"memo '{mtype}' v{version} not found")
+    path.unlink()
+    reindex()
+    return {"type": mtype, "version": int(version), "project": project_slug, "deleted": True}
+
+
 def create_experiment(project_slug: str, fields: dict) -> dict:
     assumption = (fields.get("assumption") or fields.get("assumption_under_test") or "").strip()
     if not assumption:
@@ -1384,6 +1442,18 @@ def update_experiment(project_slug: str, stem: str, fields: dict) -> dict:
         "path": rel,
         "project": project_slug,
     }
+
+
+def delete_experiment(project_slug: str, stem: str) -> dict:
+    stem = (stem or "").strip()
+    if not stem:
+        raise ActionError("stem is required")
+    path = _project_dir(project_slug) / "strategy" / "experiments" / f"{stem}.json"
+    if not path.exists():
+        raise ActionError(f"experiment '{stem}' not found")
+    path.unlink()
+    reindex()
+    return {"stem": stem, "project": project_slug, "deleted": True}
 
 
 def create_product(project_slug: str, slug: str, fields: dict) -> dict:
@@ -1476,10 +1546,66 @@ def enrich_project_features(features: list[dict], registry) -> list[dict]:
     return rows
 
 
+def _append_roadmap_line(text: str, section: str, line: str) -> str:
+    """Append one checklist line under `## {section}`, creating the heading if needed."""
+    marker = f"## {section}"
+    if marker not in text:
+        text = text.rstrip() + f"\n\n{marker}\n\n"
+    if not text.endswith("\n"):
+        text += "\n"
+    return text + line + "\n"
+
+
+_FEATURE_LINE_RE = re.compile(r"^(\s*- \[[ xX]\])\s*(.*)$")
+
+
+def _parse_feature_line(line: str):
+    """Return (checkbox_prefix, title, why, priority) or None if not a checklist line."""
+    m = _FEATURE_LINE_RE.match(line)
+    if not m:
+        return None
+    checkbox, rest = m.group(1), m.group(2)
+    parts = [p.strip() for p in rest.split(" — ")]
+    title = parts[0]
+    why, priority = "", ""
+    for part in parts[1:]:
+        pm = re.match(r"^priority:\s*(.*)$", part, re.I)
+        if pm:
+            priority = pm.group(1).strip().lower()
+        elif not why:
+            why = part
+    return checkbox, title, why, priority
+
+
+def _find_feature_line_index(lines: list, feature_id: str):
+    """Return (line_index, current_section) for the checklist line whose
+    slug_key(title) matches feature_id, or None."""
+    section = None
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            section = line[3:].strip()
+            continue
+        parsed = _parse_feature_line(line)
+        if parsed and slug_key(parsed[1]) == feature_id:
+            return i, section
+    return None
+
+
+def _check_feature_text_safe(title: str, why: str) -> None:
+    """Roadmap checklist lines serialize as `- [ ] Title — why — priority: X`,
+    splitting on the literal ' — ' separator (fileops._parse_feature_line,
+    index.parse_checklist) — a title or why containing that exact sequence
+    would be split apart and partially lost on the next edit."""
+    if " — " in title or " — " in why:
+        raise ActionError("title/why can't contain ' — ' — it's the roadmap line's field separator")
+
+
 def add_feature(product_slug: str, fields: dict) -> dict:
     title = (fields.get("title") or "").strip()
     if not title:
         raise ActionError("title is required")
+    why = (fields.get("why") or "").strip()
+    _check_feature_text_safe(title, why)
     prod_dir, project_slug = _product_dir(product_slug)
     roadmap = prod_dir / "roadmap.md"
     if not roadmap.exists():
@@ -1487,19 +1613,13 @@ def add_feature(product_slug: str, fields: dict) -> dict:
         roadmap.write_text(starter_text(cfg, "roadmap"), encoding="utf-8")
     section = _roadmap_section_name(fields.get("section") or "Next", project_slug)
     text = _write_project_doc(project_slug, "roadmap", roadmap.read_text(encoding="utf-8"), path=roadmap)
-    marker = f"## {section}"
-    if marker not in text:
-        text = text.rstrip() + f"\n\n{marker}\n\n"
-    if not text.endswith("\n"):
-        text += "\n"
-    why = (fields.get("why") or "").strip()
     line = f"- [ ] {title}"
     if why:
         line += f" — {why}"
     prio = (fields.get("priority") or "").strip().lower()
     if prio in FEATURE_PRIORITIES:
         line += f" — priority: {prio}"
-    text += line + "\n"
+    text = _append_roadmap_line(text, section, line)
     _write_project_doc(project_slug, "roadmap", text, path=roadmap)
     reindex()
     return {
@@ -1508,6 +1628,84 @@ def add_feature(product_slug: str, fields: dict) -> dict:
         "product": product_slug,
         "section": section,
     }
+
+
+def update_feature(product_slug: str, feature_id: str, fields: dict) -> dict:
+    feature_id = (feature_id or "").strip()
+    if not feature_id:
+        raise ActionError("feature id is required")
+    prod_dir, project_slug = _product_dir(product_slug)
+    roadmap = prod_dir / "roadmap.md"
+    if not roadmap.exists():
+        raise ActionError(f"feature '{feature_id}' not found")
+    lines = roadmap.read_text(encoding="utf-8").splitlines()
+    found = _find_feature_line_index(lines, feature_id)
+    if not found:
+        raise ActionError(f"feature '{feature_id}' not found")
+    idx, cur_section = found
+    checkbox, cur_title, cur_why, cur_priority = _parse_feature_line(lines[idx])
+    title = (fields.get("title") or cur_title).strip()
+    why = fields.get("why") if fields.get("why") is not None else cur_why
+    _check_feature_text_safe(title, why)
+    priority = (fields.get("priority") if fields.get("priority") is not None else cur_priority) or ""
+    priority = priority.strip().lower()
+    new_line = f"{checkbox} {title}"
+    if why:
+        new_line += f" — {why}"
+    if priority in FEATURE_PRIORITIES:
+        new_line += f" — priority: {priority}"
+    target_section = cur_section
+    if fields.get("section"):
+        target_section = _roadmap_section_name(fields["section"], project_slug)
+    if target_section != cur_section:
+        del lines[idx]
+        marker = f"## {target_section}"
+        section_start = next((i for i, ln in enumerate(lines) if ln.strip() == marker), None)
+        if section_start is None:
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines += [marker, "", new_line]
+        else:
+            insert_at = next(
+                (i for i in range(section_start + 1, len(lines)) if lines[i].startswith("## ")),
+                len(lines),
+            )
+            while insert_at > section_start + 1 and not lines[insert_at - 1].strip():
+                insert_at -= 1
+            lines.insert(insert_at, new_line)
+        text = "\n".join(lines)
+        if not text.endswith("\n"):
+            text += "\n"
+    else:
+        lines[idx] = new_line
+        text = "\n".join(lines) + "\n"
+    _write_project_doc(project_slug, "roadmap", text, path=roadmap)
+    reindex()
+    return {
+        "id": _composed_id(lk_feature(product_slug, slug_key(title))),
+        "title": title,
+        "product": product_slug,
+        "section": target_section,
+    }
+
+
+def delete_feature(product_slug: str, feature_id: str) -> dict:
+    feature_id = (feature_id or "").strip()
+    if not feature_id:
+        raise ActionError("feature id is required")
+    prod_dir, _project_slug = _product_dir(product_slug)
+    roadmap = prod_dir / "roadmap.md"
+    if not roadmap.exists():
+        raise ActionError(f"feature '{feature_id}' not found")
+    lines = roadmap.read_text(encoding="utf-8").splitlines()
+    found = _find_feature_line_index(lines, feature_id)
+    if not found:
+        raise ActionError(f"feature '{feature_id}' not found")
+    idx, _section = found
+    del lines[idx]
+    roadmap.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    reindex()
+    return {"feature_id": feature_id, "product": product_slug, "deleted": True}
 
 
 def write_roadmap(product_slug: str, text: str) -> dict:
@@ -1573,3 +1771,60 @@ def run_plan(profile_slug, params):
         raise ActionError(f"plan job failed: {(res.stderr or res.stdout).strip()[:800]}")
     reindex()
     return {"profile_slug": profile_slug, "stdout": res.stdout.strip()[:400]}
+
+
+# last30days research signal — real online-discourse evidence for problem-validation.
+# Zero-config sources only (no API keys): reddit, hackernews, polymarket, github.
+LAST30DAYS_SCRIPT = Path.home() / ".agents" / "skills" / "last30days" / "scripts" / "last30days.py"
+LAST30DAYS_ZERO_CONFIG_SOURCES = "reddit,hackernews,polymarket,github"
+LAST30DAYS_TIMEOUT_SECONDS = 90
+
+
+def research_signal(query, max_clusters=5):
+    """Pull real online-discourse signal for a topic via the last30days engine.
+
+    Runs the engine headlessly (bypasses its agent-driven SKILL.md synthesis)
+    and condenses to the top `max_clusters` by engagement, so this stays cheap
+    to fold into a memo's evidence list (e.g. problem-validation evidence).
+    """
+    if not query or not query.strip():
+        raise ActionError("query is required")
+    if not LAST30DAYS_SCRIPT.exists():
+        raise ActionError(
+            "last30days not installed — run `npx skills add mvanhorn/last30days-skill -g`"
+        )
+    cmd = [sys.executable, str(LAST30DAYS_SCRIPT), query.strip(), "--emit=json",
+           "--auto-resolve", "--no-browser-cookies",
+           "--search", LAST30DAYS_ZERO_CONFIG_SOURCES, "--days", "30"]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=LAST30DAYS_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise ActionError(
+            f"last30days research timed out after {LAST30DAYS_TIMEOUT_SECONDS}s"
+        ) from exc
+    if res.returncode != 0:
+        raise ActionError(f"last30days research failed: {(res.stderr or res.stdout).strip()[:800]}")
+    try:
+        data = json.loads(res.stdout)
+    except json.JSONDecodeError as exc:
+        raise ActionError(f"last30days returned non-JSON output: {res.stdout.strip()[:400]}") from exc
+
+    clusters = sorted(
+        data.get("clusters") or [],
+        key=lambda c: c.get("engagement_total") or 0,
+        reverse=True,
+    )[:max_clusters]
+    return {
+        "query": query.strip(),
+        "generated_at": data.get("generated_at"),
+        "clusters": [
+            {
+                "title": c.get("title"),
+                "summary": c.get("summary"),
+                "sources": c.get("sources") or [],
+                "engagement_total": c.get("engagement_total") or 0,
+            }
+            for c in clusters
+        ],
+    }

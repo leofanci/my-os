@@ -177,6 +177,34 @@ def _build_parser():
     p.set_defaults(_run=lambda a: fileops.update_experiment(
         a.project, a.stem, _fields(a, ["assumption", "success_criteria", "kill_criteria"])))
 
+    p = sub.add_parser("update-memo", help="Patch an existing memo JSON (same version, in place)")
+    p.add_argument("--project", required=True)
+    p.add_argument("--type", required=True, dest="memo_type")
+    p.add_argument("--version", required=True, type=int)
+    p.add_argument("--summary")
+    p.add_argument("--recommendation")
+    p.add_argument("--problem-statement", dest="problem_statement")
+    p.add_argument("--body-json", dest="body_json", default="",
+                   help="Extra memo fields as JSON (--body-json or stdin when --text empty)")
+    def _update_memo(a):
+        fields = _fields(a, ["summary", "recommendation", "problem_statement"])
+        raw = (a.body_json or "").strip()
+        if raw:
+            fields.update(json.loads(raw))
+        return fileops.update_memo(a.project, a.memo_type, a.version, fields)
+    p.set_defaults(_run=_update_memo)
+
+    p = sub.add_parser("delete-memo", help="Delete one memo version JSON")
+    p.add_argument("--project", required=True)
+    p.add_argument("--type", required=True, dest="memo_type")
+    p.add_argument("--version", required=True, type=int)
+    p.set_defaults(_run=lambda a: fileops.delete_memo(a.project, a.memo_type, a.version))
+
+    p = sub.add_parser("delete-experiment", help="Delete strategy/experiments/<stem>.json")
+    p.add_argument("--project", required=True)
+    p.add_argument("--stem", required=True)
+    p.set_defaults(_run=lambda a: fileops.delete_experiment(a.project, a.stem))
+
     p = sub.add_parser("create-product", help="Scaffold products/<slug>/ under a project")
     p.add_argument("--project", required=True)
     p.add_argument("--slug", required=True)
@@ -194,6 +222,21 @@ def _build_parser():
     p.add_argument("--priority", default=None, choices=["critical", "high", "normal", "low"])
     p.set_defaults(_run=lambda a: fileops.add_feature(
         a.product, _fields(a, ["title", "section", "why", "priority"])))
+
+    p = sub.add_parser("update-feature", help="Patch one roadmap checklist line")
+    p.add_argument("--product", required=True)
+    p.add_argument("--id", required=True, dest="feature_id")
+    p.add_argument("--title")
+    p.add_argument("--why")
+    p.add_argument("--section")
+    p.add_argument("--priority")
+    p.set_defaults(_run=lambda a: fileops.update_feature(
+        a.product, a.feature_id, _fields(a, ["title", "why", "section", "priority"])))
+
+    p = sub.add_parser("delete-feature", help="Remove one roadmap checklist line")
+    p.add_argument("--product", required=True)
+    p.add_argument("--id", required=True, dest="feature_id")
+    p.set_defaults(_run=lambda a: fileops.delete_feature(a.product, a.feature_id))
 
     p = sub.add_parser("update-roadmap", help="Replace products/<slug>/roadmap.md (--text or stdin)")
     p.add_argument("--product", required=True)
@@ -213,8 +256,10 @@ def _build_parser():
     p.add_argument("--pillar")
     p.add_argument("--date")
     p.add_argument("--channels")
+    p.add_argument("--status", choices=["planned", "published"],
+                   help="published logs an already-posted item (requires --date)")
     p.set_defaults(_run=lambda a: fileops.add_post(
-        a.profile, _fields(a, ["working_title", "pillar", "date", "channels"])))
+        a.profile, _fields(a, ["working_title", "pillar", "date", "channels", "status"])))
 
     # --title is intentionally NOT argparse-required: fileops.create_activity
     # validates it and returns a JSON error, keeping validation in one place.
@@ -460,6 +505,13 @@ def _build_parser():
         a.id, a.instruction, brief_id=a.brief_id, voice_id=a.voice_id))
 
     # --- read commands (no mutations) ---
+
+    p = sub.add_parser("research-signal",
+                       help="Real online-discourse signal for a topic via last30days "
+                            "(zero-config sources, no API keys required)")
+    p.add_argument("--query", required=True)
+    p.add_argument("--max-clusters", type=int, default=5, dest="max_clusters")
+    p.set_defaults(_run=lambda a: fileops.research_signal(a.query, max_clusters=a.max_clusters))
 
     p = sub.add_parser("get-posts", help="List posts, optionally filtered by profile")
     p.add_argument("--profile", default=None)

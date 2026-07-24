@@ -209,6 +209,7 @@ const ROUTES = [
   [/^\/profile\/([^/]+)\/setup$/,               ([s])    => { setState("profileSetup",{profile:s}); _expandProfile(s); renderProfileSetup(s); }],
   [/^\/profile\/([^/]+)\/delete$/,              ([s])    => renderConfirmDeleteProfile(s)],
   [/^\/profile\/([^/]+)\/add$/,                 ([s])    => renderAddIdea(s)],
+  [/^\/profile\/([^/]+)\/log$/,                 ([s])    => renderLogPosted(s)],
   [/^\/profile\/([^/]+)\/generate$/,            ([s])    => renderGenerateIdeas(s)],
   [/^\/profile\/([^/]+)\/channel\/new$/,        ([s])    => renderNewChannel(s)],
   [/^\/profile\/([^/]+)$/,                      ([s])    => { setState("profile",{profile:s}); _expandProfile(s); renderProfile(s, _NAV_EXTRAS.chanFilter||null); }],
@@ -1274,6 +1275,7 @@ async function renderProfile(slug, initChanFilter){
   </div>`;
   const profBtns = `<button class="btn" id="setupBtn">⚙ Setup</button>`
     + `<button class="btn" id="addIdea">＋ Add idea</button>`
+    + `<button class="btn" id="logPosted">◷ Log posted</button>`
     + `<button class="btn" id="writeAll">✍ Write all ideas</button>`
     + `<button class="btn primary" id="genIdeas">✦ Generate ideas</button>`;
   $("#main").innerHTML = `${pageHeader(profData.name||slug, "Profiles", profBtns, OSID.prof(slug))}
@@ -1356,6 +1358,7 @@ async function renderProfile(slug, initChanFilter){
   $("#addChanBtn").onclick=e=>{ e.stopPropagation(); openNewChannel(slug); };
   $("#setupBtn").onclick=()=>navigate(`#/profile/${slug}/setup`);
   $("#addIdea").onclick=()=>navigate(`#/profile/${slug}/add`);
+  $("#logPosted").onclick=()=>navigate(`#/profile/${slug}/log`);
   $("#genIdeas").onclick=()=>navigate(`#/profile/${slug}/generate`);
   drawList();
 
@@ -2149,6 +2152,34 @@ async function renderAddIdea(slug){
     const data=formVals($("#main"));
     try{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
       toast("Idea added ✓"); await renderRail(); navigate(`#/profile/${slug}`); }
+    catch(e){ toast("✗ "+e.message); }
+  };
+}
+
+// ── Log posted ───────────────────────────────────────────────────────────────
+// Manually record a post that already went out (never on the calendar): lands
+// straight at published on the given date, skipping the idea→draft pipeline.
+async function renderLogPosted(slug){
+  CURRENT_PROFILE_SLUG = slug;
+  const profNode=_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===slug)||{channels:[]};
+  const chanHint=(profNode.channels||[]).map(c=>c.slug).join(", ")||"e.g. my-profile-tiktok";
+  const crumb=profNode.name||slug;
+  const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  $("#main").innerHTML=`${pageHeader("Log posted",crumb,`<button class="btn primary" id="lp-save">Log posted</button>`)}
+    <div class="scroll"><div class="fpage">
+      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+        Record something you already posted (not on the calendar). It lands as
+        Published on the date below.</p>
+      ${flabel("Title")}${finput("working_title","",'placeholder="short internal label"')}
+      ${flabel("Date posted")}${finput("date",isoDay(new Date()),'type="date" required')}
+      ${flabel("Channels (slugs, comma-separated)")}${finput("channels",``,`placeholder="${chanHint}"`)}
+    </div></div>`;
+  document.getElementById("lp-save").onclick=async()=>{
+    const data=formVals($("#main"));
+    if(!(data.date||"").trim()){ toast("✗ Date required"); return; }
+    data.status="published";
+    try{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+      toast("Logged ✓"); await renderRail(); navigate(`#/profile/${slug}`); }
     catch(e){ toast("✗ "+e.message); }
   };
 }
