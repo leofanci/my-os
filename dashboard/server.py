@@ -267,16 +267,34 @@ def _continuation_allowed(session, user_msg):
     return bool(_CONTINUATION_RE.search(user_msg or ""))
 
 
+def _in_active_skill_thread(session):
+    """True once a turn this session has explicitly tagged a skill — independent
+    of _continuation_allowed's narrow phrase match (that one gates the write-gate
+    and skill-body re-injection, which must stay strict; this one only affects
+    model choice, so it can be broader)."""
+    return bool(session and getattr(session, "_skill_explicit", False)
+                and getattr(session, "_last_skill", None))
+
+
 def _pick_model(skill, web, user_msg="", session=None, *, explicit=False):
-    """Sonnet only on explicit /skill, /web, or tagged-thread continuations."""
+    """Sonnet on explicit /skill, /web, or while an explicit-skill thread is
+    still active. The active-thread check is deliberately broader than
+    _continuation_allowed's fixed phrase list ("yes"/"save"/...): a natural
+    clarifying-answer reply mid-skill (e.g. "the segment is small businesses")
+    doesn't match that list, and without this it would silently drop to Haiku
+    for one turn then jump back to Sonnet on the next "yes save" — a model
+    switch pays the full uncached system-prompt cost twice instead of once.
+    Only standalone read-only queries fall back to the cheap model."""
     if web:
         return chat_session.ESCALATED_MODEL
+    msg = (user_msg or "").strip()
     if skill and explicit:
-        msg = (user_msg or "").strip()
         if _READ_TURN_RE.search(msg) and not _WRITE_TURN_RE.search(msg):
             return chat_session.CHAT_MODEL
         return chat_session.ESCALATED_MODEL
-    if session and _continuation_allowed(session, user_msg):
+    if _in_active_skill_thread(session):
+        if _READ_TURN_RE.search(msg) and not _WRITE_TURN_RE.search(msg) and not _CONTINUATION_RE.search(msg):
+            return chat_session.CHAT_MODEL
         return chat_session.ESCALATED_MODEL
     return chat_session.CHAT_MODEL
 
@@ -565,7 +583,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ws/terminal" and self.headers.get("Upgrade", "").lower() == "websocket":
             return self._handle_terminal_ws()
         if path in ("/", "/index.html"):
-            return self._send(200, _app_html_bytes(), "text/html; charset=utf-8")
+            # no-store on the shell too: it embeds ?v=<mtime> asset URLs, so if the
+            # webview caches app.html it keeps loading stale CSS/JS forever. Always
+            # re-fetch the shell so UI updates actually reach the user.
+            data = _app_html_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+            return
 
         if path == "/quit":
             self._send(200, {"ok": True})
@@ -599,8 +627,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/chat-session":
                 if _CHAT is None:
-                    return self._send(200, {"session_id": None, "turn_count": 0,
-                                            "max_turns": chat_session.MAX_TURNS, "fresh": True})
+                    return self._send(200, {"session_id": None, "turn_count": 0, "fresh": True})
                 return self._send(200, _CHAT.session_meta())
             if path == "/api/timeline":
                 return self._send(200, db.timeline())
@@ -763,6 +790,29 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/project/new":
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()
                 return self._send(200, {"ok": True, **fileops.create_project(slug, body)})
+            # memo/experiment update+delete must be checked before the generic
+            # project update/delete below — both match ANY /api/project/.../update
+            # or .../delete path, which would otherwise swallow these nested ones.
+            if path.startswith("/api/project/") and "/memo/" in path and path.endswith("/update"):
+                rest = path[len("/api/project/"):-len("/update")]
+                proj, tail = rest.split("/memo/", 1)
+                mtype, version = tail.rstrip("/").split("/")
+                return self._send(200, {"ok": True, **fileops.update_memo(proj, mtype, int(version), body)})
+            if path.startswith("/api/project/") and "/memo/" in path and path.endswith("/delete"):
+                rest = path[len("/api/project/"):-len("/delete")]
+                proj, tail = rest.split("/memo/", 1)
+                mtype, version = tail.rstrip("/").split("/")
+                return self._send(200, {"ok": True, **fileops.delete_memo(proj, mtype, int(version))})
+            if path.startswith("/api/project/") and "/experiment/" in path and path.endswith("/update"):
+                rest = path[len("/api/project/"):-len("/update")]
+                proj, tail = rest.split("/experiment/", 1)
+                stem = tail.rstrip("/")
+                return self._send(200, {"ok": True, **fileops.update_experiment(proj, stem, body)})
+            if path.startswith("/api/project/") and "/experiment/" in path and path.endswith("/delete"):
+                rest = path[len("/api/project/"):-len("/delete")]
+                proj, tail = rest.split("/experiment/", 1)
+                stem = tail.rstrip("/")
+                return self._send(200, {"ok": True, **fileops.delete_experiment(proj, stem)})
             if path.startswith("/api/project/") and path.endswith("/update"):
                 slug = path[len("/api/project/"):-len("/update")]
                 return self._send(200, {"ok": True, **fileops.update_project(slug, body)})
@@ -832,6 +882,16 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/product/") and path.endswith("/feature/new"):
                 prod_slug = path[len("/api/product/"):-len("/feature/new")]
                 return self._send(200, {"ok": True, **fileops.add_feature(prod_slug, body)})
+            if path.startswith("/api/product/") and "/feature/" in path and path.endswith("/update"):
+                rest = path[len("/api/product/"):-len("/update")]
+                prod_slug, tail = rest.split("/feature/", 1)
+                fid = tail.rstrip("/")
+                return self._send(200, {"ok": True, **fileops.update_feature(prod_slug, fid, body)})
+            if path.startswith("/api/product/") and "/feature/" in path and path.endswith("/delete"):
+                rest = path[len("/api/product/"):-len("/delete")]
+                prod_slug, tail = rest.split("/feature/", 1)
+                fid = tail.rstrip("/")
+                return self._send(200, {"ok": True, **fileops.delete_feature(prod_slug, fid)})
             if path.startswith("/api/project/") and path.endswith("/profile/new"):
                 proj = path[len("/api/project/"):-len("/profile/new")]
                 slug = (body.get("slug") or fileops._slugify(body.get("name", ""))).strip()

@@ -121,6 +121,11 @@ function renderMemoKV(obj,labels){
 
 function renderMemoValue(key,val){
   if(val==null||val==="") return "";
+  // the decision call-out gets a highlighted block (mockup "recommend" card)
+  if((key==="recommendation"||key==="pace_recommendation")&&typeof val!=="object"){
+    const label=memoFieldLabel(key)||"Recommend";
+    return `<div class="memo-rec"><span class="rec-lbl">${esc(label)}</span><div class="rec-body">${formatBlocks(val)}</div></div>`;
+  }
   if(key==="evidence"&&Array.isArray(val)) return renderMemoEvidence(val);
   if(key==="sam"&&val&&typeof val==="object"&&!Array.isArray(val)){
     const kv=renderMemoKV(val,SAM_LABELS);
@@ -184,6 +189,7 @@ function navigate(hash, extras){
 }
 const ROUTES = [
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
+  [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
@@ -379,24 +385,25 @@ async function renderRail(){
   await ensureIdRegistry();
   const projects = _TREE.map(p=>{
     const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
-    const profileRows = p.profiles.length ? p.profiles.map(prof=>{
+    const profileRows = p.profiles.length ? p.profiles.map((prof,pi)=>{
       const hasCh = prof.channels.length > 0;
       const profOpen = !hasCh || isOpen("profiles", prof.slug);
       const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
+      const dot = ["var(--teal)","#5B84C4","#8E6FC0","var(--amber)"][pi%4];
       const channelsBlock = prof.channels.length ? `<div class="kid" style="margin-top:1px;margin-bottom:2px">
         ${prof.channels.map(ch=>`<a data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;flex-wrap:wrap"><span style="opacity:.5">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(ch.name||ch.platform)}</a>`).join("")}
         <a data-new-channel="${esc(prof.slug)}" style="color:var(--navy)!important;font-weight:normal!important">＋ Channel</a>
       </div>` : ``;
-      return `<a data-profile="${esc(prof.slug)}" style="display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:10px;text-decoration:none;cursor:pointer;flex-wrap:wrap">
+      return `<a data-profile="${esc(prof.slug)}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;text-decoration:none;cursor:pointer;flex-wrap:wrap">
         <span data-toggle-profile="${esc(prof.slug)}" style="opacity:.45;font-size:9px;width:9px;text-align:center;cursor:pointer;flex-shrink:0">${wedge}</span>
-        ${esc(prof.name)}<span class="c">${prof.posts}</span>
+        <span style="width:8px;height:8px;border-radius:50%;background:${dot};flex-shrink:0"></span>${esc(prof.name)}<span class="c">${prof.posts}</span>
       </a>
       ${hasCh && profOpen ? channelsBlock : ""}`;
     }).join("") : `<a style="color:var(--dim);font-size:12px;padding:4px 9px">No profiles yet</a>`;
     const pOpen = isOpen("projects", p.slug);
     return `
     <div style="margin-top:6px">
-      <div data-toggle-project="${esc(p.slug)}" style="display:flex;align-items:center;gap:7px;font:700 13px/1 var(--disp);padding:4px 9px;border-radius:10px;cursor:pointer;color:var(--ink2);flex-wrap:wrap">
+      <div data-toggle-project="${esc(p.slug)}" style="display:flex;align-items:center;gap:7px;font:700 14px/1 var(--disp);padding:8px 10px;border-radius:10px;cursor:pointer;color:var(--ink2);flex-wrap:wrap">
         <span style="opacity:.45;font-size:10px;width:9px;display:inline-block">${pOpen?"▾":"▸"}</span>${esc(p.name)}
         <span style="margin-left:auto;font:600 9px/1 var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--navy);background:var(--sky-soft);padding:2px 6px;border-radius:20px">${esc(p.kind||p.type)}</span>
         <button class="rail-edit" data-edit-project="${esc(p.slug)}" data-os-id="${esc(OSID.route(`project/${p.slug}/edit`))}" title="Edit project">✎</button></div>
@@ -414,8 +421,9 @@ async function renderRail(){
     <div class="brand" id="brand-btn"><span class="mark"></span><b>GTM&nbsp;OS</b>
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit GTM OS</a></div>
     </div>
+    <div class="rail-hdr"><span class="label">Now</span></div>
     <nav class="nav">
-      <a data-view="needs"><span class="ico">◉</span> Needs you</a>
+      <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
     </nav>
@@ -465,6 +473,7 @@ async function refreshViews(){
   await renderRail();
   const v = STATE.view;
   if (v === "calendar") return renderTimeline();
+  if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return renderProfile(STATE.profile);
@@ -473,7 +482,34 @@ async function refreshViews(){
   return renderNeeds();
 }
 
-async function renderNeeds(){ $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Needs you</h1></div></div><div class="scroll"><div style="padding:24px 4px;color:var(--dim)">Your prioritized to-act list arrives in a later phase. For now, open a project section or a profile.</div></div>`; }
+async function renderNeeds(){
+  const [tl] = await Promise.all([api("/api/timeline").catch(()=>[]), ensureIdRegistry()]);
+  const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  const today=iso(new Date());
+  const rows=[];
+  const push=(prio,r,meta,go)=>{ const col=KIND_COLOR[r.kind]||"var(--dim)", ic=KIND_ICON[r.kind]||"•";
+    const act = r.kind==="activity"&&r.status!=="done" ? "Mark done" : r.kind==="post" ? "Open post" : "Open";
+    rows.push({prio,stripe:col,icbg:`background:var(--panel-chat);color:${col}`,ic,t:r.title||r.kind,m:meta,act,go}); };
+  const goFor = r => r.kind==="post"&&r.ref_id ? ()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug})
+    : r.kind==="activity" ? ()=>navigate("#/operations")
+    : r.kind==="experiment" ? ()=>navigate(`#/project/${r.entity_slug}/experiments`)
+    : ()=>navigate("#/calendar");
+  // everything scheduled for today
+  tl.filter(r=>r.date===today).forEach(r=>push(0,r,`${r.entity_name||r.kind} · today${r.status?` · ${esc(r.status)}`:""}`,goFor(r)));
+  // activities that slipped past their date
+  tl.filter(r=>r.kind==="activity"&&r.status!=="done"&&r.date&&r.date<today).forEach(r=>push(1,r,`${r.entity_name||"Portfolio"} · overdue since ${r.date}`,goFor(r)));
+  rows.sort((a,b)=>a.prio-b.prio);
+  const dateLabel=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
+  const body = rows.length ? `<div class="list">${rows.map((r,i)=>`
+    <div class="arow" data-need="${i}"><span class="stripe" style="background:${r.stripe}"></span>
+      <span class="ig" style="${r.icbg}">${r.ic}</span>
+      <span class="body"><span class="t">${esc(r.t)}</span><span class="m">${esc(r.m)}</span></span>
+      <span class="act">${esc(r.act)}</span></div>`).join("")}</div>`
+    : `<div class="sec-empty"><p>Nothing planned for today. 🎉</p><p class="sec-hint">Posts, activities, and milestones scheduled for today show up here.</p></div>`;
+  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs">${esc(dateLabel)}</div><h1 class="title">Tasks of the day</h1></div></div>
+    <div class="scroll"><p class="lead">Everything planned for today${rows.length?` — ${rows.length} item${rows.length===1?"":"s"}`:""}.</p>${body}</div>`;
+  rows.forEach((r,i)=>{ const el=$("#main").querySelector(`[data-need="${i}"]`); if(el) el.onclick=r.go; });
+}
 
 async function renderOperations(){
   const all = await api("/api/timeline");
@@ -851,9 +887,14 @@ function renderExperimentCard(slug, x){
   if (x.duration_days) body += ` · ${esc(x.duration_days)}d`;
   if (x.started_on) body += ` · started ${esc(x.started_on)}`;
   body += `</div>`;
-  if (x.result) body += `<div><b>Result</b> · ${esc(x.result)}</div>`;
-  if (b.success_criteria) body += `<div><b>Success</b> · ${esc(b.success_criteria)}</div>`;
-  if (b.kill_criteria) body += `<div><b>Kill</b> · ${esc(b.kill_criteria)}</div>`;
+  if (x.result) body += `<div>${"<b>Result</b> · "}${esc(x.result)}</div>`;
+  // success / kill lines → paired call-out blocks (mockup experiment record)
+  if (b.success_criteria || b.kill_criteria){
+    body += `<div class="crit-grid">`
+      + (b.success_criteria ? `<div class="crit ok"><span class="crit-h">✓ Success looks like</span><p>${esc(b.success_criteria)}</p></div>` : "")
+      + (b.kill_criteria ? `<div class="crit kill"><span class="crit-h">✕ Kill if</span><p>${esc(b.kill_criteria)}</p></div>` : "")
+      + `</div>`;
+  }
   return `<div class="pcard">${renderArtifactHead(x.assumption || stem, id, experimentCardActions(slug, stem))}<div class="sec-body">${body}</div></div>`;
 }
 
@@ -1118,7 +1159,7 @@ async function renderProjectSection(slug, section){
   wireIdChips($("#main"));
 }
 
-let CAL = (function(){ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth(), filter:"all"}; })();
+let CAL = (function(){ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth(), filter:"all", mode:"month"}; })();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function calShift(delta){ let m=CAL.m+delta,y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={...CAL,y,m}; renderTimeline(); }
 function calToday(){ const d=new Date(); CAL={...CAL,y:d.getFullYear(),m:d.getMonth()}; renderTimeline(); }
@@ -1196,10 +1237,10 @@ async function renderTimeline(){
   for(let i=0;i<42;i++){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), k=iso(d), out=d.getMonth()!==CAL.m;
     const evs=(byDay[k]||[]).map(r=>{
-      const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev ${esc(r.kind)}${evDone(r)?" done":""}`;
+      const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev k-${esc(r.kind)}`;
       return `<div class="${cls}" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>${esc(r.title||r.kind)}</div>`;
     }).join("");
-    cells+=`<div class="day${out?" out":""}${k===today?" today":""}"><div class="n">${d.getDate()}</div>${evs}</div>`;
+    cells+=`<div class="day${out?" out":""}${k===today?" today":""}" data-day="${k}" title="Double-click to open this day"><div class="n">${d.getDate()}</div>${evs}</div>`;
     if(i>=34&&d.getMonth()!==CAL.m&&(i+1)%7===0) break;
   }
   const counts=k=>all.filter(r=>r.kind===k).length;
@@ -1207,20 +1248,42 @@ async function renderTimeline(){
     .map(([k,l,n])=>`<span class="kchip k-${k}${CAL.filter===k?" on":""}" data-kf="${k}">${l} <span style="opacity:.6">${n}</span></span>`).join("");
   const dow=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(x=>`<div class="dow">${x}</div>`).join("");
   const projectOpts = _TREE.map(p=>`<option value="${esc(p.slug)}">${esc(p.name)}</option>`).join("");
+  // agenda (list) view — items grouped by week, mockup Timeline style
+  const dated = filtered.filter(r=>r.date).sort((a,b)=>a.date.localeCompare(b.date));
+  const wkKey=ds=>{ const d=new Date(ds+"T00:00:00"); const off=(d.getDay()+6)%7; d.setDate(d.getDate()-off); return iso(d); };
+  const wkLabel=mk=>{ const mo=new Date(mk+"T00:00:00"); const su=new Date(mo); su.setDate(mo.getDate()+6);
+    const f=x=>x.toLocaleDateString(undefined,{month:"short",day:"numeric"}); return `${f(mo)} – ${f(su)}`; };
+  const dayLabel=ds=>new Date(ds+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"short",day:"numeric"});
+  const grp={}; dated.forEach(r=>{ (grp[r.date]=grp[r.date]||[]).push(r); });
+  const listHtml = Object.keys(grp).sort().map(dk=>{
+    const rws = grp[dk].map(r=>{
+      const col=KIND_COLOR[r.kind]||"var(--dim)";
+      return `<div class="post postcard calcard" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>
+        <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when" style="margin-left:auto">${esc(r.status)}</span>`:""}</div>
+        <div class="t">${esc(r.title||r.kind)}</div>
+        <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
+    }).join("");
+    return `<div class="wk">${esc(dayLabel(dk))}</div><div class="cards postcards calcards">${rws}</div>`;
+  }).join("") || `<div class="sec-empty"><p>Nothing scheduled yet.</p></div>`;
+  const isList = CAL.mode==="list";
+  const seg = `<div class="seg" style="margin:0"><span class="${isList?"":"on"}" data-mode="month">Month</span><span class="${isList?"on":""}" data-mode="list">List</span></div>`;
   $("#main").innerHTML=`
     <div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Calendar</h1></div>
-      <div style="margin-left:auto;display:flex;gap:8px">
+      <div style="margin-left:auto;display:flex;gap:10px;align-items:center">${seg}
         <button class="btn" id="newActBtn">＋ Activity</button>
         <button class="btn" id="newMsBtn">＋ Milestone</button>
       </div></div>
     <div class="scroll">
       <div class="cal-filters">${chips}</div>
-      <div class="cal-head"><span class="mlabel">${MONTHS[CAL.m]} ${CAL.y}</span>
+      ${CAL_LEGEND}
+      ${isList ? listHtml : `<div class="cal-head"><span class="mlabel">${MONTHS[CAL.m]} ${CAL.y}</span>
         <div class="cal-nav"><button id="cprev">‹</button><button id="ctoday">Today</button><button id="cnext">›</button></div></div>
-      <div class="cal">${dow}${cells}</div></div>`;
-  $("#cprev").onclick=()=>calShift(-1); $("#cnext").onclick=()=>calShift(1); $("#ctoday").onclick=calToday;
+      <div class="cal">${dow}${cells}</div>`}</div>`;
+  $("#main").querySelectorAll("[data-mode]").forEach(s=>s.onclick=()=>{ CAL.mode=s.dataset.mode; renderTimeline(); });
+  if(!isList){ $("#cprev").onclick=()=>calShift(-1); $("#cnext").onclick=()=>calShift(1); $("#ctoday").onclick=calToday; }
   $("#main").querySelectorAll(".kchip").forEach(c=>c.onclick=()=>{ CAL.filter=c.dataset.kf; renderTimeline(); });
-  $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); try{toggleEvDetail(el,JSON.parse(el.dataset.ev));}catch(_){} });
+  $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); try{showEventPopup(JSON.parse(el.dataset.ev));}catch(_){} });
+  $("#main").querySelectorAll(".day[data-day]").forEach(el=>el.ondblclick=()=>navigate(`#/day/${el.dataset.day}`));
   $("#newActBtn").onclick=()=>navigate("#/activity/new");
   $("#newMsBtn").onclick=()=>navigate("#/milestone/new");
 }
@@ -1246,6 +1309,93 @@ function nextActionFor(p){
 }
 
 const PLATFORM_ICON = {instagram:"📸",tiktok:"🎵",x:"𝕏",linkedin:"in",youtube:"▶",facebook:"f"};
+const PLAT_NAME = {instagram:"Instagram",tiktok:"TikTok",x:"X",linkedin:"LinkedIn",youtube:"YouTube",facebook:"Facebook"};
+const KIND_COLOR = {post:"var(--k-post)",activity:"var(--k-activity)",experiment:"var(--k-experiment)",milestone:"var(--k-milestone)",feature:"var(--k-feature)"};
+const KIND_NAME = {post:"Post",experiment:"Experiment",milestone:"Milestone",activity:"Activity",feature:"Feature"};
+const KIND_ICON = {post:"▶",experiment:"◐",milestone:"✦",activity:"○",feature:"◆"};
+// one calendar/day card, shared by the List view and the per-day view
+function calCard(r){
+  const isPost = r.kind==="post";
+  const skey = STATUS_PILL_CLASS[r.status]||"idea";
+  const col = isPost ? `var(--s-${skey})` : (KIND_COLOR[r.kind]||"var(--dim)");
+  const label = isPost ? plainStatus(r.status) : (KIND_NAME[r.kind]||r.kind);
+  return `<div class="post postcard calcard" data-ev='${JSON.stringify({...r,title:(r.title||"").slice(0,80)}).replace(/'/g,"&#39;")}'>
+    <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(label)}</span></div>
+    <div class="t">${esc(r.title||r.kind)}</div>
+    <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
+}
+const CAL_LEGEND = `<div class="cal-legend">
+  <span class="lg-grp">Posts</span>
+  <span class="lg"><i style="background:var(--s-idea)"></i>Idea</span>
+  <span class="lg"><i style="background:var(--s-draft)"></i>Draft</span>
+  <span class="lg"><i style="background:var(--s-ready)"></i>Ready</span>
+  <span class="lg"><i style="background:var(--s-published)"></i>Published</span>
+  <span class="lg-sep"></span>
+  <span class="lg-grp">Type</span>
+  <span class="lg"><i style="background:var(--k-experiment)"></i>Experiment</span>
+  <span class="lg"><i style="background:var(--k-milestone)"></i>Milestone</span>
+  <span class="lg"><i style="background:var(--k-activity)"></i>Activity</span>
+  <span class="lg"><i style="background:var(--k-feature)"></i>Feature</span>
+</div>`;
+// full-screen list of a single day's scheduled items (double-click a calendar day).
+// Rows navigate straight to the item — no intermediate detail card.
+function dayItemGo(r){
+  if(r.kind==="post"&&r.ref_id) return ()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug});
+  if(r.kind==="experiment") return ()=>navigate(`#/project/${r.entity_slug}/experiments`);
+  if(r.kind==="feature") return ()=>navigate(`#/project/${r.entity_slug}/product`);
+  if(r.kind==="activity") return ()=>navigate("#/operations");
+  return ()=>navigate("#/calendar");
+}
+// clicking a calendar event opens a popup sheet (not an inline card)
+function showEventPopup(r){
+  const openLabel = r.kind==="post" ? "Open post →" : r.kind==="experiment" ? "Open experiment →"
+    : r.kind==="feature" ? "Open roadmap →" : r.kind==="activity" ? "Open operations →" : null;
+  const bg=document.createElement("div"); bg.className="popup-bg";
+  bg.innerHTML=`<div class="popup" id="ev-popup">
+    <button class="popup-close" data-close>×</button>
+    <h3>${esc(r.title||r.kind)}</h3>
+    <div class="meta">
+      <span class="mk">Kind</span><span class="mv">${esc(KIND_NAME[r.kind]||r.kind)}</span>
+      ${r.entity_name?`<span class="mk">Where</span><span class="mv">${esc(r.entity_name)}</span>`:""}
+      ${r.date?`<span class="mk">Date</span><span class="mv">${esc(r.date)}</span>`:""}
+      ${r.status?`<span class="mk">Status</span><span class="mv">${esc(r.status)}</span>`:""}
+    </div>
+    <div class="pacts">${openLabel?`<button class="btn primary" data-go>${openLabel}</button>`:""}<button class="btn" data-close2>Close</button></div>
+  </div>`;
+  document.body.appendChild(bg);
+  const close=()=>bg.remove();
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#ev-popup").onclick=e=>e.stopPropagation();
+  bg.querySelector("[data-close]").onclick=close;
+  bg.querySelector("[data-close2]").onclick=close;
+  const go=bg.querySelector("[data-go]");
+  if(go){ const nav=dayItemGo(r); go.onclick=()=>{ close(); nav(); }; }
+  document.addEventListener("keydown", function esc(e){ if(e.key==="Escape"){ close(); document.removeEventListener("keydown",esc); } });
+}
+async function renderDay(dateStr){
+  const all = await api("/api/timeline").catch(()=>[]);
+  const items = all.filter(r=>r.date===dateStr).sort((a,b)=>(a.kind||"").localeCompare(b.kind||""));
+  const label = new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
+  const body = items.length
+    ? `<div class="list">${items.map((r,i)=>{
+        const col=KIND_COLOR[r.kind]||"var(--dim)";
+        return `<div class="arow" data-day-row="${i}"><span class="stripe" style="background:${col}"></span>
+          <span class="ig" style="background:var(--panel-chat);color:${col}">${KIND_ICON[r.kind]||"•"}</span>
+          <span class="body"><span class="t">${esc(r.title||r.kind)}</span><span class="m">${esc(KIND_NAME[r.kind]||r.kind)}${r.entity_name?` · ${esc(r.entity_name)}`:""}${r.status?` · ${esc(r.status)}`:""}</span></span>
+          <span class="act">${r.kind==="post"?"Open post":"Open"}</span></div>`;
+      }).join("")}</div>`
+    : `<div class="sec-empty"><p>Nothing scheduled for this day.</p></div>`;
+  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" style="cursor:pointer;color:var(--navy)">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
+      <h1 class="title" style="margin-top:6px">${esc(label)}</h1></div>
+      <div style="margin-left:auto;display:flex;gap:8px">
+        <button class="btn" id="dayAct">＋ Activity</button>
+        <button class="btn" id="dayBackBtn">← Calendar</button></div></div>
+    <div class="scroll"><p class="lead">${items.length} item${items.length===1?"":"s"} scheduled for this day.</p>${body}</div>`;
+  $("#dayBack").onclick=()=>navigate("#/calendar");
+  $("#dayBackBtn").onclick=()=>navigate("#/calendar");
+  $("#dayAct").onclick=()=>navigate("#/activity/new");
+  items.forEach((r,i)=>{ const el=$("#main").querySelector(`[data-day-row="${i}"]`); if(el) el.onclick=dayItemGo(r); });
+}
 const PROFILE_SCROLL = {};  // slug -> last scrollTop of the post list, so back-navigation restores position
 async function renderProfile(slug, initChanFilter){
   CURRENT_PROFILE_SLUG = slug;
@@ -1290,7 +1440,7 @@ async function renderProfile(slug, initChanFilter){
         <span class="chip" data-f="unscheduled">◷ Unscheduled <span class="n">${unsCount()}</span></span>
       </div>
       <div id="selbar"></div>
-      <div class="rowc" id="list"></div></div>`;
+      <div class="cards postcards" id="list"></div></div>`;
 
   function drawSelBar(){
     const bar = $("#selbar"); if(!bar) return;
@@ -1319,16 +1469,22 @@ async function renderProfile(slug, initChanFilter){
       const title = p.working_title || p.pillar || p.id;
       const isIdea = p.status==="planned"||p.status==="approved_slot";
       const sub = isIdea ? (p.concept || "Just an idea — not written yet") : (p.brief_path?"Written — click to view":"");
-      const pillarTag = p.pillar && p.pillar!==title ? `<span class="chan-chip" style="background:var(--sky-soft);color:var(--navy)">${esc(p.pillar)}</span>` : "";
-      const chanChips = ((pillarTag?1:0)||(p.channels&&p.channels.length))
-        ? `<div class="chan-chips">${pillarTag}${(p.channels||[]).map(c=>`<span class="chan-chip">${esc(c)}</span>`).join("")}</div>` : "";
+      const platMap={}; (channels||[]).forEach(c=>platMap[c.slug]=c.platform);
+      const plats=[...new Set((p.channels||[]).map(sl=>platMap[sl]).filter(Boolean))];
+      const platChips = plats.length
+        ? plats.map(pl=>`<span class="plat ${esc(pl)}">${esc(PLAT_NAME[pl]||pl)}</span>`).join("")
+        : `<span class="plat generic">${esc(p.pillar||"post")}</span>`;
       const postChip = sectionIdChip(OSID.post(p.id));
-      return `<div class="post${SELECTED.has(p.id)?" sel":""}">
-        <input type="checkbox" class="selbox" data-sel="${p.id}" ${SELECTED.has(p.id)?"checked":""} title="Select" style="margin:0 2px;width:16px;height:16px;flex:none;cursor:pointer">
-        <span class="stp ${pk}">${esc(plainStatus(p.status))}</span>
-        <div class="t" data-view="${p.id}" style="cursor:pointer;min-width:0">${postChip?`<div style="margin-bottom:4px">${postChip}</div>`:""}${esc(title)}<small>${[sub,p.date].filter(Boolean).map(esc).join(" · ")}</small>${chanChips}</div>
-        ${na?`<button class="go" data-act="${p.id}">${esc(na.label)}</button>`:""}
-        <button class="more" data-menu="${p.id}">Edit</button></div>`;
+      return `<div class="post postcard${SELECTED.has(p.id)?" sel":""}">
+        <input type="checkbox" class="selbox" data-sel="${p.id}" ${SELECTED.has(p.id)?"checked":""} title="Select">
+        <div class="pc-top">${platChips}<span class="stp ${pk}" style="margin-left:auto">${esc(plainStatus(p.status))}</span></div>
+        <div class="t" data-view="${p.id}" style="cursor:pointer">${esc(title)}</div>
+        ${sub?`<div class="pc-sub">${esc(sub)}</div>`:""}
+        <div class="pc-foot">
+          ${na?`<button class="go" data-act="${p.id}">${esc(na.label)}</button>`:""}
+          <button class="more" data-menu="${p.id}">Edit</button>
+          <span class="pc-end"><span class="pc-id">${postChip}</span>${p.date?`<span class="when">${esc(p.date)}</span>`:""}</span>
+        </div></div>`;
     }).join("");
     el.querySelectorAll("[data-sel]").forEach(b=>b.onclick=e=>{ e.stopPropagation();
       b.checked ? SELECTED.add(b.dataset.sel) : SELECTED.delete(b.dataset.sel);
@@ -2449,7 +2605,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   let term, termSock, termFit;
   function initTerminal(){
     term = new Terminal({ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                          fontSize: 12, theme: { background: "#1e1e28" } });
+                          fontSize: 12, theme: { background: "#241F1B" } });
     termFit = new FitAddon.FitAddon();
     term.loadAddon(termFit);
     term.open(document.getElementById("term"));
@@ -3079,7 +3235,27 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     input.style.height = Math.min(input.scrollHeight, 160) + "px";
   });
 
-  addMsg("assistant", "Hi. I run your GTM OS. Ask me to create or change things (projects, profiles, channels, posts, activities, milestones) and I'll do it directly and refresh the view. For power work, open the terminal with ⌃` .");
+  addMsg("assistant", "Hey! I run your GTM OS. Tell me what you want to make or change — posts, projects, experiments, plans — and I'll do it and refresh the view. Not sure where to start? Try one of these:");
+  (function seedSuggestions(){
+    const cmds = [
+      ["✍️ Draft a post",   "/content-brief "],
+      ["📅 Plan content",   "/content-plan "],
+      ["🧪 Design a test",  "/experiment-design "],
+      ["📊 Weekly review",  "/weekly-review "],
+    ];
+    const wrap = document.createElement("div");
+    wrap.className = "sugs";
+    cmds.forEach(([label, cmd]) => {
+      const b = document.createElement("button");
+      b.className = "sug";
+      b.type = "button";
+      b.textContent = label;
+      b.onclick = () => { input.value = cmd; input.focus(); input.dispatchEvent(new Event("input")); };
+      wrap.appendChild(b);
+    });
+    stream.appendChild(wrap);
+    stream.scrollTop = stream.scrollHeight;
+  })();
 })();
 
 boot();

@@ -1,18 +1,22 @@
   :root{
-    --canvas:#f0f4f8;
-    --ink:#1a2332; --ink2:#4a5568; --dim:#8b95a5;
-    --navy:#1e3a5f; --navy-soft:rgba(30,58,95,.10);
-    --graphite:#1e3a5f; --graphite-soft:rgba(30,58,95,.08);
-    --sky:#3b6ea8; --sky-soft:#e3eef9;
-    --teal:#17916f; --teal-soft:rgba(23,145,111,.13);
-    --amber:#c98a1a; --amber-soft:rgba(201,138,26,.16);
-    --ok:#3d8b63; --ok-soft:rgba(61,139,99,.14);
-    --glass:#fff; --glass2:#fff;
-    --panel-chat:#e8eef4;
-    --gline:rgba(30,50,80,.07); --hair:rgba(30,50,80,.11);
-    --shadow:0 1px 2px rgba(30,50,80,.04),0 4px 18px rgba(30,50,80,.07);
-    --r-panel:12px; --r-card:10px; --r-sm:8px; --r-pill:20px;
-    --disp:"Avenir Next","Avenir",ui-sans-serif,system-ui,sans-serif;
+    /* warm & friendly system — oat paper, espresso ink, one deep-coral accent.
+       token NAMES are kept (app.js writes inline var(--navy)/var(--sky-soft) etc);
+       only VALUES are remapped. --navy = the deep warm coral accent (must read as
+       both a solid bg with white text AND as text on light grounds). */
+    --canvas:#F1EAE2;
+    --ink:#332A20; --ink2:#6D6055; --dim:#A89B8D;
+    --navy:#C24A2A; --navy-soft:rgba(194,74,42,.12);
+    --graphite:#5A4A3C; --graphite-soft:rgba(90,70,50,.09);
+    --sky:#C24A2A; --sky-soft:rgba(194,74,42,.12);
+    --teal:#3F8E6E; --teal-soft:rgba(63,142,110,.15);
+    --amber:#B5791A; --amber-soft:rgba(181,121,26,.16);
+    --ok:#3F8E6E; --ok-soft:rgba(63,142,110,.14);
+    --glass:#FFFDFB; --glass2:#FFFDFB;
+    --panel-chat:#FBF5EF;
+    --gline:rgba(90,70,50,.09); --hair:rgba(90,70,50,.13);
+    --shadow:0 1px 2px rgba(80,60,40,.05),0 8px 24px rgba(80,60,40,.08);
+    --r-panel:18px; --r-card:14px; --r-sm:10px; --r-pill:999px;
+    --disp:ui-rounded,"SF Pro Rounded","Avenir Next","Avenir",system-ui,sans-serif;
     --body:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   }
   *{box-sizing:border-box}
@@ -174,6 +178,7 @@
   .stp{font:600 10px/1 var(--body);padding:4px 9px;border-radius:20px;white-space:nowrap}
   .stp.idea{background:var(--amber-soft);color:var(--amber)} .stp.draft{background:rgba(124,92,214,.16);color:#7c5cd6}
   .stp.ready{background:var(--sky-soft);color:var(--navy)} .stp.sched{background:var(--teal-soft);color:var(--teal)}
+  .stp.published{background:var(--ok-soft);color:var(--ok)} .stp.archived{background:rgba(139,149,165,.16);color:var(--dim)}
   .modal-bg{position:fixed;inset:0;background:rgba(20,24,33,.34);backdrop-filter:blur(2px);z-index:40;display:flex;align-items:center;justify-content:center}
   .modal{background:#fff;border:1px solid var(--gline);border-radius:var(--r-panel);box-shadow:var(--shadow);width:min(440px,92vw);padding:20px 22px}
   .modal h3{font:700 15px/1.2 var(--disp);margin:0 0 12px}
@@ -289,13 +294,19 @@
   .day.today{border-color:var(--navy);box-shadow:0 0 0 2px var(--sky-soft)}
   .day.today .n{color:#fff;background:var(--navy);width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:10px}
   .ev{font-size:10.5px;border-radius:6px;padding:3px 6px;margin-bottom:3px;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ev.post{background:var(--sky-soft);color:var(--navy)}
+  /* post pipeline stages — same 5 colors as .stp in the profile post list */
+  .ev.post-idea{background:var(--amber-soft);color:var(--amber)}
+  .ev.post-draft{background:rgba(124,92,214,.16);color:#7c5cd6}
+  .ev.post-ready{background:var(--sky-soft);color:var(--navy)}
+  .ev.post-published{background:var(--ok-soft);color:var(--ok)}
+  .ev.post-archived{background:rgba(139,149,165,.16);color:var(--dim)}
   .ev.experiment{background:rgba(124,92,214,.16);color:#7c5cd6}
   .ev.feature{background:var(--teal-soft);color:var(--teal)}
   .ev.activity{background:var(--amber-soft);color:var(--amber);cursor:pointer}
   .ev.milestone{background:rgba(27,31,39,.08);color:var(--ink2);cursor:pointer}
   .ev.done{background:var(--ok-soft);color:var(--ok)}
-  .ev.post{cursor:pointer} .ev.experiment{cursor:pointer} .ev.feature{cursor:pointer}
+  .ev.post-idea,.ev.post-draft,.ev.post-ready,.ev.post-published,.ev.post-archived{cursor:pointer}
+  .ev.experiment{cursor:pointer} .ev.feature{cursor:pointer}
   /* rail add buttons */
   [data-toggle-project]:hover{background:rgba(255,255,255,.6)}
   .rail-hdr{display:flex;align-items:center;justify-content:space-between;padding:14px 8px 6px}
@@ -339,3 +350,215 @@
   .ev-detail .ev-acts .btn{font-size:11px;padding:5px 10px;border-radius:9px}
   /* toast undo */
   #toast button{margin-left:10px;color:inherit;background:rgba(255,255,255,.18);border:none;border-radius:8px;padding:3px 10px;cursor:pointer;font:600 11.5px/1 var(--body)}
+
+  /* ============================================================
+     warm redesign — additive polish layer (readability + motion).
+     Purely visual: no structural/behavioral selectors touched.
+     ============================================================ */
+  body{font-size:14px}
+  .sec-body{font-size:13.5px;line-height:1.6}
+  .post .t{font-size:14px}
+  .msg{font-size:14px}
+  /* rounder id chips, warmed off the old blue tints */
+  .sec-id{background:rgba(90,70,50,.05)}
+  .sec-id:hover{color:var(--navy);border-color:rgba(194,74,42,.30);background:rgba(194,74,42,.09)}
+  /* warm the dark literals (platform pill, terminal) toward the palette */
+  .pl{background:#2A2430}
+  .term-panel{background:#241F1B}
+  .post.sel{background:rgba(194,74,42,.07);border-color:rgba(194,74,42,.30)}
+  /* gentle, friendly motion */
+  .nav a,.sub a,.sec a,.kid a{transition:background .15s ease,transform .15s ease}
+  .nav a:hover,.sub a:hover,.sec a:hover,.kid a:hover{transform:translateX(2px)}
+  .btn,.mini,.chip,.stp,.send,.go,.more,.chan-pill,.term-btn,.attach-btn,.sug{transition:transform .14s ease,box-shadow .14s ease,background .14s ease,color .14s ease,border-color .14s ease}
+  .btn:hover,.mini:hover,.sug:hover{transform:translateY(-1px)}
+  .btn.primary:hover,.send:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(194,74,42,.30)}
+  .cards>.c{transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+  .cards>.c:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:transparent}
+  .post{transition:transform .14s ease,box-shadow .14s ease}
+  .post:hover{transform:translateX(2px);box-shadow:var(--shadow)}
+  /* visible keyboard focus (a11y) */
+  :focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  /* ---- exact spacing & type rhythm ported from the approved mockup ---- */
+  /* ===== color system: post STATUS + item TYPE, kept all distinct ===== */
+  :root{
+    /* posts are colored by pipeline status */
+    --s-idea:var(--amber); --s-draft:#8E6FC0; --s-ready:var(--navy); --s-published:var(--ok); --s-archived:var(--dim);
+    /* non-post item types — distinct hues so they never clash with a status */
+    --k-post:var(--navy);
+    --k-activity:#5B84C4;   --k-activity-soft:rgba(91,132,196,.15);
+    --k-experiment:#C05A8A; --k-experiment-soft:rgba(192,90,138,.15);
+    --k-milestone:#64748B;  --k-milestone-soft:rgba(100,116,139,.15);
+    --k-feature:#2AA69A;    --k-feature-soft:rgba(42,166,154,.15);
+  }
+  /* month-calendar stripe: posts by status, other items by type */
+  .ev.post-idea{border-left-color:var(--s-idea)!important}
+  .ev.post-draft{border-left-color:var(--s-draft)!important}
+  .ev.post-ready{border-left-color:var(--s-ready)!important}
+  .ev.post-published,.ev.done{border-left-color:var(--s-published)!important}
+  .ev.post-archived{border-left-color:var(--s-archived)!important}
+  .ev.k-activity{border-left-color:var(--k-activity)!important}
+  .ev.k-experiment{border-left-color:var(--k-experiment)!important}
+  .ev.k-milestone{border-left-color:var(--k-milestone)!important}
+  .ev.k-feature{border-left-color:var(--k-feature)!important}
+  /* active filter tinted by its type */
+  .kchip.k-activity.on{background:var(--k-activity-soft)!important;color:var(--k-activity)!important;border-color:transparent}
+  .kchip.k-experiment.on{background:var(--k-experiment-soft)!important;color:var(--k-experiment)!important;border-color:transparent}
+  .kchip.k-milestone.on{background:var(--k-milestone-soft)!important;color:var(--k-milestone)!important;border-color:transparent}
+  .kchip.k-feature.on{background:var(--k-feature-soft)!important;color:var(--k-feature)!important;border-color:transparent}
+  /* the real legend: what each calendar color means */
+  .cal-legend{display:flex;flex-wrap:wrap;align-items:center;gap:7px 15px;margin:0 0 16px;font-size:11.5px;color:var(--ink2)}
+  .cal-legend .lg-grp{font:700 10px/1 var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--dim)}
+  .cal-legend .lg{display:inline-flex;align-items:center;gap:6px}
+  .cal-legend .lg i{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+  .cal-legend .lg-sep{width:1px;height:15px;background:var(--hair)}
+
+  /* minmax(0,…) lets the center shrink instead of overflowing the window */
+  .app{grid-template-columns:250px minmax(0,1fr) var(--chat-w);gap:14px;padding:6px 14px 14px}
+  .right-col,.main,.scroll{min-width:0}
+  .postcards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .post.postcard{min-width:0}
+  @media (max-width:1180px){.postcards{grid-template-columns:minmax(0,1fr)}}
+  .side{padding:18px 14px}
+  .topbar{padding:22px 26px 18px}
+  h1.title{font-weight:800;font-size:25px;letter-spacing:-.02em;line-height:1.05}
+  .scroll{padding:22px 26px 30px}
+  .cards{gap:16px}
+  .c{padding:18px}
+  .nav a{padding:9px 11px;font-size:14px;gap:11px;font-weight:500}
+  .sec a{padding:8px 10px;font-size:13.5px}
+  .rail-hdr .label,.grp{font-size:11px;letter-spacing:.09em}
+  /* lead sentence under a view title (mockup) */
+  .lead{margin:0 0 18px;font-size:14.5px;color:var(--ink2);max-width:64ch}
+  /* narrower chat to match the mockup's proportions */
+  .app{--chat-w:420px}
+  /* brand mark → gradient logo tile (mockup) */
+  .brand .mark{width:30px;height:30px;border-radius:9px;
+    background:linear-gradient(135deg,var(--navy),#E8975A);
+    box-shadow:0 3px 10px rgba(194,74,42,.32)}
+  /* chat: AI replies in a soft bubble card like the mockup */
+  .msg.ai .b{background:var(--glass)!important;border:1px solid var(--gline)!important;
+    border-radius:16px 16px 16px 5px!important;padding:12px 15px!important;
+    box-shadow:0 1px 2px rgba(80,60,40,.05)}
+  .msg.me .b{border-radius:16px 16px 5px 16px}
+  .stream{gap:14px}
+  /* left nav becomes a floating white panel like the mockup (was transparent) */
+  #rail.panel{background:var(--glass);border:1px solid var(--gline);box-shadow:var(--shadow)}
+  /* hovers were white-on-canvas (invisible on a white panel) → warm tint */
+  .nav a:hover,.sub a:hover,.sec a:hover,.kid a:hover,.brand:hover,
+  [data-toggle-project]:hover,[data-toggle-profile]:hover,.add-btn:hover{background:var(--panel-chat)}
+  /* profile posts as 2-column cards (mockup Content view) */
+  .postcards{grid-auto-rows:1fr}
+  .post.postcard{display:flex;flex-direction:column;align-items:stretch;gap:0;text-align:left;min-height:176px;position:relative;padding:16px 18px;border-radius:var(--r-card)}
+  .post.postcard:hover{transform:translateY(-2px);box-shadow:var(--shadow)}
+  .postcard .t{flex:none}
+  /* clamp the excerpt so every card is the same height */
+  .postcard .pc-sub{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .postcard .pc-foot{margin-top:auto}
+  .postcard .selbox{position:absolute;top:14px;right:14px;width:15px;height:15px;cursor:pointer;opacity:0;transition:opacity .15s}
+  .postcard:hover .selbox,.postcard.sel .selbox{opacity:.85}
+  .postcard .pc-top{display:flex;align-items:center;gap:7px;margin-bottom:12px;padding-right:20px;flex-wrap:wrap}
+  .plat{font:700 11px/1 var(--body);padding:5px 10px;border-radius:var(--r-pill);color:#fff}
+  .plat.tiktok{background:#2A2430}
+  .plat.instagram{background:linear-gradient(135deg,#F58529,#DD2A7B)}
+  .plat.linkedin{background:#2C63B0}
+  .plat.youtube{background:#C4302B}
+  .plat.x{background:#141414}
+  .plat.facebook{background:#3B5998}
+  .plat.generic{background:var(--panel-chat);color:var(--dim)}
+  .postcard .t{font:700 16px/1.32 var(--disp);margin-bottom:7px;white-space:normal}
+  .postcard .pc-sub{font-size:13.5px;color:var(--ink2);line-height:1.55;margin:0}
+  .postcard .pc-foot{display:flex;align-items:center;gap:8px;margin-top:15px;flex-wrap:nowrap;min-width:0}
+  .postcard .go,.postcard .more{flex-shrink:0}
+  .postcard .pc-end{margin-left:auto;display:flex;align-items:center;gap:8px;min-width:0}
+  .postcard .pc-id{min-width:0;overflow:hidden}
+  .postcard .pc-id .sec-id{font-size:9.5px;padding:3px 6px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block}
+  .postcard .pc-end .when{color:var(--dim);font-size:12px;white-space:nowrap;flex-shrink:0}
+  /* calendar List items reuse the post-card look, a touch shorter */
+  .post.postcard.calcard{min-height:110px;cursor:pointer}
+  .calcard .pc-top .when{color:var(--dim);font-size:12px}
+  .calcards{margin-bottom:8px}
+  .calcard .t{font-size:15px;margin-bottom:5px}
+  .calcard .pc-sub{-webkit-line-clamp:2}
+  /* month calendar — event chips as mini-cards with a colored accent stripe */
+  /* minmax(0,1fr) + min-width:0 stop a long event title from widening its column */
+  .cal{gap:10px;grid-template-columns:repeat(7,minmax(0,1fr))}
+  .day{min-height:124px;padding:11px 11px 9px;min-width:0;overflow:hidden;cursor:pointer}
+  .day .n{font-weight:700;color:var(--ink2);font-size:13px;margin-bottom:7px}
+  .ev{background:var(--glass)!important;color:var(--ink)!important;border:1px solid var(--gline);
+    border-left:3px solid var(--dim)!important;border-radius:8px;padding:6px 9px 6px 10px;
+    box-shadow:0 1px 2px rgba(80,60,40,.05);font-size:12.5px;margin-bottom:5px;transition:transform .12s ease;
+    display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ev:hover{transform:translateX(2px)}
+  .ev.post-published,.ev.done{border-left-color:var(--ok)!important}
+  .ev.post-ready{border-left-color:var(--navy)!important}
+  .ev.post-draft,.ev.experiment{border-left-color:#8E6FC0!important}
+  .ev.post-idea,.ev.activity{border-left-color:var(--amber)!important}
+  .ev.post-archived{border-left-color:var(--dim)!important}
+  .ev.feature{border-left-color:var(--teal)!important}
+  .ev.milestone{border-left-color:var(--ink2)!important}
+
+  /* ---- component shapes lifted to the approved mockup language ---- */
+  /* pill segmented controls (filter / channel switch) */
+  .seg{border-radius:var(--r-pill);padding:4px;background:var(--panel-chat);border:0}
+  .seg span{border-radius:var(--r-pill)}
+  .seg span.on{background:var(--glass);color:var(--navy);box-shadow:var(--shadow)}
+  .chan-pill-wrap{border-radius:var(--r-pill);background:var(--panel-chat)}
+  /* filter chips → rounder, more tappable */
+  .chip{border-radius:var(--r-pill);padding:8px 13px}
+  .kchip{border-radius:var(--r-pill);padding:6px 12px}
+  .sugs{display:flex;flex-wrap:wrap;gap:8px;padding:2px 2px 6px;align-self:stretch}
+  .sug{border-radius:var(--r-pill);padding:9px 14px}
+  .sug:hover{border-color:var(--navy);color:var(--navy);background:var(--navy-soft)}
+  /* stat tiles */
+  /* stat tiles → uniform size, consistent spacing */
+  .grid2{gap:12px;grid-auto-rows:1fr}
+  .kv{border-radius:var(--r-card);padding:15px 16px;background:var(--panel-chat);border-color:transparent;
+    min-height:104px;display:flex;flex-direction:column}
+  .kv span{font-size:11px;margin-bottom:9px}
+  .kv b{font-size:16.5px;line-height:1.32;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  /* post / list rows → card-shaped with breathing room */
+  .post{border-radius:var(--r-card);padding:14px 16px}
+  .post .go,.post .more{border-radius:var(--r-pill);padding:8px 14px}
+  /* calendar → rounded, warmer, roomier day cells */
+  .cal{gap:9px}
+  .day{min-height:96px;border-radius:var(--r-card);padding:9px 10px;border-color:var(--gline);transition:box-shadow .15s ease,transform .15s ease}
+  .day:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
+  .day.today{box-shadow:0 0 0 2px var(--navy-soft)}
+  .cal-nav button{border-radius:var(--r-pill)}
+  .ev{border-radius:8px;padding:4px 7px}
+  /* memo / artifact cards → softer, roomier */
+  .pcard{border-radius:var(--r-card);padding:16px 18px}
+  /* highlighted decision call-out inside a memo */
+  .memo-rec{background:var(--teal-soft);border-radius:12px;padding:11px 14px;margin:0 0 14px;border-left:3px solid var(--teal)}
+  .memo-rec .rec-lbl{display:inline-block;font:700 10px/1 var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--teal);margin-bottom:5px}
+  .memo-rec .rec-body{font-size:13.5px;line-height:1.5;color:var(--ink)}
+  .memo-rec .rec-body p:last-child{margin-bottom:0}
+  /* Needs-you / Today → prioritized action rows */
+  .list{display:flex;flex-direction:column;gap:9px}
+  .arow{display:flex;align-items:center;gap:13px;background:var(--glass);border:1px solid var(--gline);border-radius:var(--r-card);padding:13px 15px 13px 17px;cursor:pointer;position:relative;overflow:hidden;transition:transform .15s ease,box-shadow .15s ease}
+  .arow:hover{transform:translateX(3px);box-shadow:var(--shadow)}
+  .arow .stripe{position:absolute;left:0;top:0;bottom:0;width:4px}
+  .arow .ig{width:34px;height:34px;border-radius:10px;flex-shrink:0;display:grid;place-items:center;font-size:15px;font-weight:700}
+  .arow .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .arow .t{font:700 14.5px/1.25 var(--disp);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .arow .m{font-size:12.5px;color:var(--dim)}
+  .arow .act{font:700 12.5px/1 var(--body);color:var(--ink2);background:var(--panel-chat);border:1px solid var(--gline);padding:8px 13px;border-radius:var(--r-pill);white-space:nowrap;transition:.15s}
+  .arow:hover .act{color:var(--navy);border-color:var(--navy)}
+  .wk{font:700 12px/1 var(--body);text-transform:uppercase;letter-spacing:.07em;color:var(--dim);margin:22px 0 10px}
+  .wk:first-child{margin-top:4px}
+  /* experiment success / kill call-out blocks */
+  .crit-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .crit{border-radius:12px;padding:11px 13px}
+  .crit.ok{background:var(--teal-soft)}
+  .crit.kill{background:rgba(176,60,45,.12)}
+  .crit .crit-h{display:block;font:700 10px/1 var(--body);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+  .crit.ok .crit-h{color:var(--teal)}
+  .crit.kill .crit-h{color:#A8412B}
+  .crit p{margin:0;font-size:13px;line-height:1.5;color:var(--ink)}
+  @media (max-width:1200px){.crit-grid{grid-template-columns:1fr}}
+  .modal,.popup{border-radius:var(--r-panel)}
+  /* primary buttons → pill */
+  .btn{border-radius:var(--r-pill)}
+  .btn.primary{box-shadow:0 4px 12px rgba(194,74,42,.26)}
