@@ -237,7 +237,7 @@ class T(unittest.TestCase):
         slot = fileops.read_detail(pid)["slot"]
         self.assertNotIn("date", slot)
 
-    def test_change_date_on_published_post_raises(self):
+    def test_clear_date_on_published_post_raises(self):
         fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
                                   "date": "2026-07-15"})
         pid = db.profile_posts("demo")[0]["id"]
@@ -245,8 +245,18 @@ class T(unittest.TestCase):
             fileops.set_status(pid, to)
         with self.assertRaises(fileops.ActionError) as ctx:
             fileops.update_post(pid, {"date": ""})
-        self.assertIn("cannot change the date of a published post", str(ctx.exception))
+        self.assertIn("must keep a date", str(ctx.exception))
         self.assertEqual(fileops.read_detail(pid)["slot"]["date"], "2026-07-15")
+
+    def test_change_date_on_published_post_is_allowed(self):
+        # a post may actually go out on a different day than scheduled — allow the fix.
+        fileops.add_post("demo", {"working_title": "Idea A", "channels": "demo-tiktok",
+                                  "date": "2026-07-15"})
+        pid = db.profile_posts("demo")[0]["id"]
+        for to in ("approved_slot", "briefed", "approved", "published"):
+            fileops.set_status(pid, to)
+        fileops.update_post(pid, {"date": "2026-07-18"})
+        self.assertEqual(fileops.read_detail(pid)["slot"]["date"], "2026-07-18")
 
     def test_unchanged_date_on_published_post_does_not_raise(self):
         # The edit form always submits the date field, even when the user only

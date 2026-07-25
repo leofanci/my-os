@@ -431,6 +431,10 @@
   .rail-hdr .label,.grp{font-size:11px;letter-spacing:.09em}
   /* lead sentence under a view title (mockup) */
   .lead{margin:0 0 18px;font-size:14.5px;color:var(--ink2);max-width:64ch}
+  /* channel picker checkboxes (log/edit/add post) */
+  .chan-checks{display:flex;flex-wrap:wrap;gap:6px 18px;padding:2px 0}
+  .chan-check{display:inline-flex;align-items:center;gap:7px;font-size:13.5px;color:var(--ink2);cursor:pointer;padding:5px 0}
+  .chan-check input{width:16px;height:16px;cursor:pointer;flex-shrink:0}
   /* narrower chat to match the mockup's proportions */
   .app{--chat-w:420px}
   /* brand mark → gradient logo tile (mockup) */

@@ -264,6 +264,11 @@ const flabel = (t, osId=null) => {
 const finput = (name,val='',extra='',osId=null) => `<input name="${name}"${osId?` data-os-id="${esc(osId)}"`:""} value="${esc(val)}" ${extra}>`;
 const fsel = (name,opts,val,osId=null) => `<select name="${name}"${osId?` data-os-id="${esc(osId)}"`:""}>`+opts.map(([v,l])=>`<option value="${esc(v)}"${v===val?" selected":""}>${esc(l)}</option>`).join("")+`</select>`;
 const fta = (name,val='',rows=5,extra='',osId=null) => `<textarea name="${name}" rows="${rows}"${osId?` data-os-id="${esc(osId)}"`:""} ${extra}>${esc(val)}</textarea>`;
+// channel picker: checkboxes from the profile's channels (no manual slug typing)
+const fchannels = (channels, selected=[]) => (channels && channels.length)
+  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${PLATFORM_ICON[c.platform]||"⌗"}</span> ${esc(c.name||c.slug)}</label>`).join("")}</div>`
+  : `<div style="font-size:12.5px;color:var(--dim)">No channels yet — add one in Setup first.</div>`;
+const checkedChannels = root => [...root.querySelectorAll(".chanbox:checked")].map(b=>b.value).join(",");
 const mentionBare = c => {
   if (c.osId && c.osId.includes(".")) return c.osId.split(".").pop();
   if (c.osId && c.osId.includes(":")) return c.osId.split(":").pop();
@@ -766,7 +771,7 @@ function wireMemoCardButtons(){
     btn.onclick = () => navigate(`#/project/${btn.dataset.editMemo}/memo/${btn.dataset.memoType}/${btn.dataset.memoVersion}/edit`);
   });
   $("#main").querySelectorAll("[data-del-memo]").forEach(btn => {
-    btn.onclick = () => navigate(`#/project/${btn.dataset.delMemo}/memo/${btn.dataset.memoType}/${btn.dataset.memoVersion}/delete`);
+    btn.onclick = () => renderConfirmDeleteMemo(btn.dataset.delMemo, btn.dataset.memoType, btn.dataset.memoVersion);
   });
 }
 
@@ -908,7 +913,7 @@ function wireExperimentCardButtons(){
     btn.onclick = () => navigate(`#/project/${btn.dataset.editExp}/experiment/${btn.dataset.expStem}/edit`);
   });
   $("#main").querySelectorAll("[data-del-exp]").forEach(btn => {
-    btn.onclick = () => navigate(`#/project/${btn.dataset.delExp}/experiment/${btn.dataset.expStem}/delete`);
+    btn.onclick = () => renderConfirmDeleteExperiment(btn.dataset.delExp, btn.dataset.expStem);
   });
 }
 
@@ -995,7 +1000,7 @@ function wireFeatureCardButtons(projectSlug){
     btn.onclick = () => navigate(`#/product/${btn.dataset.editFeat}/feature/${btn.dataset.featId}/edit`, { projectSlug });
   });
   $("#main").querySelectorAll("[data-del-feat]").forEach(btn => {
-    btn.onclick = () => navigate(`#/product/${btn.dataset.delFeat}/feature/${btn.dataset.featId}/delete`, { projectSlug });
+    btn.onclick = () => renderConfirmDeleteFeature(btn.dataset.delFeat, btn.dataset.featId, projectSlug);
   });
 }
 
@@ -1408,9 +1413,11 @@ async function renderProfile(slug, initChanFilter){
   const channels = profNode.channels||[];
   const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
   const unsCount = () => posts.filter(p=>p.status!=="published" && !p.date).length;
-  let FILTER = "all";
+  const datedCount = () => posts.filter(p=>p.date).length;
+  let FILTER = "scheduled";
   let CHAN_FILTER = initChanFilter||null;
   const stageOf = p => FILTER==="unscheduled" ? (p.status!=="published" && !p.date)
+    : FILTER==="scheduled" ? !!p.date
     : (FILTER==="all" || STAGE_GROUP[p.status]===FILTER);
   const matchFilter = p => stageOf(p) && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER)));
   // newest first: dated posts by date desc, undated (unscheduled) float to top
@@ -1433,7 +1440,8 @@ async function renderProfile(slug, initChanFilter){
     <div class="scroll">
       ${chanSection}
       <div class="filters">
-        <span class="chip on" data-f="all">All <span class="n">${posts.length}</span></span>
+        <span class="chip on" data-f="scheduled">📅 Scheduled <span class="n">${datedCount()}</span></span>
+        <span class="chip" data-f="all">All <span class="n">${posts.length}</span></span>
         <span class="chip" data-f="ideas">💡 Ideas <span class="n">${count("ideas")}</span></span>
         <span class="chip" data-f="drafts">✍ Drafts <span class="n">${count("drafts")}</span></span>
         <span class="chip" data-f="published">✓ Published <span class="n">${count("published")}</span></span>
@@ -1455,7 +1463,7 @@ async function renderProfile(slug, initChanFilter){
       <button class="btn danger-btn" id="selDel" style="margin-left:auto;color:#c0392b">🗑 Delete ${SELECTED.size}</button></div>`;
     $("#selAll").onclick=()=>{ visible.forEach(p=>SELECTED.add(p.id)); drawList(); };
     $("#selClear").onclick=()=>{ SELECTED.clear(); drawList(); };
-    $("#selDel").onclick=()=>navigate("#/posts/delete",{ids:[...SELECTED],profileSlug:slug});
+    $("#selDel").onclick=()=>renderConfirmBulkDelete([...SELECTED],slug);
   }
 
   function drawList(){
@@ -1652,7 +1660,7 @@ async function renderProfileSetup(slug){
     }
     catch(e){ toast("✗ "+e.message); }
   };
-  $("#delProfBtn").onclick = ()=>navigate(`#/profile/${slug}/delete`);
+  $("#delProfBtn").onclick = ()=>renderConfirmDeleteProfile(slug);
 }
 
 async function renderChannelGuidelines(slug){
@@ -1869,6 +1877,7 @@ function briefFromEditForm(root, originalBrief){
 function renderBriefBody(slot, brief, n, postId){
   let body="";
   if(slot.concept&&!brief) body+=briefSect("Concept",`<div style="font-size:13px;line-height:1.6">${esc(slot.concept)}</div>`);
+  if(slot.notes) body+=briefSect("Notes",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(slot.notes)}</div>`);
   if(slot.working_title&&!brief) body+=briefSect("Working title",`<div style="font-size:13px;line-height:1.6">${esc(slot.working_title)}</div>`);
   if(brief&&brief._error) body+=briefSect("Brief",`<div style="color:#c0392b;font-size:13px">${esc(brief._error)}</div>`);
   else if(brief){
@@ -1934,7 +1943,7 @@ async function renderPostDetail(id, profileSlug){
       navigate(`#/post/${id}`,{profileSlug});
     }catch(e){ toast("✗ "+e.message); }
   };
-  document.getElementById("pd-del").onclick=()=>navigate(`#/post/${id}/delete`,{profileSlug});
+  document.getElementById("pd-del").onclick=()=>renderConfirmDelete(id,profileSlug);
   document.getElementById("pd-edit").onclick=()=>navigate(`#/post/${id}/edit`,{profileSlug});
   const rdBtn=document.getElementById("pd-revise"); if(rdBtn) rdBtn.onclick=()=>navigate(`#/post/${id}/revise`,{profileSlug});
   const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
@@ -1953,34 +1962,50 @@ async function renderEditPost(id, profileSlug){
   const slot=detail.slot||{}, brief=detail.brief||null;
   CURRENT_PROFILE_SLUG = profileSlug || detail.profile_slug || null;
   CURRENT_POST = { id, slot, brief };
-  const profNode=_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{channels:[]};
+  const profNode=_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===(profileSlug||detail.profile_slug))||{channels:[]};
   const chanHint=(profNode.channels||[]).map(c=>c.slug).join(", ")||"e.g. my-profile-tiktok";
   const crumb=profNode.name||profileSlug||"Back";
   const briefSection = brief && !brief._error ? renderBriefEditSection(brief, id) : "";
-  $("#main").innerHTML=`${pageHeader("Edit post",crumb,`<button class="btn danger-btn" id="ep-del">Delete</button><button class="btn primary" id="ep-save">Save</button>`, OSID.post(id))}
-    <div class="scroll"><div class="fpage">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:14px">Slot</div>
-      ${flabel("Title")}${finput("working_title",slot.working_title||"",'placeholder="short internal label"')}
+  // a "logged post" is one recorded via Log posted: published with no brief.
+  // It has no concept/objective/format — show only what applies, plus notes.
+  const isLogged = slot.status==="published" && !brief;
+  const notesField = `${flabel("Notes")}${fta("notes",slot.notes||"",3,'placeholder="anything worth remembering about this post"')}`;
+  const slotFields = isLogged
+    ? `${flabel("Title")}${finput("working_title",slot.working_title||"",'placeholder="short internal label"')}
+      ${flabel("Date posted")}${finput("date",slot.date||"",'type="date"')}
+      ${flabel("Channels")}${fchannels(profNode.channels,(slot.channels||[]))}
+      ${notesField}`
+    : `${flabel("Title")}${finput("working_title",slot.working_title||"",'placeholder="short internal label"')}
       ${flabel("Concept")}${fta("concept",slot.concept||"",3,'placeholder="what this post does and why"')}
-      ${flabel("Date")}<div style="display:flex;gap:8px;align-items:center">${finput("date",slot.date||"",`type="date"${slot.status==="published"?" disabled":""}`)}${slot.status!=="published"?`<button type="button" class="btn" id="ep-clear-date" style="flex:none">Clear date</button>`:""}</div>
+      ${flabel("Date")}<div style="display:flex;gap:8px;align-items:center">${finput("date",slot.date||"",'type="date"')}${slot.status!=="published"?`<button type="button" class="btn" id="ep-clear-date" style="flex:none">Clear date</button>`:""}</div>
       ${flabel("Format")}${finput("format",slot.format||"carousel",'placeholder="carousel | reel | short"')}
       ${flabel("Pillar")}${finput("pillar",slot.pillar||"")}
       ${flabel("Objective")}${finput("objective",slot.objective||"")}
-      ${flabel("Channels (slugs, comma-separated)")}${finput("channels",(slot.channels||[]).join(", "),`placeholder="${chanHint}"`)}
-      ${briefSection}
+      ${flabel("Channels")}${fchannels(profNode.channels,(slot.channels||[]))}
+      ${notesField}
+      ${briefSection}`;
+  $("#main").innerHTML=`${pageHeader("Edit post",crumb,`<button class="btn danger-btn" id="ep-del">Delete</button><button class="btn primary" id="ep-save">Save</button>`, OSID.post(id))}
+    <div class="scroll"><div class="fpage">
+      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:14px">${isLogged?"Logged post":"Slot"}</div>
+      ${slotFields}
     </div></div>`;
   wireIdChips($("#main"));
   document.getElementById("ep-save").onclick=async()=>{
     const data=formVals($("#main"));
+    data.channels=checkedChannels($("#main"));
     const payload={...data};
     if (brief && !brief._error) {
       try{ payload.brief=briefFromEditForm($("#main"), brief); }
       catch(e){ return toast("✗ "+e.message); }
     }
     try{ await api(postUrl(id,profileSlug,"/update"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      toast("Saved ✓"); navigate(`#/post/${id}`,{profileSlug}); }catch(e){ toast("✗ "+e.message); }
+      toast("Saved ✓");
+      // pop the edit page off history so the post detail's back button returns
+      // to where you came from (profile/calendar), not back into edit.
+      history.back(); }
+    catch(e){ toast("✗ "+e.message); }
   };
-  document.getElementById("ep-del").onclick=()=>navigate(`#/post/${id}/delete`,{profileSlug});
+  document.getElementById("ep-del").onclick=()=>renderConfirmDelete(id,profileSlug);
   const clearDateBtn=document.getElementById("ep-clear-date");
   if(clearDateBtn) clearDateBtn.onclick=()=>{ $("#main input[name=date]").value=""; };
 }
@@ -2005,7 +2030,7 @@ async function renderRevise(id){
     if(!instruction) return toast("Enter an instruction first");
     btn.disabled=true; btn.textContent="Revising…"; toast("✨ Revising via claude -p…",true);
     try{ await jpost(`/api/post/${id}/revise`,{instruction}); toast("Revised ✓");
-      navigate(`#/post/${id}`,{profileSlug}); }
+      history.back(); }
     catch(e){ btn.disabled=false; btn.textContent="Revise"; toast("✗ "+e.message); }
   };
 }
@@ -2046,7 +2071,7 @@ async function renderEditProject(slug){
     try{ await jpost(`/api/project/${slug}/update`,data); toast("Project updated ✓"); await renderRail(); refreshViews(); history.back(); }
     catch(e){ toast("✗ "+e.message); }
   };
-  document.getElementById("ep2-del").onclick=()=>navigate(`#/project/${slug}/delete`);
+  document.getElementById("ep2-del").onclick=()=>renderConfirmDeleteProject(slug);
 }
 
 // ── Project section artifacts (files → reindex → IDs stay in sync) ───────────
@@ -2287,7 +2312,7 @@ async function renderChannelSetup(channelSlug, profileSlug){
       toast("Saved ✓"); await renderRail(); history.back(); }
     catch(e){ toast("✗ "+e.message); }
   };
-  document.getElementById("cs-del").onclick=()=>navigate(`#/channel/${channelSlug}/delete`,{profileSlug});
+  document.getElementById("cs-del").onclick=()=>renderConfirmDeleteChannel(channelSlug,profileSlug);
 }
 
 // ── Add idea ─────────────────────────────────────────────────────────────────
@@ -2302,10 +2327,11 @@ async function renderAddIdea(slug){
       ${flabel("Concept")}${fta("concept","",3,'placeholder="what this post does and why"')}
       ${flabel("Date")}${finput("date","",'type="date"')}
       ${flabel("Pillar")}${finput("pillar","",'placeholder="e.g. Story Craft"')}
-      ${flabel("Channels (slugs, comma-separated)")}${finput("channels",``,`placeholder="${chanHint}"`)}
+      ${flabel("Channels")}${fchannels(profNode.channels)}
     </div></div>`;
   document.getElementById("ai-save").onclick=async()=>{
     const data=formVals($("#main"));
+    data.channels=checkedChannels($("#main"));
     try{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
       toast("Idea added ✓"); await renderRail(); navigate(`#/profile/${slug}`); }
     catch(e){ toast("✗ "+e.message); }
@@ -2328,10 +2354,12 @@ async function renderLogPosted(slug){
         Published on the date below.</p>
       ${flabel("Title")}${finput("working_title","",'placeholder="short internal label"')}
       ${flabel("Date posted")}${finput("date",isoDay(new Date()),'type="date" required')}
-      ${flabel("Channels (slugs, comma-separated)")}${finput("channels",``,`placeholder="${chanHint}"`)}
+      ${flabel("Channels")}${fchannels(profNode.channels)}
+      ${flabel("Notes")}${fta("notes","",3,'placeholder="anything worth remembering about this post"')}
     </div></div>`;
   document.getElementById("lp-save").onclick=async()=>{
     const data=formVals($("#main"));
+    data.channels=checkedChannels($("#main"));
     if(!(data.date||"").trim()){ toast("✗ Date required"); return; }
     data.status="published";
     try{ await api(`/api/profile/${slug}/posts`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
@@ -2425,17 +2453,26 @@ async function renderEditMilestone(ref_id, extras={}){
 }
 
 // ── Confirm / delete pages ───────────────────────────────────────────────────
+// A confirm as a popup overlay (like the calendar event sheet) — no navigation.
 function confirmPage(title, msg, deleteFn){
-  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a class="bk" style="cursor:pointer;color:var(--navy)">← Back</a></div><h1 class="title">${esc(title)}</h1></div></div>
-    <div class="scroll"><div class="confirm-box">
-      <h2>${esc(title)}</h2>
-      <p>${esc(msg)}</p>
-      <div class="acts">
-        <button class="btn" id="cd-cancel">Cancel</button>
-        <button class="btn danger-btn" id="cd-del" style="font-weight:600">Delete</button>
-      </div></div></div>`;
-  document.getElementById("cd-cancel").onclick=()=>history.back();
-  document.getElementById("cd-del").onclick=deleteFn;
+  const bg=document.createElement("div"); bg.className="popup-bg";
+  bg.innerHTML=`<div class="popup" id="cd-popup">
+    <button class="popup-close" data-x>×</button>
+    <h3>${esc(title)}</h3>
+    <p style="font-size:13.5px;color:var(--ink2);line-height:1.55;margin:0 0 18px">${esc(msg)}</p>
+    <div class="pacts">
+      <button class="btn danger-btn" id="cd-del" style="font-weight:600">Delete</button>
+      <button class="btn" id="cd-cancel">Cancel</button>
+    </div></div>`;
+  document.body.appendChild(bg);
+  function onKey(e){ if(e.key==="Escape") close(); }
+  function close(){ bg.remove(); document.removeEventListener("keydown",onKey); }
+  bg.onclick=e=>{ if(e.target===bg) close(); };
+  bg.querySelector("#cd-popup").onclick=e=>e.stopPropagation();
+  bg.querySelector("[data-x]").onclick=close;
+  document.getElementById("cd-cancel").onclick=close;
+  document.getElementById("cd-del").onclick=async()=>{ close(); await deleteFn(); };
+  document.addEventListener("keydown",onKey);
 }
 
 async function renderConfirmDelete(id, profileSlug){

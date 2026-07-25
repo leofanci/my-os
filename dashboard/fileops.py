@@ -550,7 +550,7 @@ def read_detail(post_id, profile_slug=None):
 
 
 _POST_FIELDS = ("date", "pillar", "working_title", "concept", "format", "objective", "platform",
-                "brief_id", "voice_id")
+                "notes", "brief_id", "voice_id")
 
 
 def add_post(profile_slug, fields):
@@ -616,8 +616,10 @@ def update_post(post_id, fields, profile_slug=None):
     ctx = find_post(post_id, profile_slug)
     if "date" in fields:
         new_date = (fields.get("date") or "").strip()
-        if new_date != (ctx["post"].get("date") or "") and ctx["post"].get("status") == "published":
-            raise ActionError("cannot change the date of a published post")
+        # a published post may have its date corrected (e.g. it actually went
+        # out on a different day) but must always keep some date.
+        if not new_date and ctx["post"].get("status") == "published":
+            raise ActionError("a published post must keep a date")
     for k in _POST_FIELDS:
         if k in fields:
             v = (fields.get(k) or "").strip()
