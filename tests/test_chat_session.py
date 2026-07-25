@@ -53,9 +53,6 @@ class AskWithStub(unittest.TestCase):
         self.assertEqual(deltas, "Hello")
         self.assertTrue(any(k == "done" for k, _ in events))
 
-    def test_max_turns_is_six(self):
-        self.assertEqual(cs.MAX_TURNS, 6)
-
     def test_session_meta_and_skill_tracking(self):
         sess = cs.ChatSession(repo_dir=self.tmp.name, rail="RAIL", claude_bin=self.stub)
         self.assertTrue(sess.is_fresh())
@@ -65,7 +62,6 @@ class AskWithStub(unittest.TestCase):
         self.assertEqual(sess._last_skill, "gtm-os")
         self.assertFalse(sess.is_fresh())
         meta = sess.session_meta()
-        self.assertEqual(meta["max_turns"], 6)
         self.assertEqual(meta["turn_count"], 1)
 
 

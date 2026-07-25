@@ -69,4 +69,5 @@ Rules:
 - This feeds gtm-assessment and launch-plan; a SOM too small to justify GTM spend
   should be flagged directly.
 
-Save to `projects/<project-slug>/strategy/memos/market-sizing-vN.json`.
+## Write gate
+Propose memo in chat (target `sec04`, `create-memo --type market-sizing`). Commit only after user approves. `sam`/`som` pass through as nested objects — the manual dashboard form only exposes segment/confidence/recommendation, so edits to the SAM/SOM numbers go through this skill or a raw file edit, not the form.

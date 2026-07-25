@@ -13,7 +13,7 @@ from typing import Any
 
 MEMO_TYPES = frozenset({
     "problem-validation", "assessment", "channels", "icp",
-    "positioning", "competitors", "pricing", "launch",
+    "positioning", "competitors", "pricing", "launch", "market-sizing",
 })
 
 # Memo type → dashboard project tab (ids / section resolver).
@@ -26,6 +26,7 @@ MEMO_SECTION: dict[str, str] = {
     "icp": "pricing",
     "channels": "pricing",
     "launch": "overview",
+    "market-sizing": "pricing",
 }
 
 
@@ -45,6 +46,7 @@ MEMO_TYPE_LABELS: dict[str, str] = {
     "icp": "ICP",
     "channels": "Channels",
     "launch": "Launch",
+    "market-sizing": "Market sizing",
 }
 
 # Dashboard memo card field order (_status = grouped validation_status + severity + frequency).
@@ -54,6 +56,7 @@ MEMO_RENDER_ORDER: dict[str, list[str]] = {
         "willingness_to_pay_signal", "cheapest_next_test", "evidence", "recommendation",
     ],
     "assessment": ["pace_recommendation", "riskiest_assumption", "recommendation"],
+    "market-sizing": ["segment", "sam", "som", "sizing_confidence", "recommendation"],
     "_default": ["summary", "recommendation"],
 }
 
@@ -68,6 +71,10 @@ MEMO_FIELD_LABELS: dict[str, str | None] = {
     "recommendation": "Call",
     "summary": None,
     "evidence": "Evidence",
+    "segment": "Segment",
+    "sam": "SAM",
+    "som": "SOM",
+    "sizing_confidence": "Confidence",
 }
 
 INTAKE_TITLE = "Venture intake"
@@ -149,6 +156,12 @@ MEMO_FIELD_SPECS: dict[str, list[dict[str, Any]]] = {
     "assessment": [
         {"key": "pace_recommendation", "type": "text", "label": "Pace"},
         {"key": "riskiest_assumption", "type": "textarea", "label": "Riskiest assumption", "rows": 2},
+        {"key": "recommendation", "type": "textarea", "label": "Recommendation", "rows": 2},
+    ],
+    "market-sizing": [
+        {"key": "segment", "type": "text", "label": "Segment sized"},
+        {"key": "sizing_confidence", "type": "select", "label": "Sizing confidence",
+         "options": ["low", "medium", "high"], "default": "low"},
         {"key": "recommendation", "type": "textarea", "label": "Recommendation", "rows": 2},
     ],
     "_default": [
@@ -307,6 +320,16 @@ def memo_starter(mtype: str, version: int) -> dict:
         base.update({
             "pace_recommendation": "",
             "riskiest_assumption": "",
+            "recommendation": "",
+        })
+    elif mtype == "market-sizing":
+        base.update({
+            "segment": "",
+            "sam": {"population": "", "reach_filter": "", "arpu_assumption": "",
+                     "annual_revenue_low": 0, "annual_revenue_mid": 0, "annual_revenue_high": 0},
+            "som": {"capture_rate": "", "customers_year1": 0, "mrr_year1": 0,
+                    "arr_year1": 0, "what_changes_the_number": ""},
+            "sizing_confidence": "low",
             "recommendation": "",
         })
     else:

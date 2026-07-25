@@ -59,14 +59,15 @@ BASE_TOOLS = ["Bash", "Read"]
 # token-lean policy.
 WEB_TOOLS = ["WebSearch", "WebFetch"]
 
-# Reset session after this many turns to prevent unbounded context growth.
+# No turn cap: session persists via --resume for the life of the dashboard run.
 # Full state snapshot + skill body inject on session start only (server); resume
 # turns rely on Claude session history + osctl on demand.
-MAX_TURNS = 6
 
 # Default model for ordinary turns. The server escalates to a stronger model
 # (ESCALATED_MODEL) on skill/web/strategic turns; mechanical turns (reads,
-# mutations, chit-chat) stay on the cheap one. See server._pick_model.
+# mutations, chit-chat) stay on the cheap one — this is what actually keeps
+# rate-limit-window consumption down, since a cheaper model costs less quota
+# per token than caching can reliably claw back. See server._pick_model.
 CHAT_MODEL = "haiku"
 ESCALATED_MODEL = "sonnet"
 
@@ -94,7 +95,6 @@ class ChatSession:
         return {
             "session_id": self.session_id,
             "turn_count": self._turn_count,
-            "max_turns": MAX_TURNS,
             "fresh": self.is_fresh(),
         }
 
@@ -137,10 +137,8 @@ class ChatSession:
         `with_web` adds the WebSearch/WebFetch tools for this turn; `model`
         overrides the default for this turn (the server tiers per turn — see
         server._needs_web / _pick_model). Any routed skill is already injected
-        into `text` by the server. Auto-compacts after MAX_TURNS — server injects
-        full snapshot + skill body on fresh session start only."""
-        if self._turn_count >= MAX_TURNS:
-            self._reset_session_id()
+        into `text` by the server. Server injects full snapshot + skill body on
+        fresh session start only (no turn cap — session never auto-resets)."""
         proc = subprocess.Popen(
             self._base_cmd(with_web, model), cwd=self.repo_dir,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -183,15 +181,6 @@ class ChatSession:
         """Record routed skill for this turn (applied after successful completion)."""
         self._pending_skill = skill
         self._pending_skill_explicit = bool(explicit and skill)
-
-    def _reset_session_id(self):
-        self.session_id = str(uuid.uuid4())
-        self._started = False
-        self._turn_count = 0
-        self._last_skill = None
-        self._skill_explicit = False
-        self._pending_skill = None
-        self._pending_skill_explicit = False
 
     def close(self):
         """Terminate any in-flight turn. Safe to call when idle (no-op)."""

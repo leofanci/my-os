@@ -192,6 +192,25 @@ class NeedsWebAndModel(unittest.TestCase):
             server.chat_session.ESCALATED_MODEL,
         )
 
+    def test_active_thread_clarifying_answer_stays_escalated(self):
+        """A natural clarifying-answer reply mid-skill (not "yes"/"save"/etc)
+        must not silently drop to Haiku — that caused a Sonnet→Haiku→Sonnet
+        ping-pong that pays the uncached system-prompt cost twice."""
+        sess = type("S", (), {"_skill_explicit": True, "_last_skill": "market-sizing"})()
+        self.assertEqual(
+            server._pick_model(None, False, "the segment is small business owners in Italy", sess),
+            server.chat_session.ESCALATED_MODEL,
+        )
+
+    def test_active_thread_standalone_read_still_cheap(self):
+        """A genuine unrelated read-only query mid-thread still falls back to
+        the cheap model — only reads should, not every non-magic-word reply."""
+        sess = type("S", (), {"_skill_explicit": True, "_last_skill": "market-sizing"})()
+        self.assertEqual(
+            server._pick_model(None, False, "what posts do I have", sess),
+            server.chat_session.CHAT_MODEL,
+        )
+
 
 class SkillRouting(unittest.TestCase):
     def test_cheap_turn_no_skill_no_web_cheap_model(self):

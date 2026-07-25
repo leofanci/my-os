@@ -30,12 +30,12 @@ Never write content files directly. All mutations go through osctl:
 | Venture intake file | `create-intake --project <slug>` or `update-intake --project <slug>` (--text or stdin) |
 | Technical doc | `create-technical --project <slug>` or `update-technical --project <slug>` (--text or stdin) |
 | Tab subsections (per project) | `get-subsections --project <slug>` · `update-subsections --project <slug> --doc intake/technical/roadmap --subsections "A,B,C"` · `add-subsection --project <slug> --doc technical --title "Prompt"` · `update-validation-tab --project <slug> --subsections "Stage & evidence,Market"` |
-| Strategy memo | `create-memo --project <slug> --type <memo-type> [--summary] [--recommendation]` |
+| Strategy memo | `create-memo --project <slug> --type <memo-type> [--summary] [--recommendation]` · `update-memo --project <slug> --type <memo-type> --version <N> [--summary] [--recommendation]` (patches that version in place — does not create a new one) · `delete-memo --project <slug> --type <memo-type> --version <N>` |
 | Experiment | `create-experiment --project <slug> --assumption "..."` |
 | Product scaffold | `create-product --project <slug> --slug <prod-slug> [--name] [--type]` |
-| Roadmap feature | `add-feature --product <prod-slug> --title "..." [--section Next]` |
+| Roadmap feature | `add-feature --product <prod-slug> --title "..." [--section Next]` · `update-feature --product <prod-slug> --id <feature-id> [--title] [--why] [--section] [--priority]` · `delete-feature --product <prod-slug> --id <feature-id>` |
 | Roadmap (full replace) | `update-roadmap --product <prod-slug>` (--text or stdin) |
-| Experiment patch | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` |
+| Experiment patch/delete | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` · `delete-experiment --project <slug> --stem <stem>` |
 | Post slide row | `add-slide --id <post-id> --overlay "<text>"` |
 | Profile name/topic | `update-profile --slug <slug> [--name] [--topic]` |
 | Brief spec (one of several) | `create-brief-spec` / `update-brief-spec --profile <slug> [--id br2] [--platforms ...] --text "..."` |
@@ -43,7 +43,7 @@ Never write content files directly. All mutations go through osctl:
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
-| Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` |
+| Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` (unscheduled by default — add `--dates` ONLY if the user explicitly asks posts to be dated/scheduled now) |
 
 Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md`.
 

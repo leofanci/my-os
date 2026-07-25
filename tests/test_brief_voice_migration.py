@@ -12,7 +12,7 @@ class MigrationEndToEndTest(unittest.TestCase):
         root = Path(self.tmp.name)
         prof = root / "projects" / "acme" / "profiles" / "demo"
         write(root / "projects" / "acme" / "project.md", "---\nname: Acme\n---")
-        write(prof / "profile.md", "---\nname: Demo\ntopic: film\nproject: acme\n---\nLegacy voice.\n")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: demo-topic\nproject: acme\n---\nLegacy voice.\n")
         write(prof / "brief-spec.md", "Legacy brief rules.")
         (prof / "content").mkdir(parents=True, exist_ok=True)
         fileops.ROOT = root

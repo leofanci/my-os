@@ -8,17 +8,17 @@ from tests.test_index_projects import write
 SLOT = {
     "id": "post-001", "status": "planned", "date": "2026-07-01",
     "pillar": "curiosity", "channels": ["demo-tiktok"],
-    "working_title": "Why films lie", "concept": "Explores how cinema distorts history.",
+    "working_title": "Topic A angle", "concept": "Explores angle A of the demo topic.",
 }
 
 BRIEF = {
     "id": "post-001", "channels": ["demo-tiktok"], "platform": "tiktok",
     "format": "reel", "objective": "educate", "pillar": "curiosity",
-    "hook": "Films lie — here's proof.",
+    "hook": "Original hook line.",
     "structure": ["scene 1", "scene 2"],
-    "caption": "Did you know movies distort history?",
+    "caption": "Original caption text.",
     "cta": "Follow for more.",
-    "hashtags": ["#film"],
+    "hashtags": ["#demo"],
     "visual_brief": {"description": "x", "mood": "y", "format_specs": "9:16",
                      "text_overlays": [], "genai_prompt_draft": ""},
     "notes_for_human": "",
@@ -78,8 +78,8 @@ class RevisePostTest(unittest.TestCase):
     # ── idea revision ────────────────────────────────────────────────────────
 
     def test_revise_idea_updates_slot_fields(self):
-        revised_slot = {**SLOT, "working_title": "How films distort truth",
-                        "concept": "Deep dive into Hollywood revisionism."}
+        revised_slot = {**SLOT, "working_title": "Topic A angle, revised",
+                        "concept": "Deeper dive into angle A."}
         mock = self._fake_revise(revised_slot)
         orig = subprocess.run
         subprocess.run = mock
@@ -95,7 +95,7 @@ class RevisePostTest(unittest.TestCase):
             (self.root / "projects/acme/profiles/demo/content/plan-2026-07.json").read_text()
         )
         slot = plan["posts"][0]
-        self.assertEqual(slot["working_title"], "How films distort truth")
+        self.assertEqual(slot["working_title"], "Topic A angle, revised")
 
     # ── draft revision ───────────────────────────────────────────────────────
 
@@ -104,7 +104,7 @@ class RevisePostTest(unittest.TestCase):
         brief_path.parent.mkdir(parents=True, exist_ok=True)
         brief_path.write_text(json.dumps(BRIEF), encoding="utf-8")
 
-        revised_brief = {**BRIEF, "hook": "Cinema lies — here's the evidence."}
+        revised_brief = {**BRIEF, "hook": "Revised, punchier hook line."}
         mock = self._fake_revise(revised_brief)
         orig = subprocess.run
         subprocess.run = mock
@@ -151,13 +151,13 @@ class RevisePostTest(unittest.TestCase):
 
     def test_update_brief_routes_to_generate_when_no_brief(self):
         with mock.patch.object(fileops, "generate_brief", return_value={"id": "post-001"}) as gen:
-            fileops.update_brief("post-001", "focus on noir films")
-        gen.assert_called_once_with("post-001", "focus on noir films", None, None, None)
+            fileops.update_brief("post-001", "focus on angle B")
+        gen.assert_called_once_with("post-001", "focus on angle B", None, None, None)
 
     def test_update_brief_forwards_explicit_brief_and_voice_ids(self):
         with mock.patch.object(fileops, "generate_brief", return_value={"id": "post-001"}) as gen:
-            fileops.update_brief("post-001", "focus on noir films", brief_id="br2", voice_id="vc2")
-        gen.assert_called_once_with("post-001", "focus on noir films", None, "br2", "vc2")
+            fileops.update_brief("post-001", "focus on angle B", brief_id="br2", voice_id="vc2")
+        gen.assert_called_once_with("post-001", "focus on angle B", None, "br2", "vc2")
 
     def test_update_brief_requires_instruction_for_existing(self):
         brief_path = self.root / "projects/acme/profiles/demo/content/briefs/post-001.json"

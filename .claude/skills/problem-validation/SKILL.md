@@ -23,7 +23,7 @@ Runs at two depths:
   "severity": "vitamin | painkiller | emergency",
   "frequency": "how often they hit it (daily/weekly/rare)",
   "current_workaround": "what they do today — spreadsheet, competitor, nothing",
-  "evidence": [{"signal":"what was observed","source":"interview|data|sales|none","strength":"weak|moderate|strong"}],
+  "evidence": [{"signal":"what was observed","source":"interview|data|sales|social|none","strength":"weak|moderate|strong"}],
   "willingness_to_pay_signal": "any sign money/time follows the pain — or 'none yet'",
   "validation_status": "unvalidated | weak | strong",
   "cheapest_next_test": "the single fastest way to move status up (usually problem interviews or a demand probe)",
@@ -37,6 +37,15 @@ Four questions only: Who exactly has this? How badly / how often? What do they
 do today instead? What's the cheapest way to find out if it's real this week?
 End with: proceed / validate first / drop — and why. If it's worth a real
 project, recommend running `venture-intake` then full problem-validation.
+
+## Optional: real-world discourse evidence
+Before calling evidence "weak" for lack of data, offer to check what real people
+say online: `python3 -m dashboard.osctl research-signal --query "<problem statement, in the customer's words>"`.
+Read-only, zero-config (Reddit/HN/Polymarket/GitHub, no API keys). Returns
+engagement-ranked clusters — fold any that actually corroborate the problem into
+`evidence` as `{"signal": "<cluster summary>", "source": "social", "strength": "..."}`.
+Judge strength same as any other evidence; a thin/irrelevant cluster set is still
+"weak"/"unvalidated" — do not inflate strength because the tool ran.
 
 ## Write gate
 Propose memo in chat (target `sec02`, `create-memo --type problem-validation`). Commit only after user approves. Never write on first turn.

@@ -373,6 +373,39 @@ class T(unittest.TestCase):
         self.assertTrue(out["ok"])
         rev.assert_called_once_with(post["id"], "punchier title", brief_id=None, voice_id=None)
 
+    def test_update_memo_and_delete_memo(self):
+        run(["create-project", "--slug", "acme", "--name", "Acme"])
+        c, out = run(["create-memo", "--project", "acme", "--type", "assessment",
+                      "--recommendation", "go"])
+        self.assertEqual(c, 0)
+        c, out = run(["update-memo", "--project", "acme", "--type", "assessment",
+                      "--version", "1", "--recommendation", "wait"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out["ok"])
+        c, out = run(["delete-memo", "--project", "acme", "--type", "assessment", "--version", "1"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out["deleted"])
+
+    def test_delete_experiment(self):
+        run(["create-project", "--slug", "acme", "--name", "Acme"])
+        run(["create-experiment", "--project", "acme", "--assumption", "people will pay",
+             "--stem", "will-pay"])
+        c, out = run(["delete-experiment", "--project", "acme", "--stem", "will-pay"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out["deleted"])
+
+    def test_update_feature_and_delete_feature(self):
+        run(["create-project", "--slug", "acme", "--name", "Acme"])
+        run(["create-product", "--project", "acme", "--slug", "app", "--name", "Acme App"])
+        run(["add-feature", "--product", "app", "--title", "Dark mode"])
+        c, out = run(["update-feature", "--product", "app", "--id", "dark-mode",
+                      "--priority", "high"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out["ok"])
+        c, out = run(["delete-feature", "--product", "app", "--id", "dark-mode"])
+        self.assertEqual(c, 0)
+        self.assertTrue(out["deleted"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -65,7 +65,7 @@ class SpecFileRoundtripTest(unittest.TestCase):
 
 
 class MergeFieldsFromSlotTest(unittest.TestCase):
-    MOVIE_TALK_SPEC = """
+    CAROUSEL_SPEC = """
     {
       "id": "post-001",
       "cover_overlay": "...",
@@ -83,10 +83,10 @@ class MergeFieldsFromSlotTest(unittest.TestCase):
         )
 
     def test_spec_without_identity_keys_only_channels(self):
-        self.assertEqual(merge_fields_from_slot(self.MOVIE_TALK_SPEC), ("channels",))
+        self.assertEqual(merge_fields_from_slot(self.CAROUSEL_SPEC), ("channels",))
 
     def test_allowed_keys_follow_spec_template(self):
-        allowed = allowed_brief_keys(self.MOVIE_TALK_SPEC)
+        allowed = allowed_brief_keys(self.CAROUSEL_SPEC)
         self.assertEqual(
             allowed,
             {"id", "channels", "cover_overlay", "slide_overlays", "catchy_title", "caption"},

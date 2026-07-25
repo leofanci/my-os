@@ -30,6 +30,22 @@ class TestTokenBudget(unittest.TestCase):
         skill = (ROOT / ".claude" / "skills" / "gtm-os" / "SKILL.md").read_text(encoding="utf-8")
         self.assertLessEqual(len(skill), 2200, f"gtm-os SKILL.md should stay lean: {len(skill)} chars")
 
+    def test_all_skill_files_under_budget(self):
+        """gtm-os has its own stricter cap above (it's RAIL-duplicated and
+        stub-injected on every tag). Every other skill only loads on-demand
+        (once per tagged thread), but still shouldn't grow unbounded — this
+        guard exists to catch that, not to force every skill to the bone."""
+        skills_dir = ROOT / ".claude" / "skills"
+        cap = 4500
+        oversized = []
+        for path in sorted(skills_dir.glob("*/SKILL.md")):
+            if path.parent.name == "gtm-os":
+                continue
+            size = len(path.read_text(encoding="utf-8"))
+            if size > cap:
+                oversized.append(f"{path.parent.name}: {size} chars")
+        self.assertFalse(oversized, f"skill file(s) over {cap}-char budget: {oversized}")
+
     def test_gtm_os_injected_stub_not_full_skill(self):
         from dashboard.server import _RAIL_COVERED_SKILL_STUBS, _load_skill_body
 

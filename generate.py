@@ -130,7 +130,7 @@ def parse_model_json(text: str) -> dict:
 # --------------------------------------------------------------------------- #
 # validation
 # --------------------------------------------------------------------------- #
-def validate_plan(obj) -> list:
+def validate_plan(obj, require_date: bool = True) -> list:
     errs = []
     if not isinstance(obj, dict):
         return ["plan is not a JSON object"]
@@ -141,11 +141,15 @@ def validate_plan(obj) -> list:
     if not isinstance(posts, list) or not posts:
         errs.append("'posts' must be a non-empty array")
     else:
+        # Unscheduled batches (assign_dates off) intentionally omit 'date';
+        # only require it when the planner was told to assign dates.
+        required = ("id", "date", "channels", "pillar") if require_date \
+            else ("id", "channels", "pillar")
         for i, p in enumerate(posts):
             if not isinstance(p, dict):
                 errs.append(f"posts[{i}] is not an object")
                 continue
-            for k in ("id", "date", "channels", "pillar"):
+            for k in required:
                 if not p.get(k):
                     errs.append(f"posts[{i}] missing '{k}'")
     return errs
@@ -425,7 +429,8 @@ def do_plan(root: Path, profile_slug: str, period: str, platforms, cadence, focu
                 extra_voices.append(f"--- VOICE {vid} ---\n{vtext}")
         if extra_voices:
             voice_text += "\n\n" + "\n\n".join(extra_voices)
-    obj = run_job(base + params, voice_text, validate_plan)
+    obj = run_job(base + params, voice_text,
+                  lambda o: validate_plan(o, require_date=assign_dates))
 
     # Normalize channel refs: the model often emits platform names ('tiktok')
     # instead of real channel slugs ('acme-tiktok'). Remap so the

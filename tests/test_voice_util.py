@@ -50,7 +50,7 @@ class VoiceStorageTest(unittest.TestCase):
 
     def test_legacy_profile_body_migrates_on_first_touch(self):
         (self.profile_dir / "profile.md").write_text(
-            "---\nname: Demo\ntopic: film\nproject: acme\n---\nLegacy voice text.\n",
+            "---\nname: Demo\ntopic: demo-topic\nproject: acme\n---\nLegacy voice text.\n",
             encoding="utf-8",
         )
         self.assertEqual(read_voice_text(self.profile_dir).strip(), "Legacy voice text.")

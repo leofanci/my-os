@@ -119,5 +119,53 @@ class DoPlanTest(unittest.TestCase):
         self.assertIn("Assign each post a realistic date", captured["prompt"])
 
 
+class ValidatePlanTest(unittest.TestCase):
+    def _obj(self, **post):
+        base = {"id": "draft-001", "channels": ["demo-tiktok"], "pillar": "curiosity"}
+        base.update(post)
+        return {"period": "p", "profile": "demo", "posts": [base]}
+
+    def test_missing_date_is_ok_when_not_requiring_date(self):
+        # Unscheduled batches (assign_dates off) come back without a date on
+        # purpose — the validator must not reject them.
+        errs = generate.validate_plan(self._obj(), require_date=False)
+        self.assertEqual(errs, [])
+
+    def test_missing_date_flagged_when_requiring_date(self):
+        errs = generate.validate_plan(self._obj(), require_date=True)
+        self.assertIn("posts[0] missing 'date'", errs)
+
+    def test_default_requires_date(self):
+        errs = generate.validate_plan(self._obj())
+        self.assertIn("posts[0] missing 'date'", errs)
+
+
+class DoPlanValidatorWiringTest(DoPlanTest):
+    def _validator_from_do_plan(self, assign_dates):
+        captured = {}
+        def fake_run_job(prompt, voice, validate, **k):
+            captured["validate"] = validate
+            return {"period": "p", "profile": "demo", "posts": []}
+        generate.run_job = fake_run_job
+        generate.do_plan(self.root, "demo", "2026-07-01 to 2026-07-14",
+                          ["tiktok"], 3, None, assign_dates=assign_dates)
+        return captured["validate"]
+
+    def test_unscheduled_plan_accepts_dateless_posts(self):
+        # Regression: Generate Ideas with dates off must not fail validation.
+        validate = self._validator_from_do_plan(assign_dates=False)
+        obj = {"period": "p", "profile": "demo",
+               "posts": [{"id": "draft-001", "channels": ["demo-tiktok"],
+                          "pillar": "curiosity"}]}
+        self.assertEqual(validate(obj), [])
+
+    def test_scheduled_plan_still_requires_dates(self):
+        validate = self._validator_from_do_plan(assign_dates=True)
+        obj = {"period": "p", "profile": "demo",
+               "posts": [{"id": "draft-001", "channels": ["demo-tiktok"],
+                          "pillar": "curiosity"}]}
+        self.assertIn("posts[0] missing 'date'", validate(obj))
+
+
 if __name__ == "__main__":
     unittest.main()

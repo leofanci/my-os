@@ -31,12 +31,12 @@ WRITES_TABLE = """| What | Command |
 | Venture intake file | `create-intake --project <slug>` or `update-intake --project <slug>` (--text or stdin) |
 | Technical doc | `create-technical --project <slug>` or `update-technical --project <slug>` (--text or stdin) |
 | Tab subsections (per project) | `get-subsections --project <slug>` · `update-subsections --project <slug> --doc intake/technical/roadmap --subsections "A,B,C"` · `add-subsection --project <slug> --doc technical --title "Prompt"` · `update-validation-tab --project <slug> --subsections "Stage & evidence,Market"` |
-| Strategy memo | `create-memo --project <slug> --type <memo-type> [--summary] [--recommendation]` |
+| Strategy memo | `create-memo --project <slug> --type <memo-type> [--summary] [--recommendation]` · `update-memo --project <slug> --type <memo-type> --version <N> [--summary] [--recommendation]` (patches that version in place — does not create a new one) · `delete-memo --project <slug> --type <memo-type> --version <N>` |
 | Experiment | `create-experiment --project <slug> --assumption "..."` |
 | Product scaffold | `create-product --project <slug> --slug <prod-slug> [--name] [--type]` |
-| Roadmap feature | `add-feature --product <prod-slug> --title "..." [--section Next]` |
+| Roadmap feature | `add-feature --product <prod-slug> --title "..." [--section Next]` · `update-feature --product <prod-slug> --id <feature-id> [--title] [--why] [--section] [--priority]` · `delete-feature --product <prod-slug> --id <feature-id>` |
 | Roadmap (full replace) | `update-roadmap --product <prod-slug>` (--text or stdin) |
-| Experiment patch | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` |
+| Experiment patch/delete | `update-experiment --project <slug> --stem <stem> [--success-criteria] [--kill-criteria]` · `delete-experiment --project <slug> --stem <stem>` |
 | Post slide row | `add-slide --id <post-id> --overlay "<text>"` |
 | Profile name/topic | `update-profile --slug <slug> [--name] [--topic]` |
 | Brief spec (one of several) | `create-brief-spec` / `update-brief-spec --profile <slug> [--id br2] [--platforms ...] --text "..."` |
@@ -44,35 +44,33 @@ WRITES_TABLE = """| What | Command |
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
-| Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` |
+| Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` (unscheduled by default — add `--dates` ONLY if the user explicitly asks posts to be dated/scheduled now) |
 
 Banned: direct file writes, `set-brief`, `patch-brief`, editing `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md` by hand."""
 
 WRITE_GATE = """## Write gate (mandatory — same pipeline as posts)
-Posts never duplicate full copy in chat: ideas land as `planned` slots in Posts UI → user reviews there → brief → publish.
-Planning artifacts follow the same split — **routing in chat, content once in files, review in dashboard**:
+Routing in chat, content once in files, review in dashboard — same split as posts (ideas → `planned` slots → brief → publish).
 
-1. **Propose (chat — lean)** — tab routing only: which blocks → which `prN.sec0X`, which osctl command. Short bullets or one-line summaries per item. **Do not paste full memo/intake/roadmap/technical text in chat** — that duplicates tokens and the dashboard render.
-2. **Review** — user confirms routing ("yes", "sec05 not sec02", "save positioning only"). Content review happens in the left panel (memos default `proposed`, experiments `planned`).
-3. **Commit** — osctl writes full content **once**, straight into the target file. One-sentence confirmation naming tab id — never echo the artifact body back in chat.
+1. **Propose (chat — lean)** — which blocks → which `prN.sec0X` → which osctl command, short bullets only. **Do not paste full memo/intake/roadmap/technical text in chat** — duplicates tokens and dashboard render.
+2. **Review** — user confirms routing ("yes", "sec05 not sec02"). Content review happens in the left panel (memos default `proposed`, experiments `planned`).
+3. **Commit** — osctl writes full content **once**. One-sentence confirmation naming tab id only.
 
 Applies to: memos, experiments, intake/technical edits, roadmap features, `generate-plan`, activities, milestones.
-Never batch-commit multiple tabs from one paste unless user explicitly says **save all tabs now**.
-If user already gave explicit routing ("put architecture in Technical"), skip re-proposing routing — still no full body in chat, commit once via osctl."""
+Never batch-commit multiple tabs from one paste unless user says **save all tabs now**. If routing was already given explicitly, skip re-proposing it — still no full body in chat, commit once."""
 
 TAB_ROUTING = """## Tab routing (six project tabs — not roadmap rows)
 Source: `core.project_schemas.MEMO_SECTION` + `core.ids.PROJECT_SECTION_LAYOUT`. Fill tabs: routing plan first (WRITE GATE), one tab per commit.
 
 | sec | Tab | Content | osctl | Never |
 |-----|-----|---------|-------|-------|
-| sec01 | Overview | What it is (one line), assessment + launch memos | `update-intake`, `create-memo` assessment/launch | full spec, roadmap |
-| sec02 | Problem & validation | Stage, market, resources, goals, evidence + problem-validation memo | `update-intake`, `create-memo problem-validation` | What it is, architecture, features |
-| sec03 | Experiments | experiment JSON (user asked) | `create-experiment`, `update-experiment` | calendar, memos |
-| sec04 | Positioning & pricing | positioning, pricing, competitors, icp, channels memos | `create-memo --type <t>` | intake, roadmap |
+| sec01 | Overview | one-liner + assessment/launch memos | `update-intake`, `create-memo` assessment/launch | full spec, roadmap |
+| sec02 | Problem & validation | stage/market/resources/goals/evidence + problem-validation memo | `update-intake`, `create-memo problem-validation` | What it is, architecture, features |
+| sec03 | Experiments | experiment JSON (if asked) | `create-experiment`, `update-experiment` | calendar, memos |
+| sec04 | Positioning & pricing | positioning/pricing/competitors/icp/channels memos | `create-memo --type <t>` | intake, roadmap |
 | sec05 | Product | roadmap features under **Next** | `add-feature --section Next` | intake, technical |
-| sec06 | Technical | technical.md subsections (per-project list) | `update-technical`, `add-subsection --doc technical` | intake, validation |
+| sec06 | Technical | technical.md subsections (per-project) | `update-technical`, `add-subsection --doc technical` | intake, validation |
 | pf.sec00 | Profile Posts | post slots | `generate-plan`, `add-post` | project tabs |
-| vw02 | Calendar/Ops | user-confirmed scheduled work | `create-activity`, `create-milestone` | experiments, memos |"""
+| vw02 | Calendar/Ops | confirmed scheduled work | `create-activity`, `create-milestone` | experiments, memos |"""
 
 BRIEF_SPEC = """## Brief spec & voice (several per profile ok, `platforms:` tag info only)
 `brief-specs/br{N}.md` / `voices/vc{N}.md`. `get/update-brief-spec --id brN` (minimal-edit, default br1); `create-brief-spec` has no --id, mints next. Same for voice (vc1).
@@ -85,7 +83,9 @@ POST_BRIEFS = """## Post briefs (NL — never ask user for JSON)
 
 MUTATION_CMDS = (
     "create-project, create-profile, create-channel, create-intake, create-technical, create-memo, "
-    "create-experiment, update-experiment, create-product, add-feature, update-roadmap, "
+    "update-memo, delete-memo, "
+    "create-experiment, update-experiment, delete-experiment, create-product, add-feature, "
+    "update-feature, delete-feature, update-roadmap, "
     "update-intake, update-technical, get-subsections, update-subsections, add-subsection, "
     "update-validation-tab, "
     "add-slide, add-post, create-activity, create-milestone, mark-done, update-post, set-status, "

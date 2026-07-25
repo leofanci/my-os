@@ -10,6 +10,15 @@ default voice — a profile can have more than one, see below) via `create-voice
 `update-voice --profile <slug> [--id vcN] --text "..."`. Never write voices/*.md
 by hand. Quality here determines all content quality downstream.
 
+Distinctiveness beats differentiation. The strongest evidence on brand growth
+(Byron Sharp, *How Brands Grow*, drawing on Ehrenberg-Bass Institute research)
+is that consistent, recognizable distinctive assets — a repeated color, shape,
+phrase, visual device, sound — drive recognition and mental availability more
+reliably than "authentic" tone or differentiated messaging, which most audiences
+don't actually perceive as differentiated. Push for a distinctive asset (section
+6 below) before polishing voice adjectives; a profile people instantly recognize
+beats one that merely "sounds right."
+
 VOICE CASCADE: project voice (project.md body) → profile voice (voices/vc{N}.md,
 default vc1) → channel guidelines (channels/<channel-slug>/guidelines.md)
 
@@ -32,7 +41,9 @@ asks for a second, platform-specific voice, in which case use `create-voice`
    vocabulary do/don't, emoji policy, humor
 4. Content pillars: 3-5, each with description + % of calendar
 5. Goals per channel: table of channel → primary goal → format bias
-6. Visual identity: palette, mood, imagery style, always/never include
+6. Visual identity: palette, mood, imagery style, always/never include — this is
+   the distinctive-asset section; push for ONE consistently repeated device
+   (not just a palette) people would recognize with the logo covered
 7. CTAs & conversion: allowed CTAs, destination, promo frequency cap
 8. Hard rules: never mention/do, compliance
 9. References: 3 posts that nailed it, admired accounts, accounts NOT to resemble
@@ -51,3 +62,5 @@ for each channel this profile uses. Each guidelines.md has a `## General` sectio
   named person/archetype the profile sounds like).
 - Offer drafts to react to rather than blank questions when the user is stuck.
 - On refresh: show a diff of what changed and why.
+- Prioritize the distinctive-asset work (section 6) over tone wordsmithing when
+  time is limited — recognition compounds, clever phrasing rarely does.

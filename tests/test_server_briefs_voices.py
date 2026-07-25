@@ -89,7 +89,7 @@ class BriefsVoicesRoutesTest(unittest.TestCase):
         self.assertTrue(deleted["deleted"])
 
     def test_profile_update_still_works_and_is_not_swallowed_by_new_routes(self):
-        out = _post("/api/profile/demo/update", {"name": "Demo Renamed", "topic": "film"})
+        out = _post("/api/profile/demo/update", {"name": "Demo Renamed", "topic": "demo-topic"})
         self.assertTrue(out["ok"])
         self.assertEqual(fileops.read_profile("demo")["name"], "Demo Renamed")
 

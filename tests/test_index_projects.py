@@ -12,7 +12,7 @@ class TestTreeWalk(unittest.TestCase):
         proj = root / "projects" / "acme"
         write(proj / "project.md", "---\nname: Acme\nkind: venture\npriority: primary\nhours_per_week: 12\n---\nvoice")
         prof = proj / "profiles" / "demo"
-        write(prof / "profile.md", "---\nname: Demo\ntopic: cinema\n---\nvoice")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: demo-topic\n---\nvoice")
         write(prof / "channels" / "demo-tiktok" / "channel.md", "---\nplatform: tiktok\n---\nrules")
         write(prof / "content" / "plan-2026-07.json", json.dumps({"posts": [
             {"id": "post-001", "date": "2026-07-01", "pillar": "curiosity", "status": "planned",
@@ -72,13 +72,13 @@ class TestTreeWalk(unittest.TestCase):
             prof = root / "projects" / "acme" / "profiles" / "demo"
             write(prof / "content" / "plan-2026-07.json", json.dumps({"posts": [
                 {"id": "post-001", "date": "2026-07-01", "pillar": "curiosity",
-                 "working_title": "Why films matter", "concept": "open strong",
+                 "working_title": "Topic A angle", "concept": "open strong",
                  "status": "planned", "channels": ["demo-tiktok"]}]}))
             index.build(root)
             con = sqlite3.connect(root / "database" / "data" / "os.db")
             row = con.execute(
                 "SELECT working_title, concept FROM posts WHERE id='post-001'").fetchone()
-            self.assertEqual(row, ("Why films matter", "open strong"))
+            self.assertEqual(row, ("Topic A angle", "open strong"))
 
     def test_unknown_channel_slug_is_pruned_not_fatal(self):
         with tempfile.TemporaryDirectory() as tmp:

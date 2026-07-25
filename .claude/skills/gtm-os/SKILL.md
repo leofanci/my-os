@@ -22,6 +22,7 @@ Decision memos: 2-4 options, pros/cons, one recommendation. Tab map + write gate
 | Test design | experiment-design |
 | Test results | experiment-review |
 | ICP | icp-research |
+| Market size / SAM/SOM | market-sizing |
 | Positioning | positioning |
 | Competitors | competitor-scan |
 | Pricing | pricing-strategy |
