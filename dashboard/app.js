@@ -266,7 +266,7 @@ const fsel = (name,opts,val,osId=null) => `<select name="${name}"${osId?` data-o
 const fta = (name,val='',rows=5,extra='',osId=null) => `<textarea name="${name}" rows="${rows}"${osId?` data-os-id="${esc(osId)}"`:""} ${extra}>${esc(val)}</textarea>`;
 // channel picker: checkboxes from the profile's channels (no manual slug typing)
 const fchannels = (channels, selected=[]) => (channels && channels.length)
-  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${PLATFORM_ICON[c.platform]||"⌗"}</span> ${esc(c.name||c.slug)}</label>`).join("")}</div>`
+  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${PLATFORM_ICON[c.platform]||"⌗"}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
   : `<div style="font-size:12.5px;color:var(--dim)">No channels yet — add one in Setup first.</div>`;
 const checkedChannels = root => [...root.querySelectorAll(".chanbox:checked")].map(b=>b.value).join(",");
 const mentionBare = c => {
@@ -396,7 +396,7 @@ async function renderRail(){
       const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
       const dot = ["var(--teal)","#5B84C4","#8E6FC0","var(--amber)"][pi%4];
       const channelsBlock = prof.channels.length ? `<div class="kid" style="margin-top:1px;margin-bottom:2px">
-        ${prof.channels.map(ch=>`<a data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;flex-wrap:wrap"><span style="opacity:.5">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(ch.name||ch.platform)}</a>`).join("")}
+        ${prof.channels.map(ch=>`<a data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}" style="display:flex;align-items:center;gap:6px;cursor:pointer;flex-wrap:wrap"><span style="opacity:.5">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(PLAT_NAME[ch.platform]||ch.platform)}</a>`).join("")}
         <a data-new-channel="${esc(prof.slug)}" style="color:var(--navy)!important;font-weight:normal!important">＋ Channel</a>
       </div>` : ``;
       return `<a data-profile="${esc(prof.slug)}" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:10px;text-decoration:none;cursor:pointer;flex-wrap:wrap">
@@ -1425,7 +1425,7 @@ async function renderProfile(slug, initChanFilter){
   const SELECTED = new Set();  // post ids ticked for bulk actions
   const chanSection = `<div class="pcard" style="margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${PLATFORM_ICON[ch.platform]||"⌗"} ${titledWithId(ch.name||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
+      ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${PLATFORM_ICON[ch.platform]||"⌗"} ${titledWithId(PLAT_NAME[ch.platform]||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
       <button class="btn" id="addChanBtn" style="font-size:12px;padding:5px 11px;border-radius:20px">＋ Add channel</button>
     </div>
     ${profData.topic?`<div style="margin-top:8px;font-size:12px;color:var(--dim)">${esc(profData.topic)}</div>`:""}
@@ -2297,7 +2297,7 @@ async function renderChannelSetup(channelSlug, profileSlug){
   try{ gl=await api(`/api/channel/${channelSlug}/guidelines`); }catch(_){}
   const platOpts=[["instagram","Instagram"],["tiktok","TikTok"],["x","X / Twitter"],["linkedin","LinkedIn"],["youtube","YouTube"],["facebook","Facebook"]];
   const crumb=profNode.name||profileSlug||"Back";
-  $("#main").innerHTML=`${pageHeader(`${PLATFORM_ICON[ch.platform]||"⌗"} ${ch.name||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
+  $("#main").innerHTML=`${pageHeader(`${PLATFORM_ICON[ch.platform]||"⌗"} ${PLAT_NAME[ch.platform]||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
     <div class="scroll"><div class="fpage">
       ${flabel("Platform")}${fsel("platform",platOpts,ch.platform||"instagram")}
       ${flabel("Handle (optional)")}${finput("handle",ch.handle||"",'placeholder="@handle"')}
@@ -2512,7 +2512,7 @@ async function renderConfirmDeleteProfile(slug){
 async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const profNode=_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{channels:[]};
   const ch=(profNode.channels||[]).find(c=>c.slug===channelSlug)||{};
-  const name=ch.name||ch.platform||channelSlug;
+  const name=PLAT_NAME[ch.platform]||ch.platform||channelSlug;
   confirmPage("Delete channel",`Delete the ${name} channel? Guidelines will be lost.`,async()=>{
     try{ await jpost(`/api/channel/${channelSlug}/delete`,{}); toast("Channel deleted ✓"); await renderRail(); navigate(`#/profile/${profileSlug}`); }
     catch(e){ toast("✗ "+e.message); }
@@ -2790,7 +2790,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       for (const prof of (p.profiles||[])) {
         out.push({ type:"profile", slug:prof.slug, osId:OSID.prof(prof.slug), name:prof.name, meta:"profile" });
         for (const ch of (prof.channels||[]))
-          out.push({ type:"channel", slug:ch.slug, osId:OSID.chan(ch.slug), name:(ch.name||ch.platform), meta:(ch.platform||"channel") });
+          out.push({ type:"channel", slug:ch.slug, osId:OSID.chan(ch.slug), name:(PLAT_NAME[ch.platform]||ch.platform), meta:(ch.platform||"channel") });
       }
     }
     for (const post of _POSTS) {
