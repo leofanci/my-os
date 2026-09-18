@@ -1,0 +1,1 @@
+"""core — shared data model: IDs, artifact schemas, brief-spec helpers."""

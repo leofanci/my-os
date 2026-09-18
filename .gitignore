@@ -1,0 +1,79 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+*.env
+*.env.*
+.envrc
+.direnv/
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+id_rsa
+id_ed25519
+credentials.json
+credentials.*.json
+secrets.json
+secrets.*
+auth.json
+service-account*.json
+.netrc
+.npmrc
+.pypirc
+.aws/
+.ssh/
+*.kdbx
+*.ovpn
+*.mobileprovision
+*.tfstate
+*.tfstate.*
+.terraform/
+.vercel/
+.netlify/
+.wrangler/
+.agents/
+.codex/
+
+# Derived / disposable
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.log
+*.bak
+*.backup
+*.orig
+*~
+*.zip
+*.tar
+*.tgz
+*.tar.gz
+database/data/id_registry.json
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS noise
+.DS_Store
+
+# Local / personal machine config
+.claude/settings.local.json
+.superpowers/
+.remember/
+
+# Compiled native webview cache (built on first launch)
+.cache/
+
+# User project content — keep the folder structure, not the private data
+/projects/*
+!/projects/.gitkeep
+.tokensave/
+os.db
+dashboard/os.db
+
+# User portfolio content — real operational data, 100% untracked
+/portfolio/

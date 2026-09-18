@@ -1,0 +1,209 @@
+:root {
+  /* Color system. Text values meet WCAG AA on primary surfaces. */
+  --ui-color-canvas: #F3F2EF;
+  --ui-color-surface: #FFFFFF;
+  --ui-color-surface-subtle: #F8F7F4;
+  --ui-color-surface-muted: #FAF9F7;
+  --ui-color-rail: #F7F7F5;
+  --ui-color-nav-active: rgba(37, 35, 31, .075);
+  --ui-color-text: #25231F;
+  --ui-color-text-secondary: #625E57;
+  --ui-color-text-muted: #706A62;
+  --ui-color-accent: #B54A2B;
+  --ui-color-accent-hover: #A94328;
+  --ui-color-accent-soft: rgba(181, 74, 43, .10);
+  --ui-color-success: #2F7159;
+  --ui-color-success-soft: rgba(47, 113, 89, .11);
+  --ui-color-warning: #8A5A16;
+  --ui-color-warning-soft: rgba(138, 90, 22, .12);
+  --ui-color-danger: #A13F2A;
+  --ui-color-danger-soft: rgba(161, 63, 42, .10);
+  --ui-color-danger-border: rgba(161, 63, 42, .28);
+  --ui-color-border-subtle: rgba(37, 35, 31, .09);
+  --ui-color-border: rgba(37, 35, 31, .14);
+  --ui-color-neutral-soft: rgba(37, 35, 31, .055);
+  --ui-color-hover: rgba(37, 35, 31, .045);
+  --ui-color-terminal: #20201F;
+  --ui-color-terminal-text: #CFD3DC;
+  --ui-color-terminal-muted: #8A90A0;
+  --ui-color-terminal-surface: rgba(255, 255, 255, .06);
+  --ui-color-terminal-hover: rgba(255, 255, 255, .11);
+  --ui-color-terminal-control: rgba(255, 255, 255, .08);
+  --ui-color-toast: rgba(27, 31, 39, .92);
+
+  /* Semantic item and workflow colors. */
+  --ui-status-idea: var(--ui-color-warning);
+  --ui-status-draft: #7655AA;
+  --ui-status-draft-soft: rgba(118, 85, 170, .14);
+  --ui-status-ready: var(--ui-color-accent);
+  --ui-status-published: var(--ui-color-success);
+  --ui-status-archived: var(--ui-color-text-muted);
+  --ui-status-archived-soft: rgba(120, 114, 106, .12);
+  --ui-kind-post: var(--ui-color-accent);
+  --ui-kind-activity: #456AA5;
+  --ui-kind-activity-soft: rgba(69, 106, 165, .13);
+  --ui-kind-experiment: #A04773;
+  --ui-kind-experiment-soft: rgba(160, 71, 115, .13);
+  --ui-kind-milestone: #596779;
+  --ui-kind-milestone-soft: rgba(89, 103, 121, .13);
+  --ui-kind-feature: #1B756D;
+  --ui-kind-feature-soft: rgba(27, 117, 109, .13);
+
+  /* Stable project identity colors used by navigation dots. */
+  --ui-project-color-1: #B54A2B;
+  --ui-project-color-2: #456AA5;
+  --ui-project-color-3: #7655AA;
+  --ui-project-color-4: #2F7159;
+
+  /* Typography. Native SF Pro keeps macOS desktop rendering precise. */
+  --ui-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+  --ui-type-micro: 10px;
+  --ui-type-caption: 11px;
+  --ui-type-label: 12px;
+  --ui-type-control: 13px;
+  --ui-type-body: 14px;
+  --ui-type-subtitle: 16px;
+  --ui-type-title: 22px;
+  --ui-line-tight: 1.15;
+  --ui-line-control: 1.3;
+  --ui-line-body: 1.5;
+  --ui-weight-regular: 400;
+  --ui-weight-medium: 500;
+  --ui-weight-semibold: 600;
+  --ui-weight-title: 650;
+
+  /* 4px spacing scale. */
+  --ui-space-0: 0;
+  --ui-space-0-5: 2px;
+  --ui-space-1: 4px;
+  --ui-space-1-25: 5px;
+  --ui-space-1-5: 6px;
+  --ui-space-2: 8px;
+  --ui-space-2-25: 9px;
+  --ui-space-2-5: 10px;
+  --ui-space-2-75: 11px;
+  --ui-space-3: 12px;
+  --ui-space-3-25: 13px;
+  --ui-space-3-5: 14px;
+  --ui-space-4: 16px;
+  --ui-space-5: 20px;
+  --ui-space-5-5: 22px;
+  --ui-space-6: 24px;
+  --ui-space-6-5: 26px;
+  --ui-space-8: 32px;
+
+  /* Shape and elevation. Shadows indicate overlap only. */
+  --ui-radius-inline: 4px;
+  --ui-radius-small: 6px;
+  --ui-radius-control: 7px;
+  --ui-radius-card: 8px;
+  --ui-radius-calendar: 9px;
+  --ui-radius-menu: 10px;
+  --ui-radius-panel: 12px;
+  --ui-radius-pill: 999px;
+  --ui-shadow-flat: none;
+  --ui-shadow-sticky: 0 1px 2px rgba(37, 35, 31, .08);
+  --ui-shadow-menu: 0 8px 24px rgba(37, 35, 31, .12);
+  --ui-shadow-modal: 0 16px 48px rgba(37, 35, 31, .14);
+
+  /* Control and hit-target dimensions. */
+  --ui-control-dense: 28px;
+  --ui-control-default: 32px;
+  --ui-control-input: 36px;
+  --ui-control-prominent: 40px;
+  --ui-control-touch: 44px;
+  --ui-icon: 16px;
+  --ui-scrollbar-size: 8px;
+  --ui-rail-row: 30px;
+  --ui-project-dot: 7px;
+
+  /* Shell and reading geometry. */
+  --ui-titlebar-height: 28px;
+  --ui-shell-nav: 228px;
+  --ui-shell-nav-compact: 208px;
+  --ui-shell-nav-wide: 240px;
+  --ui-shell-assistant-default: 360px;
+  --ui-shell-assistant-min: 300px;
+  --ui-shell-assistant-max: 640px;
+  --ui-shell-assistant-compact: 300px;
+  --ui-shell-assistant-overlay-max: 400px;
+  --ui-shell-assistant-height-default: 380px;
+  --ui-shell-assistant-height-min: 220px;
+  --ui-shell-assistant-height-max: 720px;
+  --ui-shell-gap: 8px;
+  --ui-page-padding: 20px;
+  --ui-page-padding-wide: 24px;
+  --ui-reading-width: 760px;
+  --ui-form-width: 640px;
+  --ui-profile-width: 780px;
+  --ui-header-height: 72px;
+  --ui-terminal-collapsed: 34px;
+  --ui-terminal-open: 360px;
+  --ui-terminal-font-size: 12px;
+  --ui-calendar-day-min: 102px;
+  --ui-editor-min-height: 120px;
+  /* CSS media queries mirror these documented breakpoints because custom properties are not valid media-query operands. */
+  --ui-breakpoint-assistant-overlay: 1440px;
+  --ui-breakpoint-header-stack: 1100px;
+  --ui-breakpoint-wide: 1500px;
+
+  /* Motion. Operational rows never translate on hover. */
+  --ui-motion-fast: 120ms;
+  --ui-motion-standard: 160ms;
+  --ui-ease-standard: cubic-bezier(.2, 0, 0, 1);
+
+  /* Compatibility aliases for existing component code. */
+  --canvas: var(--ui-color-canvas);
+  --ink: var(--ui-color-text);
+  --ink2: var(--ui-color-text-secondary);
+  --dim: var(--ui-color-text-muted);
+  --navy: var(--ui-color-accent);
+  --navy-soft: var(--ui-color-accent-soft);
+  --graphite: var(--ui-color-text-secondary);
+  --graphite-soft: var(--ui-color-neutral-soft);
+  --sky: var(--ui-color-accent);
+  --sky-soft: var(--ui-color-accent-soft);
+  --teal: var(--ui-color-success);
+  --teal-soft: var(--ui-color-success-soft);
+  --amber: var(--ui-color-warning);
+  --amber-soft: var(--ui-color-warning-soft);
+  --ok: var(--ui-color-success);
+  --ok-soft: var(--ui-color-success-soft);
+  --glass: var(--ui-color-surface);
+  --glass2: var(--ui-color-surface);
+  --panel-chat: var(--ui-color-surface-subtle);
+  --gline: var(--ui-color-border-subtle);
+  --hair: var(--ui-color-border);
+  --shadow: var(--ui-shadow-menu);
+  --r-panel: var(--ui-radius-panel);
+  --r-card: var(--ui-radius-card);
+  --r-sm: var(--ui-radius-control);
+  --r-pill: var(--ui-radius-pill);
+  --disp: var(--ui-font-display);
+  --body: var(--ui-font-sans);
+  --s-idea: var(--ui-status-idea);
+  --s-draft: var(--ui-status-draft);
+  --s-ready: var(--ui-status-ready);
+  --s-published: var(--ui-status-published);
+  --s-archived: var(--ui-status-archived);
+  --k-post: var(--ui-kind-post);
+  --k-activity: var(--ui-kind-activity);
+  --k-activity-soft: var(--ui-kind-activity-soft);
+  --k-experiment: var(--ui-kind-experiment);
+  --k-experiment-soft: var(--ui-kind-experiment-soft);
+  --k-milestone: var(--ui-kind-milestone);
+  --k-milestone-soft: var(--ui-kind-milestone-soft);
+  --k-feature: var(--ui-kind-feature);
+  --k-feature-soft: var(--ui-kind-feature-soft);
+  --chat-w: var(--ui-shell-assistant-default);
+  --chat-h: var(--ui-shell-assistant-height-default);
+}
+
+@media (pointer: coarse) {
+  :root {
+    --ui-control-default: var(--ui-control-touch);
+    --ui-control-input: var(--ui-control-touch);
+  }
+}

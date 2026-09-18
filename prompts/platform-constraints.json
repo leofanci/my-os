@@ -1,0 +1,9 @@
+{
+  "_comment": "Static platform norms injected into brief jobs. Edit freely; not indexed.",
+  "instagram": { "formats": ["reel", "carousel", "single_image", "story"], "caption_max": 2200, "hashtags_max": 30, "notes": "Reels 9:16 up to 90s; carousels up to 10 slides 4:5." },
+  "tiktok":    { "formats": ["short"], "caption_max": 2200, "hashtags_max": 10, "notes": "9:16 video, 15-60s sweet spot; hook in first 1-2s." },
+  "x":         { "formats": ["text", "thread"], "caption_max": 280, "hashtags_max": 2, "notes": "Lead with the hook; threads for depth." },
+  "linkedin":  { "formats": ["text", "single_image", "carousel"], "caption_max": 3000, "hashtags_max": 5, "notes": "Professional tone; first 2 lines show before 'see more'." },
+  "youtube":   { "formats": ["short"], "caption_max": 5000, "hashtags_max": 15, "notes": "Shorts 9:16 up to 60s." },
+  "facebook":  { "formats": ["single_image", "reel", "text"], "caption_max": 63206, "hashtags_max": 5, "notes": "Keep it short; link in first comment." }
+}

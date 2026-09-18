@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">myOS Pinwheel logo</title>
+  <desc id="desc">Four rounded modules turning around a quiet center.</desc>
+  <defs>
+    <linearGradient id="bg" x1="160" y1="96" x2="864" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D86A47"/>
+      <stop offset="1" stop-color="#A53A24"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <g fill="#FFF">
+    <rect x="448" y="188" width="128" height="292" rx="64"/>
+    <rect x="544" y="448" width="292" height="128" rx="64" opacity=".86"/>
+    <rect x="448" y="544" width="128" height="292" rx="64" opacity=".72"/>
+    <rect x="188" y="448" width="292" height="128" rx="64" opacity=".58"/>
+  </g>
+  <circle cx="512" cy="512" r="62" fill="#8E301E"/>
+</svg>
