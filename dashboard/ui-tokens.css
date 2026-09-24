@@ -126,9 +126,11 @@
   --ui-shell-nav-wide: 240px;
   --ui-shell-assistant-default: 360px;
   --ui-shell-assistant-min: 300px;
-  --ui-shell-assistant-max: 640px;
+  --ui-shell-assistant-max: 1200px;
+  /* Chat may widen until the center workspace would drop below this. */
+  --ui-shell-center-min: 440px;
   --ui-shell-assistant-compact: 300px;
-  --ui-shell-assistant-overlay-max: 400px;
+  --ui-shell-assistant-overlay-max: 1200px;
   --ui-shell-assistant-height-default: 380px;
   --ui-shell-assistant-height-min: 220px;
   --ui-shell-assistant-height-max: 720px;

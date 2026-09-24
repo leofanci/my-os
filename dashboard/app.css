@@ -201,6 +201,19 @@
   .dock-bar .sm{font-size:10.5px;color:var(--dim);display:block;margin-top:3px}
   .term-btn{border:0;background:rgba(255,255,255,.6);color:var(--dim);border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;line-height:1}
   .term-btn:hover{background:#fff;color:var(--ink)}
+  .chat-list{position:absolute;top:48px;left:0;right:0;z-index:7;max-height:60%;overflow:auto;background:var(--panel-chat);border-bottom:1px solid var(--hair);box-shadow:0 8px 16px rgba(0,0,0,.06);padding:6px}
+  .chat-list[hidden]{display:none}
+  .chat-head{flex:1;min-width:0}
+  .chat-head b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat-list .cl-row{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:12.5px}
+  .chat-list .cl-row:hover{background:#fff}
+  .chat-list .cl-row.active{font-weight:700}
+  .chat-list .cl-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chat-list .cl-when{font-size:10.5px;color:var(--dim);flex-shrink:0}
+  .chat-list .cl-del{border:0;background:none;color:var(--dim);cursor:pointer;padding:0 2px}
+  .chat-list .cl-del:hover{color:var(--ink)}
+  .chat-list .cl-del.armed{color:var(--ui-color-danger);font-weight:700;font-size:11px}
+  .chat-list .cl-empty{padding:8px 10px;font-size:12px;color:var(--dim)}
   /* tool-use activity chip in chat */
   .tool-chip{align-self:flex-start;font:600 10.5px/1.2 var(--body);background:var(--graphite-soft);color:var(--ink2);border:1px solid var(--hair);border-radius:12px;padding:5px 10px}
   .tool-summary{cursor:pointer;opacity:.55;transition:opacity .15s}

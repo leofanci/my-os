@@ -1,4 +1,4 @@
-"""chat_session.py — one persistent Claude Code session for the dashboard run.
+"""chat_session.py — one Claude Code session per saved dashboard chat.
 
 Runs `claude` in stream-json mode. Bash is restricted to the osctl CLI, so the
 agent can ONLY mutate GTM state via `python -m dashboard.osctl`; Read is always
@@ -68,7 +68,7 @@ APP_TOOLS = ["Glob", "Grep"]
 # token-lean policy.
 WEB_TOOLS = ["WebSearch", "WebFetch"]
 
-# No turn cap: session persists via --resume for the life of the dashboard run.
+# No turn cap: a chat persists via --resume until the user deletes it.
 # Full state snapshot + skill body inject on session start only (server); resume
 # turns rely on Claude session history + osctl on demand.
 
@@ -95,6 +95,16 @@ class ChatSession:
         self._skill_explicit = False  # True when user tagged @/skill (Sonnet gate)
         self._pending_skill = None
         self._pending_skill_explicit = False
+
+    @classmethod
+    def restore(cls, repo_dir, rail, rec, **kw):
+        """Rebuild a saved chat (chat_store record) so the next turn --resumes it."""
+        sess = cls(repo_dir=repo_dir, rail=rail, session_id=rec["id"], **kw)
+        sess._started = bool(rec.get("started"))
+        sess._turn_count = int(rec.get("turn_count") or 0)
+        sess._last_skill = rec.get("last_skill")
+        sess._skill_explicit = bool(rec.get("skill_explicit"))
+        return sess
 
     def is_fresh(self):
         """True before the first turn of this session id (no --resume yet)."""

@@ -2824,7 +2824,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const cssValue = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   const cssPx = (name, fallback) => parseInt(cssValue(name, ""), 10) || fallback;
   const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 300);
-  const CHAT_W_MAX = cssPx("--ui-shell-assistant-max", 640);
+  const CHAT_W_MAX = cssPx("--ui-shell-assistant-max", 1200);
+  const CENTER_MIN = cssPx("--ui-shell-center-min", 440);
   const CHAT_W_DEFAULT = cssPx("--ui-shell-assistant-default", 360);
   const CHAT_H_MIN = cssPx("--ui-shell-assistant-height-min", 220);
   const CHAT_H_MAX = cssPx("--ui-shell-assistant-height-max", 720);
@@ -2843,8 +2844,18 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     chatH = Math.min(CHAT_H_MAX, Math.max(CHAT_H_MIN, parseInt(localStorage.getItem("chatH"), 10) || CHAT_H_DEFAULT));
     localStorage.setItem("uiLayoutVersion", UI_LAYOUT_VERSION);
   } catch {}
+  // Widest the chat can go right now: keep the center workspace >= CENTER_MIN.
+  // Chat + center width is constant in every layout, so measure both.
+  function chatWMax(){
+    const dock = document.getElementById("chat-dock");
+    const center = document.querySelector(".right-col");
+    const shared = (dock ? dock.getBoundingClientRect().width : 0)
+                 + (center ? center.getBoundingClientRect().width : window.innerWidth);
+    return Math.max(CHAT_W_MIN, Math.min(CHAT_W_MAX, Math.floor(shared - CENTER_MIN)));
+  }
   function applyChatSize(){
-    appEl.style.setProperty("--chat-w", chatW + "px");
+    // chatW is the saved preference; render it clamped to the current window.
+    appEl.style.setProperty("--chat-w", Math.min(chatW, chatWMax()) + "px");
     appEl.style.setProperty("--chat-h", chatH + "px");
   }
   function applyChat(){
@@ -2871,7 +2882,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const onMove = e => {
       if (!dragging) return;
       const pt = e.touches ? e.touches[0] : e;
-      if (axis === "x") chatW = clamp(startSize + (start - pt.clientX), CHAT_W_MIN, CHAT_W_MAX);
+      if (axis === "x") chatW = clamp(startSize + (start - pt.clientX), CHAT_W_MIN, chatWMax());
       else chatH = clamp(startSize + (start - pt.clientY), CHAT_H_MIN, CHAT_H_MAX);
       applyChatSize();
       e.preventDefault();
@@ -2896,7 +2907,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const pt = e.touches ? e.touches[0] : e;
       dragging = true;
       start = axis === "x" ? pt.clientX : pt.clientY;
-      startSize = axis === "x" ? chatW : chatH;
+      startSize = axis === "x" ? Math.min(chatW, chatWMax()) : chatH;
       handle.classList.add("active");
       document.body.classList.add("chat-resizing");
       if (axis === "y") document.body.classList.add("chat-resize-v");
@@ -2910,35 +2921,95 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     handle.addEventListener("touchstart", onStart, { passive: false });
   })();
   applyChat();
+  window.addEventListener("resize", applyChatSize);
   document.getElementById("chat-move").onclick   = () => { chatPos = chatPos === "bl" ? "right" : "bl"; chatHidden = false; applyChat(); };
   document.getElementById("chat-hide").onclick   = () => { chatHidden = true; applyChat(); };
   document.getElementById("chat-reopen").onclick = () => { chatHidden = false; applyChat(); };
-  document.getElementById("chat-clear").onclick  = () => {
-    history.length = 0; stream.innerHTML = ""; refreshChatStatus("Ready");
-    try { localStorage.removeItem("chatHistory"); localStorage.removeItem("chatSessionId"); } catch {}
-    fetch("/api/chat-reset", { method: "POST" }).catch(() => {});
-  };
+  // ── saved chats: each is its own claude session (server chat_store) ─────
+  // Active chat id survives reloads; its transcript is loaded from the server.
+  let activeChatId = null;
+  let activeChatProject = null;   // project the chat is bound to (see projectForTurn)
+  try { activeChatId = localStorage.getItem("chatActiveId") || null; } catch {}
+  const chatListEl = document.getElementById("chat-list");
+  const chatTitleEl = document.getElementById("chat-title");
 
-  // ── session sync: restore history if server session matches, else wipe ───
-  function saveHistory() {
-    try { localStorage.setItem("chatHistory", JSON.stringify(history)); } catch {}
-  }
-  fetch("/api/chat-session").then(r => r.json()).then(({ session_id }) => {
-    if (!session_id) return; // no session yet — nothing to restore
+  function setActiveChat(id, title, project){
+    activeChatId = id || null;
+    activeChatProject = (id && project) || null;
+    chatTitleEl.textContent = (id && title) || "New chat";
+    chatTitleEl.title = chatTitleEl.textContent;
     try {
-      const storedId  = localStorage.getItem("chatSessionId");
-      const storedLog = localStorage.getItem("chatHistory");
-      if (storedId === session_id && storedLog) {
-        const msgs = JSON.parse(storedLog);
-        msgs.forEach(m => { history.push(m); addMsg(m.role, m.content); });
-      } else {
-        // server session changed (restart) — clear stale UI history
-        localStorage.removeItem("chatHistory");
-        localStorage.removeItem("chatSessionId");
-      }
-      localStorage.setItem("chatSessionId", session_id);
+      if (activeChatId) localStorage.setItem("chatActiveId", activeChatId);
+      else localStorage.removeItem("chatActiveId");
     } catch {}
-  }).catch(() => {});
+  }
+  function showChat(msgs){
+    history.length = 0; stream.innerHTML = "";
+    if (!msgs || !msgs.length) return showWelcome();
+    msgs.forEach(m => { history.push(m); addMsg(m.role, m.content); });
+  }
+  function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
+  async function openChat(id){
+    if (busy) return busyNote();
+    const rec = await fetch(`/api/chats/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (!rec) { setActiveChat(null); showChat([]); return; }
+    setActiveChat(rec.id, rec.title, rec.scope && rec.scope[0]); showChat(rec.messages);
+    statusEl.textContent = "Ready";
+  }
+  function newChat(){
+    if (busy) return busyNote();
+    setActiveChat(null); showChat([]); statusEl.textContent = "Ready";
+    fetch("/api/chat-reset", { method: "POST" }).catch(() => {});
+  }
+  function relTime(ts){
+    const d = (Date.now() / 1000) - (ts || 0);
+    if (d < 60) return "now";
+    if (d < 3600) return Math.floor(d / 60) + "m";
+    if (d < 86400) return Math.floor(d / 3600) + "h";
+    return Math.floor(d / 86400) + "d";
+  }
+  async function renderChatList(){
+    const { chats = [] } = await fetch("/api/chats").then(r => r.json()).catch(() => ({}));
+    chatListEl.innerHTML = chats.length ? chats.map(c =>
+      `<div class="cl-row${c.id === activeChatId ? " active" : ""}" data-chat="${esc(c.id)}">
+         <span class="cl-title">${esc(c.title || "New chat")}</span>
+         <span class="cl-when">${relTime(c.updated)}</span>
+         <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat">✕</button>
+       </div>`).join("") : `<div class="cl-empty">No saved chats yet.</div>`;
+  }
+  chatListEl.addEventListener("click", async e => {
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      e.stopPropagation();
+      if (busy && del.dataset.del === activeChatId) return busyNote();
+      if (!del.classList.contains("armed")) {
+        // Two-step delete: first click arms, second (within 3s) deletes.
+        del.classList.add("armed"); del.textContent = "Delete?";
+        setTimeout(() => { del.classList.remove("armed"); del.textContent = "✕"; }, 3000);
+        return;
+      }
+      await fetch(`/api/chats/${encodeURIComponent(del.dataset.del)}/delete`, { method: "POST" }).catch(() => {});
+      if (del.dataset.del === activeChatId) { setActiveChat(null); showChat([]); }
+      return renderChatList();
+    }
+    const row = e.target.closest("[data-chat]");
+    if (row) { chatListEl.hidden = true; openChat(row.dataset.chat); }
+  });
+  document.getElementById("chat-list-btn").onclick = async e => {
+    e.stopPropagation();
+    if (chatListEl.hidden) await renderChatList();
+    chatListEl.hidden = !chatListEl.hidden;
+  };
+  // Close the list on any outside click or Esc, like other dropdowns.
+  document.addEventListener("click", e => {
+    if (!chatListEl.hidden && !chatListEl.contains(e.target)) chatListEl.hidden = true;
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !chatListEl.hidden) chatListEl.hidden = true;
+  });
+  document.getElementById("chat-new").onclick = () => { chatListEl.hidden = true; newChat(); };
+  // Pre-saved-chats builds kept one transcript in localStorage; drop it.
+  try { localStorage.removeItem("chatHistory"); localStorage.removeItem("chatSessionId"); } catch {}
 
   // ── integrated terminal (lazy WS connect + PTY spawn on first open) ───────
   let term, termSock, termFit;
@@ -3180,6 +3251,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── chat ─────────────────────────────────────────────────────────────────
   const history = [];
   let busy = false;
+  if (activeChatId) openChat(activeChatId);   // restore last open saved chat
   let chatAbort = null;   // AbortController for the in-flight /api/ask stream
 
   // ESC stops the current turn: abort the SSE stream client-side AND tell the
@@ -3336,6 +3408,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     }
     for (const id of pastedCanonicalIds(text)) {
       const slug = project(IdReg.resolve(id)?.ref?.project);
+      if (slug) return slug;
+    }
+    // A saved chat stays with the project it started in; browsing elsewhere
+    // does not move it. Only an explicit reference above switches projects.
+    if (activeChatProject) {
+      const slug = project(activeChatProject);
       if (slug) return slug;
     }
     if (STATE.project) {
@@ -3534,7 +3612,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
 
     const fileNote = attachedFiles.length ? ` [+${attachedFiles.length} file${attachedFiles.length>1?"s":""}]` : "";
     history.push({ role: "user", content: text });
-    addMsg("user", text + fileNote);
+    const userEl = addMsg("user", text + fileNote).parentElement;
 
     const projectSlug = projectForTurn(text);
     const ctx = await buildContext(text);
@@ -3549,6 +3627,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     try {
       const payload = { messages: [{ role: "user", content: text }], context: ctx };
       if (projectSlug) payload.project_slug = projectSlug;
+      if (activeChatId) payload.chat_id = activeChatId;
       const resp = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3575,6 +3654,19 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
           if (raw === "[DONE]") break;
           try {
             const obj = JSON.parse(raw);
+            if (obj.chat_id) {
+              // Server started a different chat (project scope changed): old one stays saved.
+              if (activeChatId && obj.chat_id !== activeChatId) {
+                // Show only what the new chat holds; the old chat is still in ☰.
+                while (stream.firstChild && stream.firstChild !== userEl) stream.removeChild(stream.firstChild);
+                history.splice(0, history.length - 1);
+                const note = document.createElement("div");
+                note.className = "tool-chip";
+                note.textContent = `↺ New chat for ${obj.project || "all projects"}. Previous chat saved in ☰`;
+                stream.insertBefore(note, userEl);
+              }
+              setActiveChat(obj.chat_id, obj.title, obj.project);
+            }
             if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
@@ -3588,19 +3680,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         }
       }
 
-      if (full) {
-        history.push({ role: "assistant", content: full });
-        // Persist session ID on first completed turn (session created by /api/ask)
-        fetch("/api/chat-session").then(r => r.json()).then(({ session_id }) => {
-          if (session_id) try { localStorage.setItem("chatSessionId", session_id); } catch {}
-        }).catch(() => {});
-        saveHistory();
-      }
+      if (full) history.push({ role: "assistant", content: full });
       await refreshChatStatus("Ready");
     } catch(e) {
       if (e.name === "AbortError") {
         bubble.innerHTML = formatChatText(full ? full + "  ⏹ stopped" : "⏹ stopped");
-        if (full) { history.push({ role: "assistant", content: full }); saveHistory(); }
+        if (full) history.push({ role: "assistant", content: full });
         statusEl.textContent = "Stopped";
       } else {
         bubble.innerHTML = formatChatText("Error: " + e.message);
@@ -3628,8 +3713,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     input.style.height = Math.min(input.scrollHeight, 160) + "px";
   });
 
-  addMsg("assistant", "I can update posts, projects, experiments, and plans. Ask for a change or choose a starting point.");
-  (function seedSuggestions(){
+  function showWelcome(){
+    addMsg("assistant", "I can update posts, projects, experiments, and plans. Ask for a change or choose a starting point.");
     const cmds = [
       ["Draft post",    "/content-brief "],
       ["Plan content",  "/content-plan "],
@@ -3648,7 +3733,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     });
     stream.appendChild(wrap);
     stream.scrollTop = stream.scrollHeight;
-  })();
+  }
+  showWelcome();
 })();
 
 boot();

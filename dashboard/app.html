@@ -26,13 +26,15 @@
     <div class="chat-resize" id="chat-resize" title="Drag to resize chat"></div>
     <div class="dock-bar">
       <span class="av"></span>
-      <div><b>Chat</b><span class="sm" id="chat-status">Ready</span></div>
+      <div class="chat-head"><b id="chat-title">New chat</b><span class="sm" id="chat-status">Ready</span></div>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="term-btn" id="chat-clear" title="Clear chat history" data-os-id="btn:global:chat-clear">⌫</button>
+        <button class="term-btn" id="chat-list-btn" title="Saved chats" data-os-id="btn:global:chat-list">☰</button>
+        <button class="term-btn" id="chat-new" title="New chat (old one stays saved)" data-os-id="btn:global:chat-new">+</button>
         <button class="term-btn" id="chat-move" title="Move chat to bottom-left" data-os-id="btn:global:chat-move">⇲</button>
         <button class="term-btn" id="chat-hide" title="Hide chat" data-os-id="btn:global:chat-hide">✕</button>
       </div>
     </div>
+    <div class="chat-list" id="chat-list" hidden></div>
     <div class="stream" id="chat-stream" data-os-id="fld:global:chat:stream"></div>
     <div class="compose">
       <div class="attachments" id="attachments"></div>

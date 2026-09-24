@@ -37,6 +37,7 @@ sys.path.insert(0, str(HERE))
 import db                # noqa: E402
 import fileops           # noqa: E402
 import chat_session      # noqa: E402
+import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
@@ -575,16 +576,39 @@ _CHAT = None
 _CHAT_SCOPE = None
 
 
-def get_chat_session(project_scope=None):
+def get_chat_session(project_scope=None, chat_id=None, new=False):
     """Return a session isolated to one project (or the unscoped dashboard).
 
     A Claude resume contains earlier prompts and tool results. Reusing it after
     switching linked projects would retain the previous app's evidence even
     though current filesystem permissions changed, so a scope change starts a
-    fresh conversation.
+    fresh conversation (the old chat stays saved).
+
+    `chat_id` reopens a saved chat (chat_store) when it is not the active one;
+    `new` forces a fresh session (client has no chat yet, so it must never
+    silently continue whichever chat the server happens to have active).
     """
     global _CHAT, _CHAT_SCOPE
     scope = project_scope or None
+    if new:
+        if _CHAT is not None:
+            _CHAT.close()
+        _CHAT = chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL)
+        _CHAT_SCOPE = scope
+        return _CHAT
+    if chat_id and (_CHAT is None or getattr(_CHAT, "session_id", None) != chat_id):
+        rec = chat_store.load(chat_id)
+        rec_scope = tuple(rec["scope"]) if rec and rec.get("scope") else None
+        if _CHAT is not None:
+            _CHAT.close()
+        # An unscoped chat never had app access, so it may adopt a project.
+        _CHAT = (chat_session.ChatSession.restore(str(ROOT), RAIL, rec)
+                 if rec and rec_scope in (scope, None)
+                 else chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL))
+        _CHAT_SCOPE = scope
+        return _CHAT
+    if chat_id and _CHAT is not None and _CHAT_SCOPE is None:
+        _CHAT_SCOPE = scope  # active unscoped chat adopts its first project
     if _CHAT is None or _CHAT_SCOPE != scope:
         if _CHAT is not None:
             _CHAT.close()
@@ -707,7 +731,8 @@ class Handler(BaseHTTPRequestHandler):
             (project_slug, project_record.get("local_folder") or "")
             if project_record else None
         )
-        sess = get_chat_session(project_scope)
+        chat_id = body.get("chat_id") or None
+        sess = get_chat_session(project_scope, chat_id, new=not chat_id)
 
         if (_WRITE_TURN_RE.search(user_msg or "")
                 and not explicit
@@ -852,24 +877,43 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode())
             self.wfile.flush()
 
+        reply = []
         try:
+            # Tell the client which saved chat this turn belongs to (a scope
+            # change or first turn may have started a new one).
+            if isinstance(getattr(sess, "session_id", None), str):
+                saved = chat_store.load(sess.session_id)
+                emit({"chat_id": sess.session_id,
+                      "title": (saved or {}).get("title") or chat_store.title_from(user_msg),
+                      "project": project_scope[0] if project_scope else None})
             for kind, payload in sess.ask(
                     text, with_web=with_web, model=model,
                     workspace_dir=(workspace_dir if file_search_mode else None),
                     file_search_mode=file_search_mode):
                 if kind == "delta":
+                    reply.append(payload)
                     emit({"delta": payload})
                 elif kind == "tool":
                     emit({"tool": payload})
                 elif kind == "error":
                     emit({"error": payload})
                 # "done" → fall through to [DONE]
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # client stopped/closed; still save what streamed so far
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             emit({"error": "internal error"})
         finally:
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
+            if isinstance(getattr(sess, "session_id", None), str):
+                try:
+                    chat_store.record_turn(sess, project_scope, user_msg, "".join(reply))
+                except (OSError, ValueError):
+                    traceback.print_exc()
+            try:
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     # -- integrated terminal (full-trust claude over a PTY/WebSocket) ------ #
     def _handle_terminal_ws(self):
@@ -993,6 +1037,13 @@ class Handler(BaseHTTPRequestHandler):
                 if _CHAT is None:
                     return self._send(200, {"session_id": None, "turn_count": 0, "fresh": True})
                 return self._send(200, _CHAT.session_meta())
+            if path == "/api/chats":
+                return self._send(200, {"chats": chat_store.list_meta()})
+            if path.startswith("/api/chats/"):
+                rec = chat_store.load(path[len("/api/chats/"):])
+                if rec is None:
+                    return self._send(404, {"error": "chat not found"})
+                return self._send(200, rec)
             if path == "/api/timeline":
                 return self._send(200, db.timeline())
             if path == "/api/tree":
@@ -1346,11 +1397,19 @@ class Handler(BaseHTTPRequestHandler):
                     _CHAT.close()
                 return self._send(200, {"ok": True})
             if path == "/api/chat-reset":
+                # New chat: drop the active session; saved chats are untouched.
                 if _CHAT is not None:
                     _CHAT.close()
                     _CHAT = None
                     _CHAT_SCOPE = None
                 return self._send(200, {"ok": True})
+            if path.startswith("/api/chats/") and path.endswith("/delete"):
+                chat_id = path[len("/api/chats/"):-len("/delete")]
+                if _CHAT is not None and getattr(_CHAT, "session_id", None) == chat_id:
+                    _CHAT.close()
+                    _CHAT = None
+                    _CHAT_SCOPE = None
+                return self._send(200, {"ok": chat_store.delete(chat_id)})
         except fileops.ActionError as exc:
             return self._send(400, {"ok": False, "error": str(exc)})
         except (TypeError, ValueError) as exc:
