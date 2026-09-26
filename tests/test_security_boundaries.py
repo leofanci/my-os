@@ -107,6 +107,59 @@ class HttpBoundaryTest(unittest.TestCase):
             h._read_json()
 
 
+class LoginAndLocalFilesTest(unittest.TestCase):
+    """GET / hands out the session cookie only to someone who knows the token."""
+
+    def get(self, path, cookie=""):
+        h = server.Handler.__new__(server.Handler)
+        h.client_address = ("127.0.0.1", 12345)
+        h.server = SimpleNamespace(server_address=("127.0.0.1", 8765))
+        h.headers = {"Host": "127.0.0.1:8765", "Cookie": cookie}
+        h.path = path
+        h.wfile = io.BytesIO()
+        sent = {"headers": {}}
+        h.send_response = lambda code, *a: sent.__setitem__("code", code)
+        h.send_header = lambda k, v: sent["headers"].__setitem__(k, v)
+        h.end_headers = lambda: None
+        h.do_GET()
+        return sent
+
+    def test_root_without_token_or_cookie_gets_no_cookie(self):
+        sent = self.get("/")
+        self.assertEqual(sent["code"], 403)
+        self.assertNotIn("Set-Cookie", sent["headers"])
+        self.assertEqual(self.get("/?token=wrong")["code"], 403)
+        self.assertEqual(self.get("/?token=%C3%A9")["code"], 403)  # non-ASCII: no crash
+
+    def test_token_is_exchanged_for_cookie_then_cookie_serves_app(self):
+        sent = self.get(f"/?token={server.AUTH_TOKEN}")
+        self.assertEqual(sent["code"], 302)
+        self.assertEqual(sent["headers"]["Location"], "/")
+        self.assertIn(server.AUTH_TOKEN, sent["headers"]["Set-Cookie"])
+        cookie = f"{server.AUTH_COOKIE}={server.AUTH_TOKEN}"
+        self.assertEqual(self.get("/", cookie)["code"], 200)
+
+    def test_healthz_is_public_but_reveals_nothing(self):
+        sent = self.get("/healthz")
+        self.assertEqual(sent["code"], 200)
+        self.assertNotIn("Set-Cookie", sent["headers"])
+
+    def test_token_file_is_owner_only_and_removed(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / ".auth-token"
+            server.write_token_file(path)
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(path.read_text(), server.AUTH_TOKEN)
+            server.remove_token_file(path)
+            self.assertFalse(path.exists())
+
+    def test_uploads_live_in_private_dir_removed_on_shutdown(self):
+        d = Path(server.upload_dir())
+        self.assertEqual(d.stat().st_mode & 0o777, 0o700)
+        server.remove_uploads()
+        self.assertFalse(d.exists())
+
+
 class BrowserOutputBoundaryTest(unittest.TestCase):
     def test_html_escape_covers_quoted_attributes(self):
         source = (Path(__file__).resolve().parents[1] / "dashboard" / "app.js").read_text(

@@ -15,6 +15,7 @@ stream_event/content_block_start/tool_use, and the turn ends with a top-level
 `result` line. A plain-text stdin turn (no positional prompt) is accepted.
 """
 import json
+import re
 import subprocess
 import uuid
 
@@ -38,6 +39,30 @@ def parse_event(obj):
     return (None, None)
 
 
+# Hostnames typed by the user. Bare names need a real-looking TLD so file names
+# like notes.md / app.py are not mistaken for hosts.
+_URL_HOST_RE = re.compile(r"https?://([a-z0-9.-]+\.[a-z]{2,})", re.I)
+_BARE_HOST_RE = re.compile(r"(?<![\w@/.-])((?:[a-z0-9-]+\.)+[a-z]{2,})(?![\w.-])", re.I)
+_FILE_EXTS = frozenset({
+    "md", "py", "js", "ts", "json", "txt", "csv", "html", "css", "sh", "yml",
+    "yaml", "toml", "lock", "log", "sql", "png", "jpg", "jpeg", "gif", "pdf",
+})
+
+
+def user_web_domains(text):
+    """Hosts the user explicitly named in their message (lowercased, www. stripped)."""
+    text = (text or "")[:20000]  # bodies may be huge; hosts are typed near the top
+    hosts = {h.lower() for h in _URL_HOST_RE.findall(text)}
+    for h in _BARE_HOST_RE.findall(text):
+        if h.rsplit(".", 1)[-1].lower() not in _FILE_EXTS:
+            hosts.add(h.lower())
+    return sorted({h[4:] if h.startswith("www.") else h for h in hosts})
+
+
+def web_fetch_rules(domains):
+    return [r for d in domains for r in (f"WebFetch(domain:{d})", f"WebFetch(domain:www.{d})")]
+
+
 # Mutations go through osctl ONLY (Write/Edit are never loaded, so the
 # authored-files-are-truth invariant holds). Permissions are assembled per turn:
 # linked-folder and TokenSave permissions do not exist on ordinary chat turns.
@@ -51,9 +76,19 @@ APP_ALLOWED_TOOLS = [
     "Glob",
     "Grep",
 ]
+# WebFetch is never granted broadly: a fetched page (or a linked app file) can
+# carry injected instructions telling the agent to fetch attacker.com/?d=<data>.
+# Only hosts the user typed in the message are fetchable (web_fetch_rules);
+# WebSearch stays open. In -p mode any other fetch is denied, not prompted.
 WEB_ALLOWED_TOOLS = [
     "WebSearch",
-    "WebFetch",
+]
+# Secret-looking files stay unreadable even inside the repo or a linked app
+# folder (Grep/Glob honor Read deny rules too). Verified against claude 2.x:
+# "**/x" covers the repo; a linked --add-dir needs its own "//abs/**/x" rule.
+SECRET_FILE_GLOBS = [
+    ".env", ".env.*", "*.pem", "*.key", ".npmrc", ".netrc",
+    "credentials*.json", "secrets.*", "id_rsa*", "id_ed25519*",
 ]
 # Tools loaded EVERY turn. Skills are NOT loaded via the Skill tool — that costs
 # ~4k tok of discovery (35 descriptions, incl. useless built-ins) just to let the
@@ -118,7 +153,7 @@ class ChatSession:
         }
 
     def _base_cmd(self, with_web=False, model=None, workspace_dir=None,
-                  file_search_mode=False):
+                  file_search_mode=False, web_domains=()):
         # Lean per-turn flags. Skills are NEVER discovered here (the server injects
         # the routed skill's body into the prompt instead), so we always pass
         # --disable-slash-commands + --setting-sources "" — zero skill-discovery
@@ -140,7 +175,11 @@ class ChatSession:
         allowed_tools = (list(BASE_ALLOWED_TOOLS)
                          + (APP_ALLOWED_TOOLS
                             if workspace_dir and file_search_mode else [])
-                         + (WEB_ALLOWED_TOOLS if with_web else []))
+                         + (WEB_ALLOWED_TOOLS if with_web else [])
+                         + (web_fetch_rules(web_domains) if with_web else []))
+        denied = [f"Read(**/{g})" for g in SECRET_FILE_GLOBS]
+        if workspace_dir and file_search_mode:
+            denied += [f"Read(/{workspace_dir}/**/{g})" for g in SECRET_FILE_GLOBS]
         cmd = [self.claude_bin, "-p",
                "--output-format", "stream-json",
                "--include-partial-messages",
@@ -149,6 +188,7 @@ class ChatSession:
                "--system-prompt", self.rail,
                "--tools", *tools,
                "--allowedTools", *allowed_tools,
+               "--disallowedTools", *denied,
                "--strict-mcp-config",
                "--disable-slash-commands",
                "--setting-sources", "",
@@ -163,7 +203,7 @@ class ChatSession:
         return cmd
 
     def ask(self, text, with_web=False, model=None, workspace_dir=None,
-            file_search_mode=False):
+            file_search_mode=False, web_domains=()):
         """Run one turn; yield (kind, payload) events. Each turn is its own
         `claude -p` invocation, resumed by session id so context persists.
         `with_web` adds the WebSearch/WebFetch tools for this turn;
@@ -174,7 +214,8 @@ class ChatSession:
         injected into `text` by the server. Server injects full snapshot + skill
         body on fresh session start only (no turn cap — session never auto-resets)."""
         proc = subprocess.Popen(
-            self._base_cmd(with_web, model, workspace_dir, file_search_mode),
+            self._base_cmd(with_web, model, workspace_dir, file_search_mode,
+                           web_domains),
             cwd=self.repo_dir,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)

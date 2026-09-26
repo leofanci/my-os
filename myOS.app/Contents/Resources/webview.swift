@@ -178,15 +178,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if up {
-                self.webView.load(URLRequest(url: self.url))
+                self.webView.load(URLRequest(url: self.loginURL(repo)))
             } else {
                 self.showFailure(repo)
             }
         }
     }
 
+    // The server only admits a browser that presents its per-run token once
+    // (then a cookie). It writes the token to an owner-only file for this app.
+    private func loginURL(_ repo: String) -> URL {
+        let file = (repo as NSString).appendingPathComponent("dashboard/.auth-token")
+        let token = (try? String(contentsOfFile: file, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return URL(string: "http://127.0.0.1:\(port)/?token=\(token)") ?? url
+    }
+
     private func ping() -> Bool {
-        var req = URLRequest(url: url)
+        var req = URLRequest(url: url.appendingPathComponent("healthz"))
         req.timeoutInterval = 1
         let sem = DispatchSemaphore(value: 0)
         var ok = false

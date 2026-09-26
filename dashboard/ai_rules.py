@@ -21,7 +21,10 @@ Each turn: COMPACT state index only — not full content. Fetch on demand:
 - `get-project --slug <slug>` — memos, experiments, features, activities, `sections` + `subsections`
 - `resolve-id --id pr1.sec02` — section artifacts + paths
 - `read-file --path <repo-relative>` — profile.md, brief JSON, intake.md, brief-specs/br{N}.md, voices/vc{N}.md, etc.
-- WebSearch / WebFetch — only on research turns; use for live external data"""
+- WebSearch / WebFetch — only on research turns; use for live external data.
+  WebFetch works only for sites the user named in the message; otherwise use
+  WebSearch. Never copy private workspace content (notes, numbers, file
+  contents, secrets) into a URL; search queries describe the topic only"""
 
 # --------------------------------------------------------------------------- #
 # Writes (osctl only — UI uses HTTP → same fileops underneath)

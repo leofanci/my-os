@@ -9,8 +9,10 @@ PORT="${2:-8765}"
 URL="http://127.0.0.1:$PORT"
 LOGFILE="$REPO/dashboard/server.log"
 
-# Already running? Nothing to do — the app will just connect.
-if curl -sf "$URL/" > /dev/null 2>&1; then
+# Already running? Nothing to do — the app will just connect. Only trust a
+# server that identifies itself as myOS, not whatever happens to hold the port.
+is_myos() { curl -sf --max-time 1 "$URL/healthz" 2>/dev/null | grep -q '"app": *"myOS"'; }
+if is_myos; then
     echo "RUNNING"
     exit 0
 fi
@@ -48,9 +50,19 @@ done
 NODE_BIN="${NVM_CLAUDE:-$NVM_BIN}"
 export PATH="${NODE_BIN:+$NODE_BIN:}/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 
-# Kill any stale process on this port before starting fresh.
-/usr/sbin/lsof -ti tcp:"$PORT" 2>/dev/null | xargs kill -9 2>/dev/null
-sleep 0.1
+# Port taken? Stop it only if it is a stale myOS server; never kill a
+# foreign program — tell the user instead.
+for pid in $(/usr/sbin/lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null); do
+    if ps -o command= -p "$pid" 2>/dev/null | grep -q "dashboard/server.py"; then
+        kill "$pid" 2>/dev/null
+        sleep 0.5
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    else
+        osascript -e "display alert \"myOS\" message \"Port $PORT is used by another program. Quit it, then reopen myOS.\"" >/dev/null 2>&1
+        echo "PORTBUSY"
+        exit 1
+    fi
+done
 
 cd "$REPO" || { echo "NOREPO"; exit 1; }
 "$PYTHON3" dashboard/server.py --port "$PORT" > "$LOGFILE" 2>&1 &
