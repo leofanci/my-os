@@ -6,12 +6,13 @@ prints exactly one JSON line. The chat agent is allowed to mutate state ONLY
 through this CLI, so the authored-files-are-truth invariant cannot be bypassed.
 """
 import argparse
+import fnmatch
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root
-from dashboard import db, fileops  # noqa: E402
+from dashboard import chat_session, db, fileops  # noqa: E402
 from core.ids import (  # noqa: E402
     bare_slug,
     build_catalog,
@@ -607,6 +608,9 @@ def _build_parser():
         target = (repo_root / a.path).resolve()
         if not target.is_relative_to(repo_root.resolve()):
             raise fileops.ActionError("path outside repo")
+        # Same secret-file policy as the chat agent's Read deny rules.
+        if any(fnmatch.fnmatch(target.name, g) for g in chat_session.SECRET_FILE_GLOBS):
+            raise fileops.ActionError("secret files are not readable")
         if not target.exists():
             raise fileops.ActionError(f"file not found: {a.path}")
         return {"path": a.path, "content": target.read_text(encoding="utf-8")}

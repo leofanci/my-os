@@ -17,7 +17,7 @@ class FakeSession:
         pass
 
     def ask(self, text, with_web=False, model=None, workspace_dir=None,
-            file_search_mode=False):
+            file_search_mode=False, web_domains=()):
         yield ("delta", "Hi ")
         yield ("delta", "there")
         yield ("done", {"result": "Hi there"})
@@ -48,8 +48,9 @@ def _captured(body, tree=None):
             pass
 
         def ask(self, text, with_web=False, model=None, workspace_dir=None,
-                file_search_mode=False):
+                file_search_mode=False, web_domains=()):
             seen["text"] = text
+            seen["web_domains"] = web_domains
             seen["with_web"] = with_web
             seen["model"] = model
             seen["workspace_dir"] = workspace_dir
