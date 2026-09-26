@@ -98,7 +98,10 @@ class TestPostCopy(unittest.TestCase):
         thread.start()
         try:
             base = f"http://127.0.0.1:{httpd.server_address[1]}"
-            with urllib.request.urlopen(base + "/") as response:
+            # The app shell needs the per-run session cookie (see do_GET "/").
+            shell = urllib.request.Request(base + "/", headers={
+                "Cookie": f"{server.AUTH_COOKIE}={server.AUTH_TOKEN}"})
+            with urllib.request.urlopen(shell) as response:
                 html = response.read().decode("utf-8")
             with urllib.request.urlopen(base + "/post-copy.js") as response:
                 script = response.read().decode("utf-8")

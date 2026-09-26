@@ -80,3 +80,10 @@ dashboard/os.db
 
 # Saved AI chats (user conversation data)
 /chats/
+
+# Per-run dashboard login token (owner-only)
+dashboard/.auth-token
+
+# Built locally by scripts/build-app.sh (never commit binaries)
+myOS.app/Contents/MacOS/
+myOS.app/Contents/_CodeSignature/

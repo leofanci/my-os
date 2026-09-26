@@ -96,5 +96,30 @@ class AskWithStub(unittest.TestCase):
         self.assertIn("--restricted", linked)
 
 
+class WebAndSecretPolicy(unittest.TestCase):
+    def test_user_web_domains_only_takes_typed_hosts(self):
+        got = cs.user_web_domains(
+            "see https://www.acme.example/x and demo.example; not notes.md, app.py or a@example.com")
+        self.assertEqual(got, ["acme.example", "demo.example"])
+
+    def test_webfetch_scoped_to_typed_domains(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        cmd = sess._base_cmd(with_web=True, web_domains=["acme.example"])
+        allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--disallowedTools")]
+        self.assertIn("WebSearch", allowed)
+        self.assertNotIn("WebFetch", allowed)
+        self.assertIn("WebFetch(domain:acme.example)", allowed)
+        self.assertFalse([a for a in sess._base_cmd(with_web=True)
+                          if a.startswith("WebFetch(")])
+
+    def test_secret_files_denied_in_repo_and_linked_folder(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        cmd = sess._base_cmd(workspace_dir="/tmp/app", file_search_mode=True)
+        denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--strict-mcp-config")]
+        self.assertIn("Read(**/.env)", denied)
+        self.assertIn("Read(//tmp/app/**/.env)", denied)
+        self.assertIn("Read(**/.auth-token)", denied)  # dashboard login token
+
+
 if __name__ == "__main__":
     unittest.main()

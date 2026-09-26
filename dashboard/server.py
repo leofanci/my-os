@@ -67,6 +67,60 @@ UPLOAD_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp"})
 
 RAIL = CHAT_RAIL
 
+# The session token is handed out only to whoever proves they already know it:
+# the macOS app reads it from this owner-only file, a terminal user gets it in
+# the printed URL. A plain GET / (another local account, a port scanner) gets
+# nothing. See do_GET "/" and write_token_file().
+TOKEN_FILE = HERE / ".auth-token"
+_TOKEN_IN_LOG = re.compile(r"([?&]token=)[^&\s\"]*")
+LOGIN_REQUIRED_HTML = (
+    b"<!doctype html><meta charset=utf-8><title>myOS</title>"
+    b"<p style='font:14px system-ui;margin:40px'>myOS is running. Open it from "
+    b"the myOS app, or use the link printed in the terminal that started the "
+    b"server. (Old app build? Run scripts/build-app.sh.)</p>"
+)
+
+# Pasted images live in one private (0700) folder per server run, removed on
+# shutdown, so screenshots never pile up in the shared temp directory.
+_UPLOAD_DIR = None
+
+
+def upload_dir():
+    global _UPLOAD_DIR
+    if _UPLOAD_DIR is None:
+        _UPLOAD_DIR = tempfile.mkdtemp(prefix="myos-uploads-")
+    return _UPLOAD_DIR
+
+
+def remove_uploads():
+    global _UPLOAD_DIR
+    if _UPLOAD_DIR:
+        shutil.rmtree(_UPLOAD_DIR, ignore_errors=True)
+        _UPLOAD_DIR = None
+
+
+def health_proof(nonce):
+    """HMAC-SHA256(AUTH_TOKEN, nonce): lets the launcher verify server identity."""
+    return hmac.new(AUTH_TOKEN.encode(), nonce.encode(), "sha256").hexdigest()
+
+
+def write_token_file(path=None):
+    """Write AUTH_TOKEN to an owner-only file (0600) for the macOS app."""
+    path = Path(path or TOKEN_FILE)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(AUTH_TOKEN)
+    os.chmod(path, 0o600)
+
+
+def remove_token_file(path=None):
+    path = Path(path or TOKEN_FILE)
+    try:
+        if path.read_text().strip() == AUTH_TOKEN:  # never delete a newer run's token
+            path.unlink()
+    except OSError:
+        pass
+
 # Profile "numbered artifact" routes (brief-specs, voices) — same CRUD shape
 # for both, so GET/POST dispatch loops over this instead of repeating
 # near-identical branches per kind. Every fn's positional signature lines up:
@@ -708,7 +762,9 @@ class Handler(BaseHTTPRequestHandler):
         return (prof or "").strip() or None
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("  [dash] " + (fmt % args) + "\n")
+        # Request lines can carry the login ?token=; never persist it to server.log.
+        line = _TOKEN_IN_LOG.sub(r"\1<redacted>", fmt % args)
+        sys.stderr.write("  [dash] " + line + "\n")
 
     # -- AI chat (drives a persistent guard-railed ChatSession via SSE) --- #
     def _handle_ask(self, body):
@@ -889,7 +945,8 @@ class Handler(BaseHTTPRequestHandler):
             for kind, payload in sess.ask(
                     text, with_web=with_web, model=model,
                     workspace_dir=(workspace_dir if file_search_mode else None),
-                    file_search_mode=file_search_mode):
+                    file_search_mode=file_search_mode,
+                    web_domains=chat_session.user_web_domains(user_msg)):
                 if kind == "delta":
                     reply.append(payload)
                     emit({"delta": payload})
@@ -985,7 +1042,31 @@ class Handler(BaseHTTPRequestHandler):
             if not self._authorized(require_origin=True):
                 return self._send(403, {"error": "forbidden"})
             return self._handle_terminal_ws()
+        if path == "/healthz":
+            # Unauthenticated liveness probe for the app/launcher; reveals nothing.
+            # With ?nonce= it also proves this is the server that wrote this
+            # checkout's token file (HMAC of the nonce), without sending the token.
+            nonce = (parse_qs(urlparse(self.path).query).get("nonce") or [""])[0]
+            if nonce:
+                return self._send(200, {"app": "myOS", "proof": health_proof(nonce)})
+            return self._send(200, {"app": "myOS"})
         if path in ("/", "/index.html"):
+            token = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]
+            # Compare bytes: str compare_digest raises on non-ASCII input.
+            if token and hmac.compare_digest(token.encode(), AUTH_TOKEN.encode()):
+                # Trade the one-time URL token for the cookie, then drop it from
+                # the address bar/history with a redirect.
+                self.send_response(302)
+                self.send_header("Location", "/")
+                self.send_header(
+                    "Set-Cookie",
+                    f"{AUTH_COOKIE}={AUTH_TOKEN}; HttpOnly; SameSite=Strict; Path=/",
+                )
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            if not self._valid_cookie():
+                return self._send(403, LOGIN_REQUIRED_HTML, "text/html; charset=utf-8")
             # no-store on the shell too: it embeds ?v=<mtime> asset URLs, so if the
             # webview caches app.html it keeps loading stale CSS/JS forever. Always
             # re-fetch the shell so UI updates actually reach the user.
@@ -1385,7 +1466,8 @@ class Handler(BaseHTTPRequestHandler):
                 ext = (body.get("ext", "png") or "png").lstrip(".").lower()
                 if ext not in UPLOAD_EXTENSIONS:
                     raise ValueError("unsupported upload type")
-                fd, fpath = tempfile.mkstemp(suffix=f".{ext}", prefix="workspace_img_")
+                fd, fpath = tempfile.mkstemp(suffix=f".{ext}", prefix="workspace_img_",
+                                             dir=upload_dir())
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
                 return self._send(200, {"path": fpath})
@@ -1452,12 +1534,21 @@ def main():
                 _CHAT.close()
             except Exception:  # noqa: BLE001
                 pass
+        remove_uploads()
+        remove_token_file()
 
     # /api/quit raises SIGTERM on this PID; clean up children before exiting.
     signal.signal(signal.SIGTERM, lambda *a: (_shutdown_children(), sys.exit(0)))
 
     srv = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"\nmyOS dashboard → http://127.0.0.1:{args.port}  (Ctrl-C to stop)")
+    write_token_file()
+    url = f"http://127.0.0.1:{args.port}"
+    # The login link carries the token: print it only to an interactive
+    # terminal, never into server.log (the app reads TOKEN_FILE instead).
+    if sys.stdout.isatty():
+        print(f"\nmyOS dashboard → {url}/?token={AUTH_TOKEN}  (Ctrl-C to stop)")
+    else:
+        print(f"\nmyOS dashboard → {url}  (login link: see {TOKEN_FILE.name})")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

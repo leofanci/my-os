@@ -414,7 +414,7 @@ class TestNoUsageData(unittest.TestCase):
 
     def test_commit_identity_matches_repository_owner(self):
         identities = subprocess.run(
-            ["git", "log", "--all", "--format=%an <%ae>%n%cn <%ce>"], cwd=ROOT,
+            ["git", "log", "--all", "--format=author %an <%ae>%ncommitter %cn <%ce>"], cwd=ROOT,
             capture_output=True, text=True, check=True,
         ).stdout.splitlines()
 
@@ -432,12 +432,20 @@ class TestNoUsageData(unittest.TestCase):
 
         self.assertEqual(len(owners), 1, "Expected one GitHub repository owner")
         owner = next(iter(owners))
+        # Any name is fine (GitHub merges stamp the public profile name); the email
+        # must be the owner's noreply address so no personal mailbox leaks.
         expected = re.compile(
-            rf"{re.escape(owner)} <\d+\+{re.escape(owner)}@users\.noreply\.github\.com>"
+            rf"[^<>]+ <\d+\+{re.escape(owner)}@users\.noreply\.github\.com>"
         )
+        # Squash/merge-commit merges on GitHub commit as the generic web-flow identity.
+        web_flow_committer = re.compile(r"committer GitHub <noreply@github\.com>")
         self.assertTrue(identities)
         self.assertEqual(
-            [identity for identity in identities if not expected.fullmatch(identity)], [],
+            [
+                identity for identity in identities
+                if not web_flow_committer.fullmatch(identity)
+                and not expected.fullmatch(identity.split(" ", 1)[1])
+            ], [],
             "Commit identity does not match the repository owner's GitHub noreply identity",
         )
 

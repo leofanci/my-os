@@ -96,6 +96,17 @@ cp templates/workspace-CLAUDE.md my-portfolio/CLAUDE.md   # auto-loaded operatin
 cd my-portfolio && claude
 ```
 
+### Dashboard (macOS app)
+
+The app's launcher binary is not committed: build it from source once after cloning. With the repo hooks enabled (`git config core.hooksPath .githooks`), every pull or checkout that changes the app's source rebuilds it automatically.
+
+```bash
+scripts/build-app.sh   # needs Xcode Command Line Tools
+open myOS.app
+```
+
+Without the app, run `python3 dashboard/server.py` and open the login link it prints (it contains a per-run token; a plain `http://127.0.0.1:8765` shows a login-required page).
+
 ---
 
 ## The 23 skills
