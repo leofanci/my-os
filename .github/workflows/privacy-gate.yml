@@ -20,6 +20,8 @@ jobs:
       - name: Check out complete history
         uses: actions/checkout@v7
         with:
+          # PR head, not GitHub's synthetic merge commit (it carries the profile display name).
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 

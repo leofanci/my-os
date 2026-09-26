@@ -414,7 +414,7 @@ class TestNoUsageData(unittest.TestCase):
 
     def test_commit_identity_matches_repository_owner(self):
         identities = subprocess.run(
-            ["git", "log", "--all", "--format=%an <%ae>%n%cn <%ce>"], cwd=ROOT,
+            ["git", "log", "--all", "--format=author %an <%ae>%ncommitter %cn <%ce>"], cwd=ROOT,
             capture_output=True, text=True, check=True,
         ).stdout.splitlines()
 
@@ -435,9 +435,15 @@ class TestNoUsageData(unittest.TestCase):
         expected = re.compile(
             rf"{re.escape(owner)} <\d+\+{re.escape(owner)}@users\.noreply\.github\.com>"
         )
+        # PR merges on GitHub (linear history) re-commit as the generic web-flow identity.
+        web_flow_committer = re.compile(r"committer GitHub <noreply@github\.com>")
         self.assertTrue(identities)
         self.assertEqual(
-            [identity for identity in identities if not expected.fullmatch(identity)], [],
+            [
+                identity for identity in identities
+                if not web_flow_committer.fullmatch(identity)
+                and not expected.fullmatch(identity.split(" ", 1)[1])
+            ], [],
             "Commit identity does not match the repository owner's GitHub noreply identity",
         )
 
