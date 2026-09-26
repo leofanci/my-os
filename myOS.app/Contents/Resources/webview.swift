@@ -1,4 +1,5 @@
 import Cocoa
+import CryptoKit
 import WebKit
 
 // myOS — the bundle's main executable is THIS compiled Cocoa app (a real
@@ -171,7 +172,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
         // Poll the server for up to 12s (the indexer runs before it serves).
         var up = false
         for _ in 0..<60 {
-            if ping() { up = true; break }
+            if ping(repo) { up = true; break }
             Thread.sleep(forTimeInterval: 0.2)
         }
 
@@ -188,19 +189,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate {
     // The server only admits a browser that presents its per-run token once
     // (then a cookie). It writes the token to an owner-only file for this app.
     private func loginURL(_ repo: String) -> URL {
-        let file = (repo as NSString).appendingPathComponent("dashboard/.auth-token")
-        let token = (try? String(contentsOfFile: file, encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let token = readToken(repo)
         return URL(string: "http://127.0.0.1:\(port)/?token=\(token)") ?? url
     }
 
-    private func ping() -> Bool {
-        var req = URLRequest(url: url.appendingPathComponent("healthz"))
+    private func readToken(_ repo: String) -> String {
+        let file = (repo as NSString).appendingPathComponent("dashboard/.auth-token")
+        return (try? String(contentsOfFile: file, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    // Up = the listener proves it holds this checkout's token: it must return
+    // HMAC-SHA256(token, nonce) for a fresh nonce. Anything else on the port
+    // never receives the tokenized login URL.
+    private func ping(_ repo: String) -> Bool {
+        let token = readToken(repo)
+        if token.isEmpty { return false }
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let key = SymmetricKey(data: Data(token.utf8))
+        let want = HMAC<SHA256>.authenticationCode(for: Data(nonce.utf8), using: key)
+            .map { String(format: "%02x", $0) }.joined()
+        guard let probe = URL(string: "\(url.absoluteString)/healthz?nonce=\(nonce)") else { return false }
+        var req = URLRequest(url: probe)
         req.timeoutInterval = 1
         let sem = DispatchSemaphore(value: 0)
         var ok = false
-        let task = URLSession.shared.dataTask(with: req) { _, resp, _ in
-            if let http = resp as? HTTPURLResponse, http.statusCode == 200 { ok = true }
+        let task = URLSession.shared.dataTask(with: req) { data, resp, _ in
+            if let http = resp as? HTTPURLResponse, http.statusCode == 200,
+               let data,
+               let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let proof = body["proof"] as? String {
+                ok = proof == want
+            }
             sem.signal()
         }
         task.resume()

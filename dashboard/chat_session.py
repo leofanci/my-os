@@ -89,6 +89,7 @@ WEB_ALLOWED_TOOLS = [
 SECRET_FILE_GLOBS = [
     ".env", ".env.*", "*.pem", "*.key", ".npmrc", ".netrc",
     "credentials*.json", "secrets.*", "id_rsa*", "id_ed25519*",
+    ".auth-token",  # dashboard login token (server.TOKEN_FILE)
 ]
 # Tools loaded EVERY turn. Skills are NOT loaded via the Skill tool — that costs
 # ~4k tok of discovery (35 descriptions, incl. useless built-ins) just to let the

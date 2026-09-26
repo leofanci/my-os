@@ -9,14 +9,6 @@ PORT="${2:-8765}"
 URL="http://127.0.0.1:$PORT"
 LOGFILE="$REPO/dashboard/server.log"
 
-# Already running? Nothing to do — the app will just connect. Only trust a
-# server that identifies itself as myOS, not whatever happens to hold the port.
-is_myos() { curl -sf --max-time 1 "$URL/healthz" 2>/dev/null | grep -q '"app": *"myOS"'; }
-if is_myos; then
-    echo "RUNNING"
-    exit 0
-fi
-
 # Find python3 — probe in order of preference
 PYTHON3=""
 for _p in \
@@ -35,6 +27,28 @@ if [ -z "$PYTHON3" ]; then
     osascript -e 'display alert "myOS" message "python3 not found. Install from python.org."' >/dev/null 2>&1
     echo "NOPYTHON"
     exit 1
+fi
+
+# Already running? Nothing to do — the app will just connect. Only trust the
+# server that wrote THIS checkout's token file: it must answer a random nonce
+# with HMAC(token, nonce). Anything else holding the port (or a myOS server from
+# another checkout) fails the proof. Python reads the token itself, so it never
+# appears in argv or goes over the wire.
+is_myos() {
+    "$PYTHON3" - "$URL" "$REPO/dashboard/.auth-token" <<'PY' 2>/dev/null
+import hmac, json, secrets, sys, urllib.request
+url, token_file = sys.argv[1], sys.argv[2]
+token = open(token_file).read().strip()
+nonce = secrets.token_hex(16)
+with urllib.request.urlopen(f"{url}/healthz?nonce={nonce}", timeout=1) as r:
+    proof = json.load(r).get("proof", "")
+want = hmac.new(token.encode(), nonce.encode(), "sha256").hexdigest()
+sys.exit(0 if token and hmac.compare_digest(proof, want) else 1)
+PY
+}
+if is_myos; then
+    echo "RUNNING"
+    exit 0
 fi
 
 # Put claude on PATH so chat features work. Don't assume the newest nvm node has
