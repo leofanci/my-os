@@ -72,6 +72,7 @@ RAIL = CHAT_RAIL
 # the printed URL. A plain GET / (another local account, a port scanner) gets
 # nothing. See do_GET "/" and write_token_file().
 TOKEN_FILE = HERE / ".auth-token"
+_TOKEN_IN_LOG = re.compile(r"([?&]token=)[^&\s\"]*")
 LOGIN_REQUIRED_HTML = (
     b"<!doctype html><meta charset=utf-8><title>myOS</title>"
     b"<p style='font:14px system-ui;margin:40px'>myOS is running. Open it from "
@@ -96,6 +97,11 @@ def remove_uploads():
     if _UPLOAD_DIR:
         shutil.rmtree(_UPLOAD_DIR, ignore_errors=True)
         _UPLOAD_DIR = None
+
+
+def health_proof(nonce):
+    """HMAC-SHA256(AUTH_TOKEN, nonce): lets the launcher verify server identity."""
+    return hmac.new(AUTH_TOKEN.encode(), nonce.encode(), "sha256").hexdigest()
 
 
 def write_token_file(path=None):
@@ -756,7 +762,9 @@ class Handler(BaseHTTPRequestHandler):
         return (prof or "").strip() or None
 
     def log_message(self, fmt, *args):
-        sys.stderr.write("  [dash] " + (fmt % args) + "\n")
+        # Request lines can carry the login ?token=; never persist it to server.log.
+        line = _TOKEN_IN_LOG.sub(r"\1<redacted>", fmt % args)
+        sys.stderr.write("  [dash] " + line + "\n")
 
     # -- AI chat (drives a persistent guard-railed ChatSession via SSE) --- #
     def _handle_ask(self, body):
@@ -1036,6 +1044,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_terminal_ws()
         if path == "/healthz":
             # Unauthenticated liveness probe for the app/launcher; reveals nothing.
+            # With ?nonce= it also proves this is the server that wrote this
+            # checkout's token file (HMAC of the nonce), without sending the token.
+            nonce = (parse_qs(urlparse(self.path).query).get("nonce") or [""])[0]
+            if nonce:
+                return self._send(200, {"app": "myOS", "proof": health_proof(nonce)})
             return self._send(200, {"app": "myOS"})
         if path in ("/", "/index.html"):
             token = (parse_qs(urlparse(self.path).query).get("token") or [""])[0]

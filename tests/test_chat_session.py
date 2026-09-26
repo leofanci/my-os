@@ -118,6 +118,7 @@ class WebAndSecretPolicy(unittest.TestCase):
         denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--strict-mcp-config")]
         self.assertIn("Read(**/.env)", denied)
         self.assertIn("Read(//tmp/app/**/.env)", denied)
+        self.assertIn("Read(**/.auth-token)", denied)  # dashboard login token
 
 
 if __name__ == "__main__":

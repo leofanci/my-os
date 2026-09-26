@@ -1,9 +1,12 @@
+import hmac
 import io
+import json
 import struct
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import generate
 from dashboard import fileops, server, ws
@@ -122,6 +125,7 @@ class LoginAndLocalFilesTest(unittest.TestCase):
         h.send_header = lambda k, v: sent["headers"].__setitem__(k, v)
         h.end_headers = lambda: None
         h.do_GET()
+        sent["body"] = h.wfile.getvalue()
         return sent
 
     def test_root_without_token_or_cookie_gets_no_cookie(self):
@@ -143,6 +147,35 @@ class LoginAndLocalFilesTest(unittest.TestCase):
         sent = self.get("/healthz")
         self.assertEqual(sent["code"], 200)
         self.assertNotIn("Set-Cookie", sent["headers"])
+
+    def test_healthz_nonce_proves_token_without_revealing_it(self):
+        h_out = self.get("/healthz?nonce=abc123")
+        self.assertEqual(h_out["code"], 200)
+        body = json.loads(h_out["body"])
+        want = hmac.new(server.AUTH_TOKEN.encode(), b"abc123", "sha256").hexdigest()
+        self.assertEqual(body, {"app": "myOS", "proof": want})
+        self.assertNotIn(server.AUTH_TOKEN.encode(), h_out["body"])
+
+    def test_request_log_redacts_login_token(self):
+        h = server.Handler.__new__(server.Handler)
+        err = io.StringIO()
+        with mock.patch.object(server.sys, "stderr", err):
+            h.log_message('"%s" %s %s', f"GET /?token={server.AUTH_TOKEN} HTTP/1.1", "302", "-")
+            h.log_message('"%s" %s %s', f"GET /x?a=1&token={server.AUTH_TOKEN}&b=2 HTTP/1.1", "200", "-")
+        self.assertNotIn(server.AUTH_TOKEN, err.getvalue())
+        self.assertIn("/?token=<redacted> HTTP/1.1", err.getvalue())
+        self.assertIn("&token=<redacted>&b=2", err.getvalue())
+
+    def test_osctl_read_file_refuses_token_file(self):
+        from dashboard import osctl
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(fileops, "ROOT", Path(d)):
+            (Path(d) / "dashboard").mkdir()
+            (Path(d) / "dashboard" / ".auth-token").write_text("secret", encoding="utf-8")
+            out = io.StringIO()
+            with mock.patch("sys.stdout", out):
+                osctl.main(["read-file", "--path", "dashboard/.auth-token"])
+        self.assertIn("secret files are not readable", out.getvalue())
+        self.assertNotIn('"content"', out.getvalue())
 
     def test_token_file_is_owner_only_and_removed(self):
         with tempfile.TemporaryDirectory() as d:
