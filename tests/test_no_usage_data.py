@@ -432,10 +432,12 @@ class TestNoUsageData(unittest.TestCase):
 
         self.assertEqual(len(owners), 1, "Expected one GitHub repository owner")
         owner = next(iter(owners))
+        # Any name is fine (GitHub merges stamp the public profile name); the email
+        # must be the owner's noreply address so no personal mailbox leaks.
         expected = re.compile(
-            rf"{re.escape(owner)} <\d+\+{re.escape(owner)}@users\.noreply\.github\.com>"
+            rf"[^<>]+ <\d+\+{re.escape(owner)}@users\.noreply\.github\.com>"
         )
-        # PR merges on GitHub (linear history) re-commit as the generic web-flow identity.
+        # Squash/merge-commit merges on GitHub commit as the generic web-flow identity.
         web_flow_committer = re.compile(r"committer GitHub <noreply@github\.com>")
         self.assertTrue(identities)
         self.assertEqual(
