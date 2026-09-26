@@ -98,7 +98,7 @@ cd my-portfolio && claude
 
 ### Dashboard (macOS app)
 
-The app's launcher binary is not committed: build it from source once after cloning, and again after pulling changes under `myOS.app/`.
+The app's launcher binary is not committed: build it from source once after cloning. With the repo hooks enabled (`git config core.hooksPath .githooks`), every pull or checkout that changes the app's source rebuilds it automatically.
 
 ```bash
 scripts/build-app.sh   # needs Xcode Command Line Tools
