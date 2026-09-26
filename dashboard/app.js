@@ -257,6 +257,12 @@ function setState(view, extra={}){
   STATE={view, project:extra.project||null, section:extra.section||null,
          profile:extra.profile||null, channelGuidelines:extra.channelGuidelines||null};
 }
+// True only while the URL shows this profile's post list. STATE.view stays
+// "profile" on post/form sub-pages, so redraws must check the route itself.
+function onProfileList(slug){
+  const path = (location.hash||"").replace(/^#/,"").replace(/\?.*$/,"");
+  return path === `/profile/${slug}`;
+}
 function setProfileContext(slug, view="profile"){
   if(!slug) return;
   setState(view,{profile:slug});
@@ -535,7 +541,7 @@ async function refreshViews(){
   if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
-  if (v === "profile") return renderProfile(STATE.profile);
+  if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
   if (v === "channelGuidelines") return renderChannelGuidelines(STATE.channelGuidelines);
   return renderNeeds();
@@ -1660,7 +1666,7 @@ async function renderProfile(slug, initChanFilter){
     if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
     try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
       else { await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
-      renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
+      if(onProfileList(slug)) renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f; PROFILE_FILTER[slug] = FILTER;
     $("#main").querySelectorAll(".chip").forEach(x=>{ const on=x===c; x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); }); drawList(); });
@@ -1707,7 +1713,7 @@ async function writeAllIdeas(slug){
       try{ await api(postUrl(next.id,slug,"/brief"),{method:"POST"}); }
       catch(e){ toast("✗ stopped: "+e.message); break; }
       done++;
-      await renderProfile(slug);     // the just-written post now shows as a Draft
+      if(onProfileList(slug)) await renderProfile(slug);     // the just-written post now shows as a Draft
     }
   } finally {
     _writingAll = false;
@@ -2689,7 +2695,7 @@ async function renderGenerateIdeas(slug){
     toast("⏳ Generating ideas via claude -p… (10–30s)",true);
     navigate(`#/profile/${slug}`);  // navigate away immediately; job runs in background
     try{ await api(`/api/profile/${slug}/plan`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
-      toast("Ideas generated ✓"); await renderRail(); await renderProfile(slug); }
+      toast("Ideas generated ✓"); await renderRail(); if(onProfileList(slug)) await renderProfile(slug); }
     catch(e){ toast("✗ "+e.message); }
   };
 }
