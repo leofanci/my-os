@@ -1,0 +1,3 @@
+# Derived, disposable SQLite index — rebuilt by index.py from source files.
+data/*.db
+data/*.db-journal

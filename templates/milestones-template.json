@@ -1,0 +1,16 @@
+{
+  "_comment": "Manually entered milestones that no skill auto-generates. Edit directly. portfolio-timeline reads this file.",
+  "milestones": [
+    {
+      "id": "ms-001",
+      "date": "YYYY-MM-DD",
+      "date_end": null,
+      "entity": "project-slug | profile-slug | product-slug | channel-slug | external",
+      "entity_type": "project | profile | product | channel | external",
+      "type": "release | deadline | investor | partnership | event | personal",
+      "title": "short label",
+      "priority": "critical | high | normal | low",
+      "notes": ""
+    }
+  ]
+}

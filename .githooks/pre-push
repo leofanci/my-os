@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+echo "Checking committed history for private myOS data..."
+exec python3 -m unittest tests.test_no_usage_data
