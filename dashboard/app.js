@@ -3339,6 +3339,18 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return tags.some(t => _SKILLS.some(s => s.name === t.slice(1)));
   }
 
+  // An ongoing chat keeps its own topic: thread + @tags. The open tab is
+  // background unless the message points at it ("this post", "on screen").
+  const VIEW_DEIXIS_RE = /\b(?:this|the open|open)\s+(?:post|page|view|profile|tab|screen|carousel|brief|slide|draft|memo|section)\b|\bon (?:my |the )?screen\b|\bi'?m (?:looking at|viewing)\b/i;
+
+  function viewIsPrimary(text, refs) {
+    if (history.length <= 1) return true;   // fresh chat: view is the starting point
+    if (VIEW_DEIXIS_RE.test(text)) return true;
+    if (!CURRENT_POST) return false;
+    return refs.some(m => m.type === "post" && m.slug === CURRENT_POST.id)
+        || text.includes(OSID.post(CURRENT_POST.id));
+  }
+
   function needsFullProfile(text, refs) {
     if (refs.some(m => m.type === "profile")) return true;
     if (STATE.view === "profileSetup") return true;
@@ -3422,6 +3434,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const slug = project(activeChatProject);
       if (slug) return slug;
     }
+    // Ongoing unbound chat: the open tab must not bind it to a project either.
+    if (history.length > 1) return null;
     if (STATE.project) {
       const slug = project(STATE.project);
       if (slug) return slug;
@@ -3453,9 +3467,17 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const title = document.querySelector(".title");
     const crumbs = document.querySelector(".crumbs");
     let ctx = "";
-    if (crumbs) ctx += "Current view: " + crumbs.textContent + "\n";
-    if (title)  ctx += "Section: " + title.textContent + "\n";
     const refs = mentions.filter(m => text.includes(m.token));
+    const viewPrimary = viewIsPrimary(text, refs);
+    if (viewPrimary) {
+      if (crumbs) ctx += "Current view: " + crumbs.textContent + "\n";
+      if (title)  ctx += "Section: " + title.textContent + "\n";
+    } else {
+      const where = [crumbs?.textContent, title?.textContent].filter(Boolean).join(" · ");
+      const open = CURRENT_POST ? ` (open post ${OSID.post(CURRENT_POST.id)})` : "";
+      ctx += "## Screen (background only)\n"
+           + `User has ${where || "another page"}${open} open. Not the topic: keep the thread's subject and @tags. Use it only if they refer to it.\n`;
+    }
     const ECAP = 3;
     const entSeen = new Set();
     const entRefs = [];
@@ -3466,7 +3488,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       entSeen.add(key); entRefs.push(m);
     }
     const profileSlugs = new Set();
-    const autoProfile = CURRENT_PROFILE_SLUG || STATE.profile;
+    const autoProfile = viewPrimary ? (CURRENT_PROFILE_SLUG || STATE.profile) : null;
     const wantFullProfile = needsFullProfile(text, refs);
     if (autoProfile) {
       try {
@@ -3516,7 +3538,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       ctx += `\n## Referenced ${m.type} "${m.name}" (slug: ${m.slug})\n`;
     }
     // post mentions: inline full slot+brief. Dedupe (incl. the open post) and cap.
-    const seen = new Set(CURRENT_POST ? [CURRENT_POST.id] : []);
+    const seen = new Set(CURRENT_POST && viewPrimary ? [CURRENT_POST.id] : []);
     const postRefs = [];
     for (const m of refs) {
       if (m.type !== "post" || seen.has(m.slug)) continue;
@@ -3589,7 +3611,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         } catch { /* skip */ }
       }
     }
-    if (CURRENT_POST) {
+    if (CURRENT_POST && viewPrimary) {
       if (needsFullOpenPost(text, refs)) {
         ctx += `\n## Post currently open (${OSID.post(CURRENT_POST.id)})\n`
              + "Brief edits: `update-brief --id " + CURRENT_POST.id + "`. Slot fields: `update-post`. Full content:\n```json\n"
