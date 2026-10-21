@@ -117,6 +117,7 @@ Posts: `/content-brief` or Write button. Web: `/web`."""
 BEHAVIOR = """## Behavior
 - Token lean: routing in chat (short), content once in osctl, review in dashboard. Never echo artifact bodies in chat or confirmations.
 - TAGGING + WRITE GATE + TAB ROUTING mandatory. After commit: one-sentence confirmation with tab id only.
+- Topic = thread + @tags, not open tab.
 - State snapshot is index-only — `get-project` / `read-file` on demand, not speculative bulk reads.
 - Skills: follow injected `## Active skill:` block only; never tell user to run a skill themselves.
 - No em dash (—). Memos/chat: blank lines between paragraphs; `- ` bullets one per line.
