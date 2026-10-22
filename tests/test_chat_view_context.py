@@ -40,12 +40,13 @@ class TestChatViewContext(unittest.TestCase):
         self.assertIn("viewPrimary ? (CURRENT_PROFILE_SLUG || STATE.profile) : null", APP_JS)
         self.assertIn("if (CURRENT_POST && viewPrimary) {", APP_JS)
 
-    def test_ongoing_unbound_chat_not_bound_by_open_tab(self):
+    def test_chat_project_comes_from_room_never_open_tab(self):
         body = APP_JS[APP_JS.index("function projectForTurn"):]
         body = body[:body.index("async function buildContext")]
-        guard = body.index("if (history.length > 1) return null;")
-        self.assertLess(body.index("if (activeChatProject)"), guard)
-        self.assertLess(guard, body.index("if (STATE.project)"))
+        self.assertLess(body.index("if (room?.project)"), body.index("for (const m of mentions)"))
+        self.assertLess(body.index("for (const m of mentions)"), body.index("if (activeChatProject)"))
+        for view_state in ("STATE.project", "STATE.profile", "CURRENT_PROFILE_SLUG", "location.hash"):
+            self.assertNotIn(view_state, body)
 
     def test_rail_says_topic_is_thread_not_screen(self):
         from dashboard.ai_rules import CHAT_RAIL

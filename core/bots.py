@@ -143,6 +143,10 @@ class Team:
     def get(self, bot_id):
         return self.bots.get(bot_id)
 
+    def resolve(self, bot_id):
+        """Active bot standing in for `bot_id` (itself, or its nearest active manager)."""
+        return self._roll_up(bot_id)
+
     def owner(self, skill):
         """Active bot that answers for this skill (unknown skills → cos)."""
         return self._owner.get(skill, ROOT_BOT)

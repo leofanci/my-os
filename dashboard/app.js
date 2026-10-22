@@ -192,6 +192,8 @@ const ROUTES = [
   [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
+  [/^\/room\/new$/,                              ()       => renderRoomForm(null)],
+  [/^\/room\/([a-z0-9-]+)\/edit$/,                ([n])    => renderRoomForm(n)],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
   [/^\/project\/([^/]+)\/edit$/,                ([s])    => renderEditProject(s)],
@@ -342,17 +344,6 @@ function saveOpen(){
 // A node is open if it's in the OPEN set (persisted). Navigate actions below
 // auto-add the parent to OPEN so navigating to a child keeps it visible,
 // but the user can still manually collapse the parent afterwards.
-function isOpen(kind, slug){
-  if(kind === "projects") return OPEN.projects.has(slug);
-  if(kind === "profiles") return OPEN.profiles.has(slug);
-  return false;
-}
-function toggleOpen(kind, slug){
-  const set = OPEN[kind];
-  set.has(slug) ? set.delete(slug) : set.add(slug);
-  saveOpen(); renderRail();
-}
-
 async function boot(){ await ensureSchemas(); await renderRail(); parseRoute(location.hash||"#/calendar"); }
 
 async function ensureIdRegistry(force=false){
@@ -406,81 +397,148 @@ function schemaFields(kind, memoType=null){
   return [];
 }
 
+// ── sidebar: views · channels (rooms) · DMs. Project tabs/profiles live in the
+// canvas nav (renderCanvasNav) so the sidebar reads like Slack.
+let _ROOMS = [];   // [{id, kind, name, project, members, lead}] from /api/rooms
+const roomById = id => _ROOMS.find(r => r.id === id);
+
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
   const regP = api("/api/id-registry").then(d => { IdReg.load(d); }).catch(() => IdReg.load({}));
   const schP = ensureSchemas();
   const botsP = api("/api/bots").then(d => d.bots || []).catch(() => []);
-  [_TREE, _POSTS, _SKILLS, , , _BOTS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, botsP]);
+  const roomsP = api("/api/rooms").then(d => d.rooms || []).catch(() => []);
+  [_TREE, _POSTS, _SKILLS, , , _BOTS, _ROOMS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, botsP, roomsP]);
   await ensureIdRegistry();
-  const projects = _TREE.map((p,pi)=>{
-    const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
-    const profileRows = p.profiles.length ? p.profiles.map(prof=>{
-      const hasCh = prof.channels.length > 0;
-      const profOpen = !hasCh || isOpen("profiles", prof.slug);
-      const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
-      const channelsBlock = prof.channels.length ? `<div class="kid">
-        ${prof.channels.map(ch=>`<a class="channel-row" data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}"><span class="channel-icon">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(PLAT_NAME[ch.platform]||ch.platform)}</a>`).join("")}
-        <a class="new-channel-row" data-new-channel="${esc(prof.slug)}">＋ Channel</a>
-      </div>` : ``;
-      return `<a class="profile-row" data-profile="${esc(prof.slug)}">
-        <span class="rail-chevron" data-toggle-profile="${esc(prof.slug)}">${wedge}</span>
-        <span class="rail-name">${esc(prof.name)}</span><span class="c">${prof.posts}</span>
-      </a>
-      ${hasCh && profOpen ? channelsBlock : ""}`;
-    }).join("") : `<a style="color:var(--dim);font-size:12px;padding:4px 9px">No profiles yet</a>`;
-    const pOpen = isOpen("projects", p.slug);
-    return `
-    <div class="project-group">
-      <div class="project-row" data-toggle-project="${esc(p.slug)}">
-        <span class="rail-chevron">${pOpen?"▾":"▸"}</span><span class="project-dot project-dot-${pi%4}" aria-hidden="true"></span><span class="rail-name">${esc(p.name)}</span>
-        <span class="project-kind">${esc(p.kind||p.type)}</span>
-        ${p.local_folder?`<button class="rail-folder" data-open-project-folder="${esc(p.slug)}" title="Open linked folder">▣</button>`:""}
-        <button class="rail-edit" data-edit-project="${esc(p.slug)}" data-os-id="${esc(OSID.route(`project/${p.slug}/edit`))}" title="Edit project">✎</button></div>
-      ${pOpen ? `<nav class="sec">
-        ${SECTIONS.map(s=>`<a data-project="${esc(p.slug)}" data-section="${s.key}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="ico">${s.ico}</span> ${esc(s.label)}${
-          s.key==="experiments"&&p.experiments?`<span class="c">${p.experiments}</span>`:
-          s.key==="product"&&totalFeatures?`<span class="c">${totalFeatures}</span>`:""}</a>`).join("")}
-        <div class="grp profile-group-label">Profiles
-          <button class="add-btn" data-new-profile="${esc(p.slug)}" data-os-id="${esc(OSID.btn("proj",p.slug,"new-profile"))}" title="Add profile">＋</button></div>
-        ${profileRows}
-      </nav>` : ""}
-    </div>`;
-  }).join("");
+  const roomRow = r => {
+    const b = r.kind === "dm" ? botById(r.lead) : null;
+    const ico = b ? `<span class="bot-av">${esc(b.icon)}</span>` : `<span class="ico">#</span>`;
+    const sub = r.kind === "topic" && r.project ? `<span class="c">${esc(r.project)}</span>` : "";
+    return `<a class="room-row" data-room="${esc(r.id)}">${ico}<span class="rail-name">${esc(r.name)}</span>${sub}</a>`;
+  };
+  const channels = _ROOMS.filter(r => r.kind !== "dm");
+  const dms = _ROOMS.filter(r => r.kind === "dm");
   $("#rail").innerHTML = `
     <div class="brand" id="brand-btn"><img class="mark" src="/logo.svg" alt=""><b>myOS</b>
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
-    <div class="rail-hdr"><span class="label">Now</span></div>
     <nav class="nav">
       <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
       <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
-    <div class="rail-hdr"><span class="label">Projects</span>
-      <button class="add-btn" id="new-project-btn" data-os-id="btn:global:new-project" title="New project">＋</button></div>
-    ${projects || '<div style="padding:8px 12px;color:var(--dim);font-size:12px">No projects yet — click ＋ to create one</div>'}
+    <div class="rail-hdr"><span class="label">Channels</span>
+      <button class="add-btn" id="new-room-btn" title="New channel">＋</button></div>
+    <nav class="nav rooms">${channels.map(roomRow).join("")}
+      <a class="room-add" id="new-project-btn" data-os-id="btn:global:new-project">＋ Add project</a></nav>
+    <div class="rail-hdr"><span class="label">Direct messages</span></div>
+    <nav class="nav rooms">${dms.map(roomRow).join("")}</nav>
     `;
   $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>selectGlobal(a.dataset.view));
-  $("#rail").querySelectorAll("[data-section]").forEach(a=>a.onclick=()=>selectSection(a.dataset.project,a.dataset.section));
-  $("#rail").querySelectorAll("[data-profile]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectProfile(a.dataset.profile, a.dataset.chanFilter||null); });
-  $("#rail").querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
-  $("#rail").querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
-  $("#rail").querySelectorAll("[data-open-project-folder]").forEach(b=>b.onclick=async e=>{
-    e.stopPropagation();
-    try{ await jpost(`/api/project/${b.dataset.openProjectFolder}/folder/open`,{}); }
-    catch(err){ toast("✗ "+err.message); }
-  });
-  $("#rail").querySelectorAll("[data-edit-project]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openEditProject(b.dataset.editProject); });
-  $("#rail").querySelectorAll("[data-toggle-project]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("projects", el.dataset.toggleProject); });
-  $("#rail").querySelectorAll("[data-toggle-profile]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("profiles", el.dataset.toggleProfile); });
+  $("#rail").querySelectorAll("[data-room]").forEach(a=>a.onclick=()=>window.ChatRooms?.select(a.dataset.room));
+  $("#new-room-btn").onclick=e=>{ e.stopPropagation(); navigate("#/room/new"); };
   $("#new-project-btn").onclick=e=>{ e.stopPropagation(); openNewProject(); };
   const brandMenu = $("#brand-menu");
   $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
   document.addEventListener("click", () => brandMenu.classList.remove("open"));
   $("#quit-btn").onclick = () => { fetch("/api/quit", {method:"POST"}).catch(()=>{}); setTimeout(()=>window.close(), 350); };
+  window.ChatRooms?.refresh();
   highlight();
+}
+
+// Project the canvas is showing: the open view's project, else (unless
+// viewOnly) the active room's.
+function canvasProject(viewOnly=false){
+  if (STATE.project) return _TREE.find(p => p.slug === STATE.project) || null;
+  const prof = STATE.profile || CURRENT_PROFILE_SLUG;
+  if (prof) return _TREE.find(p => p.profiles.some(x => x.slug === prof)) || null;
+  if (STATE.channelGuidelines) return _TREE.find(p => p.profiles.some(pr => pr.channels.some(c => c.slug === STATE.channelGuidelines))) || null;
+  const path = (location.hash || "").replace(/^#/, "");
+  const m = path.match(/^\/(?:project|room)\/([^/]+)/);
+  if (m && _TREE.some(p => p.slug === m[1])) return _TREE.find(p => p.slug === m[1]);
+  if (viewOnly) return null;
+  const room = roomById(window.ChatRooms?.current());
+  return room?.project ? (_TREE.find(p => p.slug === room.project) || null) : null;
+}
+
+// Canvas nav: the project's tabs + profiles (+ the open profile's social channels).
+function renderCanvasNav(){
+  const nav = $("#canvas-nav"); if (!nav) return;
+  const p = canvasProject();
+  if (!p) { nav.innerHTML = ""; nav.hidden = true; return; }
+  nav.hidden = false;
+  const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
+  const openProf = p.profiles.find(x => x.slug === (STATE.profile || CURRENT_PROFILE_SLUG));
+  nav.innerHTML = `
+    <div class="cn-row">
+      <b class="cn-name">${esc(p.name)}</b><span class="project-kind">${esc(p.kind||p.type)}</span>
+      ${p.local_folder?`<button class="rail-folder" data-open-project-folder="${esc(p.slug)}" title="Open linked folder">▣</button>`:""}
+      <button class="rail-edit" data-edit-project="${esc(p.slug)}" data-os-id="${esc(OSID.route(`project/${p.slug}/edit`))}" title="Edit project">✎</button>
+    </div>
+    <div class="cn-row cn-tabs">
+      ${SECTIONS.map(s=>`<a data-project="${esc(p.slug)}" data-section="${s.key}"><span class="ico">${s.ico}</span> ${esc(s.label)}${
+        s.key==="experiments"&&p.experiments?`<span class="c">${p.experiments}</span>`:
+        s.key==="product"&&totalFeatures?`<span class="c">${totalFeatures}</span>`:""}</a>`).join("")}
+      <span class="cn-sep"></span>
+      ${p.profiles.map(prof=>`<a data-profile="${esc(prof.slug)}">${esc(prof.name)}<span class="c">${prof.posts}</span></a>`).join("")}
+      <button class="add-btn" data-new-profile="${esc(p.slug)}" data-os-id="${esc(OSID.btn("proj",p.slug,"new-profile"))}" title="Add profile">＋</button>
+    </div>
+    ${openProf ? `<div class="cn-row cn-tabs">
+      ${openProf.channels.map(ch=>`<a data-profile="${esc(openProf.slug)}" data-chan-filter="${esc(ch.slug)}"><span class="channel-icon">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(PLAT_NAME[ch.platform]||ch.platform)}</a>`).join("")}
+      <a class="new-channel-row" data-new-channel="${esc(openProf.slug)}">＋ Channel</a></div>` : ""}`;
+  nav.querySelectorAll("[data-section]").forEach(a=>a.onclick=()=>selectSection(a.dataset.project,a.dataset.section));
+  nav.querySelectorAll("[data-profile]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectProfile(a.dataset.profile, a.dataset.chanFilter||null); });
+  nav.querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
+  nav.querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
+  nav.querySelectorAll("[data-open-project-folder]").forEach(b=>b.onclick=async e=>{
+    e.stopPropagation();
+    try{ await jpost(`/api/project/${b.dataset.openProjectFolder}/folder/open`,{}); }
+    catch(err){ toast("✗ "+err.message); }
+  });
+  nav.querySelectorAll("[data-edit-project]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openEditProject(b.dataset.editProject); });
+}
+
+// Topic channel form (canvas): name, project, members, lead.
+function renderRoomForm(name){
+  const existing = name ? roomById(`t-${name}`) : null;
+  if (name && !existing) { $("#main").innerHTML = `<div class="scroll"><div style="padding:30px;color:var(--dim)">Channel not found.</div></div>`; return; }
+  const active = _BOTS.filter(b => b.active);
+  const members = new Set(existing ? existing.members : []);
+  const lead = existing ? existing.lead : "cos";
+  $("#main").innerHTML = `
+    ${pageHeader(existing ? `#${existing.name}` : "New channel", "Back", existing ? `<button class="btn" id="room-del">Delete channel</button>` : "")}
+    <div class="scroll"><form class="form" id="room-form" style="max-width:560px">
+      ${flabel("Name")}${finput("name", existing?.name || "", 'placeholder="acme-launch" autocomplete="off"')}
+      <p class="field-help">Lowercase, digits, dashes. Shows as #name.</p>
+      ${flabel("Project")}${fsel("project", [["", "None (general)"], ..._TREE.map(p => [p.slug, p.name])], existing?.project || "")}
+      <p class="field-help">Bots load this project's data and memory here. None = general talk.</p>
+      ${flabel("Members")}
+      <div class="chan-checks">${active.map(b => `<label class="chan-check"><input type="checkbox" class="room-member" value="${esc(b.id)}"${members.has(b.id) ? " checked" : ""}> <span class="bot-av">${esc(b.icon)}</span> ${esc(b.name)}</label>`).join("")}</div>
+      ${flabel("Lead")}${fsel("lead", active.map(b => [b.id, b.name]), lead)}
+      <p class="field-help">Untagged messages go to the lead only. Members answer when you @tag them.</p>
+      <div style="margin-top:18px;display:flex;gap:8px"><button class="btn primary" type="submit">${existing ? "Save" : "Create channel"}</button></div>
+    </form></div>`;
+  $("#room-form").onsubmit = async e => {
+    e.preventDefault();
+    const v = formVals($("#room-form"));
+    const picked = [...document.querySelectorAll(".room-member:checked")].map(i => i.value);
+    try {
+      const out = await jpost("/api/rooms", { name: v.name, project: v.project, members: picked, lead: v.lead, replace: existing?.name || null });
+      await renderRail();
+      window.ChatRooms?.select(out.id);
+      toast(existing ? "Channel saved ✓" : "Channel created ✓");
+    } catch (err) { toast("✗ " + err.message); }
+  };
+  const del = $("#room-del");
+  if (del) del.onclick = async () => {
+    if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Click again to delete"; return; }
+    try {
+      await jpost(`/api/rooms/${existing.id}/delete`, {});
+      await renderRail(); window.ChatRooms?.select("hq");
+      toast("Channel deleted ✓ (threads moved to #hq)");
+    } catch (err) { toast("✗ " + err.message); }
+  };
 }
 
 function openNewProject(){ navigate("#/project/new"); }
@@ -520,11 +578,13 @@ function wireLocalFolderControls(root, projectSlug=null){
 }
 
 function highlight(){
+  renderCanvasNav();
   const mark=(a,on)=>{a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");};
   document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
-  document.querySelectorAll("#rail [data-section]").forEach(a=>mark(a,STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
-  document.querySelectorAll("#rail [data-profile]").forEach(a=>mark(a,(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
-  document.querySelectorAll("#rail [data-chan-guidelines]").forEach(a=>mark(a,STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
+  document.querySelectorAll("#rail [data-room]").forEach(a=>mark(a,a.dataset.room===window.ChatRooms?.current()));
+  document.querySelectorAll("#canvas-nav [data-section]").forEach(a=>mark(a,STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
+  document.querySelectorAll("#canvas-nav [data-profile]:not([data-chan-filter])").forEach(a=>mark(a,(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
+  document.querySelectorAll("#canvas-nav [data-chan-guidelines]").forEach(a=>mark(a,STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
   requestAnimationFrame(()=>document.querySelector("#rail [aria-current='page']")?.scrollIntoView({block:"nearest"}));
 }
 function selectGlobal(v){ navigate(`#/${v}`); }
@@ -2869,97 +2929,61 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const attachEl  = document.getElementById("attachments");
   const appEl     = document.getElementById("app");
 
-  // ── chat placement: right dock ⟷ bottom-left ⟷ hidden (persisted) ────────
+  // ── canvas pane: right of the chat, resizable, hideable (persisted) ────────
   const cssValue = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   const cssPx = (name, fallback) => parseInt(cssValue(name, ""), 10) || fallback;
-  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 300);
-  const CHAT_W_MAX = cssPx("--ui-shell-assistant-max", 1200);
-  const CENTER_MIN = cssPx("--ui-shell-center-min", 440);
-  const CHAT_W_DEFAULT = cssPx("--ui-shell-assistant-default", 360);
-  const CHAT_H_MIN = cssPx("--ui-shell-assistant-height-min", 220);
-  const CHAT_H_MAX = cssPx("--ui-shell-assistant-height-max", 720);
-  const CHAT_H_DEFAULT = cssPx("--ui-shell-assistant-height-default", 380);
-  const ASSISTANT_OVERLAY_BREAKPOINT = cssPx("--ui-breakpoint-assistant-overlay", 1440);
-  const UI_LAYOUT_VERSION = "precision-v2";
-  let chatPos = "right", chatHidden = false;
-  let chatW = CHAT_W_DEFAULT, chatH = CHAT_H_DEFAULT;
+  const CANVAS_W_MIN = cssPx("--ui-shell-center-min", 440);
+  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 360);
+  const CANVAS_W_DEFAULT = 640;
+  let canvasW = CANVAS_W_DEFAULT, canvasHidden = false;
   try {
-    chatPos = localStorage.getItem("chatPos") || "right";
-    const layoutIsCurrent = localStorage.getItem("uiLayoutVersion") === UI_LAYOUT_VERSION;
-    chatHidden = layoutIsCurrent ? localStorage.getItem("chatHidden") === "1" : window.innerWidth <= ASSISTANT_OVERLAY_BREAKPOINT;
-    const savedChatW = parseInt(localStorage.getItem("chatW"), 10) || CHAT_W_DEFAULT;
-    chatW = layoutIsCurrent
-      ? Math.min(CHAT_W_MAX, Math.max(CHAT_W_MIN, savedChatW)) : CHAT_W_DEFAULT;
-    chatH = Math.min(CHAT_H_MAX, Math.max(CHAT_H_MIN, parseInt(localStorage.getItem("chatH"), 10) || CHAT_H_DEFAULT));
-    localStorage.setItem("uiLayoutVersion", UI_LAYOUT_VERSION);
+    canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT;
+    canvasHidden = localStorage.getItem("canvasHidden") === "1";
   } catch {}
-  // Widest the chat can go right now: keep the center workspace >= CENTER_MIN.
-  // Chat + center width is constant in every layout, so measure both.
-  function chatWMax(){
+  // Widest the canvas can go right now: keep the chat column >= CHAT_W_MIN.
+  function canvasWMax(){
     const dock = document.getElementById("chat-dock");
-    const center = document.querySelector(".right-col");
+    const canvas = document.querySelector(".right-col");
     const shared = (dock ? dock.getBoundingClientRect().width : 0)
-                 + (center ? center.getBoundingClientRect().width : window.innerWidth);
-    return Math.max(CHAT_W_MIN, Math.min(CHAT_W_MAX, Math.floor(shared - CENTER_MIN)));
+                 + (canvas && !canvasHidden ? canvas.getBoundingClientRect().width : 0);
+    return Math.max(CANVAS_W_MIN, Math.floor(shared - CHAT_W_MIN));
   }
-  function applyChatSize(){
-    // chatW is the saved preference; render it clamped to the current window.
-    appEl.style.setProperty("--chat-w", Math.min(chatW, chatWMax()) + "px");
-    appEl.style.setProperty("--chat-h", chatH + "px");
-  }
-  function applyChat(){
-    appEl.classList.toggle("chat-bl", chatPos === "bl" && !chatHidden);
-    appEl.classList.toggle("chat-hidden", chatHidden);
-    applyChatSize();
-    const moveBtn = document.getElementById("chat-move");
-    if (moveBtn){
-      moveBtn.textContent = chatPos === "bl" ? "⇱" : "⇲";
-      moveBtn.title = chatPos === "bl" ? "Move chat to the right" : "Move chat to bottom-left";
-    }
+  function applyCanvas(){
+    appEl.classList.toggle("canvas-hidden", canvasHidden);
+    appEl.style.setProperty("--canvas-w", Math.max(CANVAS_W_MIN, Math.min(canvasW, canvasWMax())) + "px");
+    document.getElementById("canvas-toggle").classList.toggle("on", !canvasHidden);
     try {
-      localStorage.setItem("chatPos", chatPos);
-      localStorage.setItem("chatHidden", chatHidden ? "1" : "");
-      localStorage.setItem("chatW", String(chatW));
-      localStorage.setItem("chatH", String(chatH));
+      localStorage.setItem("canvasW", String(canvasW));
+      localStorage.setItem("canvasHidden", canvasHidden ? "1" : "");
     } catch {}
   }
-  (function bindChatResize(){
-    const handle = document.getElementById("chat-resize");
-    if (!handle) return;
-    let dragging = false, axis = "x", start = 0, startSize = 0;
-    const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  function showCanvas(){ if (canvasHidden) { canvasHidden = false; applyCanvas(); } }
+  (function bindCanvasResize(){
+    const handle = document.getElementById("canvas-resize");
+    let dragging = false, start = 0, startSize = 0;
     const onMove = e => {
       if (!dragging) return;
       const pt = e.touches ? e.touches[0] : e;
-      if (axis === "x") chatW = clamp(startSize + (start - pt.clientX), CHAT_W_MIN, chatWMax());
-      else chatH = clamp(startSize + (start - pt.clientY), CHAT_H_MIN, CHAT_H_MAX);
-      applyChatSize();
+      canvasW = Math.min(canvasWMax(), Math.max(CANVAS_W_MIN, startSize + (start - pt.clientX)));
+      applyCanvas();
       e.preventDefault();
     };
     const onEnd = () => {
       if (!dragging) return;
       dragging = false;
       handle.classList.remove("active");
-      document.body.classList.remove("chat-resizing", "chat-resize-v");
+      document.body.classList.remove("chat-resizing");
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onEnd);
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
-      try {
-        localStorage.setItem("chatW", String(chatW));
-        localStorage.setItem("chatH", String(chatH));
-      } catch {}
     };
     const onStart = e => {
-      if (chatHidden) return;
-      axis = chatPos === "bl" ? "y" : "x";
       const pt = e.touches ? e.touches[0] : e;
-      dragging = true;
-      start = axis === "x" ? pt.clientX : pt.clientY;
-      startSize = axis === "x" ? Math.min(chatW, chatWMax()) : chatH;
+      dragging = true; start = pt.clientX;
+      startSize = document.querySelector(".right-col").getBoundingClientRect().width;
       handle.classList.add("active");
       document.body.classList.add("chat-resizing");
-      if (axis === "y") document.body.classList.add("chat-resize-v");
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onEnd);
       window.addEventListener("touchmove", onMove, { passive: false });
@@ -2969,33 +2993,88 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     handle.addEventListener("mousedown", onStart);
     handle.addEventListener("touchstart", onStart, { passive: false });
   })();
-  applyChat();
-  window.addEventListener("resize", applyChatSize);
-  document.getElementById("chat-move").onclick   = () => { chatPos = chatPos === "bl" ? "right" : "bl"; chatHidden = false; applyChat(); };
-  document.getElementById("chat-hide").onclick   = () => { chatHidden = true; applyChat(); };
-  document.getElementById("chat-reopen").onclick = () => { chatHidden = false; applyChat(); };
+  applyCanvas();
+  window.addEventListener("resize", applyCanvas);
+  document.getElementById("canvas-toggle").onclick = () => { canvasHidden = !canvasHidden; applyCanvas(); };
+
+  // ── rooms (Slack channels + DMs): each keeps its own threads ──────────────
+  // A thread is a saved chat; the room remembers its last open thread.
+  let activeRoomId = "hq";
+  let roomThreads = {};
+  try {
+    activeRoomId = localStorage.getItem("roomId") || "hq";
+    roomThreads = JSON.parse(localStorage.getItem("roomThreads") || "{}") || {};
+  } catch {}
+  const roomTitleEl = document.getElementById("room-title");
+  const roomMembersEl = document.getElementById("room-members");
+  const roomEditBtn = document.getElementById("room-edit");
+
+  function paintRoomHeader(){
+    const room = roomById(activeRoomId);
+    if (!room) { roomTitleEl.textContent = activeRoomId === "hq" ? "# hq" : "…"; return; }
+    const lead = botById(room.lead);
+    roomTitleEl.textContent = room.kind === "dm" ? `${lead?.icon || ""} ${room.name}` : `# ${room.name}`;
+    roomMembersEl.innerHTML = room.kind === "dm" ? "" : room.members.map(id => {
+      const b = botById(id);
+      return b ? `<span class="bot-av${id === room.lead ? " lead" : ""}" title="${esc(b.name)}${id === room.lead ? " (lead)" : ""}">${esc(b.icon)}</span>` : "";
+    }).join("");
+    roomEditBtn.hidden = room.kind !== "topic";
+    input.placeholder = room.kind === "dm"
+      ? `Message ${room.name}…`
+      : `Message #${room.name} (untagged → ${lead?.name || "lead"}, @ to tag)`;
+  }
+  roomEditBtn.onclick = () => { const r = roomById(activeRoomId); if (r) { showCanvas(); navigate(`#/room/${r.name}/edit`); } };
+
+  function selectRoom(id){
+    if (busy) return busyNote();
+    if (_ROOMS.length && !roomById(id)) id = "hq";
+    const changed = id !== activeRoomId;
+    activeRoomId = id;
+    try { localStorage.setItem("roomId", id); } catch {}
+    chatListEl.hidden = true;
+    paintRoomHeader();
+    const thread = roomThreads[id];
+    if (changed || !activeChatId || activeChatId !== thread) {
+      if (thread) openChat(thread);
+      else { setActiveChat(null); showChat([]); statusEl.textContent = "Ready"; fetch("/api/chat-reset", { method: "POST" }).catch(() => {}); }
+    }
+    // A project room points the canvas at that project (unless it already is).
+    const room = roomById(id);
+    if (changed && room?.project && canvasProject(true)?.slug !== room.project)
+      navigate(`#/project/${room.project}/${SECTIONS[0].key}`);
+    highlight();
+  }
+  window.ChatRooms = {
+    select: selectRoom,
+    current: () => activeRoomId,
+    refresh: () => {
+      if (_ROOMS.length && !roomById(activeRoomId)) return selectRoom("hq");
+      paintRoomHeader();
+      if (!activeChatId && !history.length && !busy) showChat([]);   // welcome now knows the room
+    },
+  };
+
   // ── saved chats: each is its own claude session (server chat_store) ─────
   // Active chat id survives reloads; its transcript is loaded from the server.
   let activeChatId = null;
   let activeChatProject = null;   // project the chat is bound to (see projectForTurn)
-  try { activeChatId = localStorage.getItem("chatActiveId") || null; } catch {}
   const chatListEl = document.getElementById("chat-list");
   const chatTitleEl = document.getElementById("chat-title");
 
   function setActiveChat(id, title, project){
     activeChatId = id || null;
     activeChatProject = (id && project) || null;
-    chatTitleEl.textContent = (id && title) || "New chat";
+    chatTitleEl.textContent = (id && title) || "New thread";
     chatTitleEl.title = chatTitleEl.textContent;
-    try {
-      if (activeChatId) localStorage.setItem("chatActiveId", activeChatId);
-      else localStorage.removeItem("chatActiveId");
-    } catch {}
+    if (activeChatId) roomThreads[activeRoomId] = activeChatId;
+    else delete roomThreads[activeRoomId];
+    try { localStorage.setItem("roomThreads", JSON.stringify(roomThreads)); } catch {}
   }
   function showChat(msgs){
     history.length = 0; stream.innerHTML = "";
     if (!msgs || !msgs.length) return showWelcome();
     msgs.forEach(m => { history.push(m); addMsg(m.role, m.content, m.bot); });
+    stream.scrollTop = stream.scrollHeight;
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
   async function openChat(id){
@@ -3018,13 +3097,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return Math.floor(d / 86400) + "d";
   }
   async function renderChatList(){
-    const { chats = [] } = await fetch("/api/chats").then(r => r.json()).catch(() => ({}));
+    const { chats = [] } = await fetch(`/api/chats?room=${encodeURIComponent(activeRoomId)}`).then(r => r.json()).catch(() => ({}));
     chatListEl.innerHTML = chats.length ? chats.map(c =>
       `<div class="cl-row${c.id === activeChatId ? " active" : ""}" data-chat="${esc(c.id)}">
          <span class="cl-title">${esc(c.title || "New chat")}</span>
          <span class="cl-when">${relTime(c.updated)}</span>
          <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat">✕</button>
-       </div>`).join("") : `<div class="cl-empty">No saved chats yet.</div>`;
+       </div>`).join("") : `<div class="cl-empty">No threads in this channel yet.</div>`;
   }
   chatListEl.addEventListener("click", async e => {
     const del = e.target.closest("[data-del]");
@@ -3200,7 +3279,9 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         out.push({ type:"skill", slug:s.name, name:s.name, meta:(s.description||"").slice(0, 90) });
       return out;
     }
-    for (const b of _BOTS.filter(b => b.active))
+    const members = roomById(activeRoomId)?.members || [];
+    const ranked = _BOTS.filter(b => b.active).sort((a, b) => members.includes(b.id) === members.includes(a.id) ? 0 : members.includes(a.id) ? -1 : 1);
+    for (const b of ranked)
       out.push({ type:"bot", slug:b.handle, name:b.name, meta:"@" + b.handle, icon:b.icon });
     for (const p of _TREE) {
       out.push({ type:"project", slug:p.slug, osId:OSID.proj(p.slug), name:p.name, meta:(p.kind||p.type||"project") });
@@ -3303,7 +3384,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── chat ─────────────────────────────────────────────────────────────────
   const history = [];
   let busy = false;
-  if (activeChatId) openChat(activeChatId);   // restore last open saved chat
+  selectRoom(activeRoomId);   // restore last room + its open thread
   let chatAbort = null;   // AbortController for the in-flight /api/ask stream
 
   // ESC stops the current turn: abort the SSE stream client-side AND tell the
@@ -3463,14 +3544,16 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   }
 
   function projectForTurn(text){
-    // Prefer an explicitly referenced project/entity, then the current view.
-    // Send only its slug; the server resolves any path from project.md and
-    // never trusts a client-supplied folder. Sending unlinked projects lets the
-    // server stop code requests cleanly instead of inspecting myOS by mistake.
+    // A project's channels are bound to it (server enforces this too). Elsewhere
+    // (#hq, general topic channels, DMs) only an explicit reference binds a
+    // project; the open canvas view never does. Send only the slug; the server
+    // resolves any path from project.md and never trusts a client-supplied folder.
     const project = slug => {
       const p = _TREE.find(x => x.slug === slug);
       return p?.slug || null;
     };
+    const room = roomById(activeRoomId);
+    if (room?.project) return project(room.project);
     for (const m of mentions) {
       if (!text.includes(m.token)) continue;
       if (m.type === "project") {
@@ -3490,32 +3573,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (activeChatProject) {
       const slug = project(activeChatProject);
       if (slug) return slug;
-    }
-    // Ongoing unbound chat: the open tab must not bind it to a project either.
-    if (history.length > 1) return null;
-    if (STATE.project) {
-      const slug = project(STATE.project);
-      if (slug) return slug;
-    }
-    const profile = CURRENT_PROFILE_SLUG || STATE.profile;
-    if (profile) {
-      const parent = _TREE.find(p => p.profiles.some(x => x.slug === profile));
-      const slug = project(parent?.slug);
-      if (slug) return slug;
-    }
-    if (STATE.channelGuidelines) {
-      const parent = _TREE.find(p => p.profiles.some(pr =>
-        pr.channels.some(ch => ch.slug === STATE.channelGuidelines)));
-      const slug = project(parent?.slug);
-      if (slug) return slug;
-    }
-    const path = (location.hash || "").replace(/^#/, "").replace(/\?.*$/, "");
-    const projectMatch = path.match(/^\/project\/([^/]+)/);
-    if (projectMatch) return project(projectMatch[1]);
-    const productMatch = path.match(/^\/product\/([^/]+)/);
-    if (productMatch) {
-      const parent = _TREE.find(p => p.products.some(x => x.slug === productMatch[1]));
-      return project(parent?.slug);
     }
     return null;
   }
@@ -3704,7 +3761,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     attachedFiles = []; renderAttachments();
     mentions = [];
 
-    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "";
+    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "", wrote = false;
     startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
     let pendingBreak = false;
 
@@ -3713,6 +3770,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const payload = { messages: [{ role: "user", content: text }], context: ctx };
       if (projectSlug) payload.project_slug = projectSlug;
       if (activeChatId) payload.chat_id = activeChatId;
+      payload.room_id = activeRoomId;
       const resp = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3761,7 +3819,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               pendingBreak = false;
               full += obj.delta; bubble.innerHTML = formatChatText(full); stream.scrollTop = stream.scrollHeight;
             }
-            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
+            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; if (obj.tool === "Bash") wrote = true; }
           } catch {}
         }
       }
@@ -3782,6 +3840,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       finalizeSteps();                // turn the live steps line into a quiet summary
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
+      if (wrote) showCanvas();        // a bot ran osctl: let the canvas show it
     }
   }
 
@@ -3800,13 +3859,19 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   });
 
   function showWelcome(){
-    addMsg("assistant", "Your team is here. Tag a teammate with @, or just ask and the Chief of Staff routes it.", "cos");
-    const cmds = [
-      ["@social draft post",   "@social "],
-      ["@product design test", "@product /experiment-design "],
-      ["@cmo positioning",     "@cmo /positioning "],
-      ["@cos weekly review",   "@cos /weekly-review "],
-    ];
+    const room = roomById(activeRoomId);
+    const lead = botById(room?.lead || "cos");
+    const where = room?.kind === "dm" ? "Direct message" : `#${room?.name || "hq"}`;
+    const scope = room?.project ? ` Working on ${room.project}.` : room?.kind === "dm" ? " General talk; @mention a project to bring it in." : "";
+    addMsg("assistant", `${where}.${scope} ${room?.kind === "dm" ? "" : `Untagged messages go to ${lead?.name || "the lead"}; @ tags a teammate.`}`.trim(), lead?.id);
+    const SUGS = {
+      cos: ["Weekly review", "/weekly-review "], product: ["Design a test", "@product /experiment-design "],
+      cmo: ["Positioning", "@cmo /positioning "], gtm: ["Launch plan", "@gtm /launch-plan "],
+      social: ["Plan content", "@social /content-plan "], research: ["Competitors", "@research /competitor-scan "],
+      cto: ["How the app works", "@cto "],
+    };
+    const ids = room?.members?.length ? room.members : Object.keys(SUGS);
+    const cmds = ids.map(id => SUGS[id]).filter(Boolean).slice(0, 4);
     const wrap = document.createElement("div");
     wrap.className = "sugs";
     cmds.forEach(([label, cmd]) => {
@@ -3820,7 +3885,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     stream.appendChild(wrap);
     stream.scrollTop = stream.scrollHeight;
   }
-  showWelcome();
 })();
 
 boot();

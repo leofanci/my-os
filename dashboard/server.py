@@ -40,6 +40,7 @@ import chat_session      # noqa: E402
 import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
 from core import bots    # noqa: E402
+from core import rooms   # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
 from ai_rules import CHAT_RAIL  # noqa: E402
@@ -409,14 +410,15 @@ def _suggest_skill(text, among=None):
     return None
 
 
-def _route_bot(team, user_msg, session):
+def _route_bot(team, user_msg, session, default_bot=bots.ROOT_BOT, sticky=True):
     """Pick (bot, skill, explicit, handoff_from) for one turn.
 
     explicit /skill → its owner bot. @bot → that bot; the skill its wording
     matches (if another bot owns it, hand off to that owner); a write with no
     match uses the bot's default skill; a single-skill bot always uses it.
-    Untagged → whoever spoke last in this chat (Chief of Staff on a new one),
-    no skill: the write gate and Haiku policy stay exactly as before.
+    Untagged → whoever spoke last in this chat (`sticky`), else the room's
+    lead (`default_bot`); no skill: the write gate and Haiku policy stay
+    exactly as before. A DM passes sticky=False so it always answers itself.
     """
     tagged_skill = _explicit_skill(user_msg)
     mentioned = team.mentioned(user_msg)
@@ -439,8 +441,10 @@ def _route_bot(team, user_msg, session):
         return mentioned, None, False, None
     if _continuation_allowed(session, user_msg):
         return team.owner(session._last_skill), None, False, None
-    last_bot = team.get(getattr(session, "_last_bot", None) or "")
-    return (last_bot.id if last_bot and last_bot.active else bots.ROOT_BOT), None, False, None
+    last_bot = team.get(getattr(session, "_last_bot", None) or "") if sticky else None
+    if last_bot and last_bot.active:
+        return last_bot.id, None, False, None
+    return team.resolve(default_bot), None, False, None
 
 
 def _route_skill(text):
@@ -576,7 +580,8 @@ def _tag_gate_message(suggest, team=None):
     )
 
 
-def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fresh=False):
+def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fresh=False,
+               members=None):
     """Persona for the speaking bot. Full card (job, team, memory) when the
     session is fresh or the speaker changed; a one-line marker otherwise."""
     b = team.get(bot_id) if team else None
@@ -588,9 +593,11 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
         if b.covering:
             names = ", ".join(team.get(c).name for c in b.covering)
             lines.append(f"Also covering for (switched off): {names}.")
-        lines.append("Team (tag the owner for work outside your skills):\n"
-                     + "\n".join(team.roster_line(o.id) for o in team.ordered()
-                                  if o.active and o.id != bot_id))
+        peers = [o for o in team.ordered() if o.active and o.id != bot_id
+                 and (members is None or o.id in members)]
+        if peers:
+            lines.append("In this channel (tag the owner for work outside your skills):\n"
+                         + "\n".join(team.roster_line(o.id) for o in peers))
         mem = bots.read_memory(bot_id, project_slug or None, ROOT)
         where = project_slug or "HQ"
         lines.append(f"Your memory ({where}):\n{mem}" if mem
@@ -857,7 +864,11 @@ class Handler(BaseHTTPRequestHandler):
         # Per-turn routing: explicit @bot or /skill tags only (keyword → hint, not Sonnet).
         context = (body.get("context") or "").strip()
         projects = db.tree()
+        team = bots.team(ROOT)
+        room = rooms.get_room(str(body.get("room_id") or "hq"), team, projects, ROOT)
         project_slug = str(body.get("project_slug") or "").strip()
+        if room and room.get("project"):
+            project_slug = room["project"]  # a project's channels never mix projects
         project_record = next(
             (p for p in projects if p.get("slug") == project_slug), None,
         )
@@ -867,8 +878,10 @@ class Handler(BaseHTTPRequestHandler):
         )
         chat_id = body.get("chat_id") or None
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
-        team = bots.team(ROOT)
-        bot_id, skill, routed, handoff_from = _route_bot(team, user_msg, sess)
+        bot_id, skill, routed, handoff_from = _route_bot(
+            team, user_msg, sess,
+            default_bot=(room or {}).get("lead") or bots.ROOT_BOT,
+            sticky=(room or {}).get("kind") != "dm")
         explicit = skill if routed else None
         suggest = _suggest_skill(user_msg) if not explicit else None
 
@@ -994,7 +1007,8 @@ class Handler(BaseHTTPRequestHandler):
             explicit=bool(explicit),
             workspace=workspace,
             bot=_bot_block(team, bot_id, sess, project_slug if project_record else None,
-                           handoff_from, fresh=sess.is_fresh()),
+                           handoff_from, fresh=sess.is_fresh(),
+                           members=(room["members"] if room and room["kind"] == "topic" else None)),
             suggest_owner=(team.get(team.owner(suggest)).handle if suggest else None),
         )
         sess.note_skill(skill, explicit=bool(explicit))
@@ -1054,7 +1068,7 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
                     chat_store.record_turn(sess, project_scope, user_msg, "".join(reply),
-                                           bot=bot_id)
+                                           bot=bot_id, room=(room or {}).get("id"))
                 except (OSError, ValueError):
                     traceback.print_exc()
             try:
@@ -1210,7 +1224,12 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"session_id": None, "turn_count": 0, "fresh": True})
                 return self._send(200, _CHAT.session_meta())
             if path == "/api/chats":
-                return self._send(200, {"chats": chat_store.list_meta()})
+                chats = chat_store.list_meta()
+                room = (parse_qs(urlparse(self.path).query).get("room") or [None])[0]
+                if room:
+                    ids = {r["id"] for r in rooms.list_rooms(bots.team(ROOT), db.tree(), ROOT)}
+                    chats = [c for c in chats if rooms.room_of_chat(c, ids) == room]
+                return self._send(200, {"chats": chats})
             if path.startswith("/api/chats/"):
                 rec = chat_store.load(path[len("/api/chats/"):])
                 if rec is None:
@@ -1226,6 +1245,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _skills_index())
             if path == "/api/bots":
                 return self._send(200, {"bots": bots.team(ROOT).to_api()})
+            if path == "/api/rooms":
+                return self._send(200, {"rooms": rooms.list_rooms(bots.team(ROOT), db.tree(), ROOT)})
             if path == "/api/schemas":
                 return self._send(200, schemas_for_api())
             if path == "/api/id-catalog":
@@ -1546,6 +1567,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path == "/api/rooms":
+                members = body.get("members") or []
+                if not isinstance(members, list):
+                    raise ValueError("members must be a list")
+                room_id = rooms.save_topic(
+                    body.get("name"), body.get("project") or None, members,
+                    body.get("lead"), db.tree(), ROOT, replace=body.get("replace") or None)
+                return self._send(200, {"id": room_id, "rooms": rooms.list_rooms(
+                    bots.team(ROOT), db.tree(), ROOT)})
+            if path.startswith("/api/rooms/t-") and path.endswith("/delete"):
+                rooms.delete_topic(path[len("/api/rooms/t-"):-len("/delete")], ROOT)
+                return self._send(200, {"ok": True})
             if path.startswith("/api/bots/") and path.endswith("/active"):
                 bot_id = path[len("/api/bots/"):-len("/active")]
                 team = bots.set_active(bot_id, bool(body.get("active")), ROOT)

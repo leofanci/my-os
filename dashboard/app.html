@@ -13,25 +13,15 @@
 <div class="titlebar"></div>
 <div class="app" id="app" data-os-id="panel:shell">
   <aside class="panel side" id="rail" data-os-id="panel:rail"></aside>
-  <div class="right-col" data-os-id="panel:main-col">
-    <section class="panel main" id="main" data-os-id="panel:main"><div class="scroll"><div style="padding:30px;color:var(--dim)">loading…</div></div></section>
-    <div class="panel term-panel" id="term-panel" data-os-id="panel:terminal">
-      <div class="tbar" id="term-tab"><span id="term-chevron">▸</span>&nbsp;Terminal
-        <span class="thint">full claude · all skills</span>
-        <button class="tclose" id="term-close" title="Toggle terminal" data-os-id="btn:global:terminal-toggle">open ⌃`</button></div>
-      <div class="term-mount" id="term"></div>
-    </div>
-  </div>
   <aside class="panel chat-dock" id="chat-dock" data-os-id="panel:chat">
-    <div class="chat-resize" id="chat-resize" title="Drag to resize chat"></div>
     <div class="dock-bar">
-      <span class="av"></span>
-      <div class="chat-head"><b id="chat-title">New chat</b><span class="sm" id="chat-status">Ready</span></div>
+      <div class="chat-head"><b id="room-title"># hq</b><span class="sm"><span id="chat-title">New thread</span> · <span id="chat-status">Ready</span></span></div>
+      <div class="room-members" id="room-members"></div>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="term-btn" id="chat-list-btn" title="Saved chats" data-os-id="btn:global:chat-list">☰</button>
-        <button class="term-btn" id="chat-new" title="New chat (old one stays saved)" data-os-id="btn:global:chat-new">+</button>
-        <button class="term-btn" id="chat-move" title="Move chat to bottom-left" data-os-id="btn:global:chat-move">⇲</button>
-        <button class="term-btn" id="chat-hide" title="Hide chat" data-os-id="btn:global:chat-hide">✕</button>
+        <button class="term-btn" id="room-edit" title="Edit channel" hidden>✎</button>
+        <button class="term-btn" id="chat-list-btn" title="Threads in this channel" data-os-id="btn:global:chat-list">☰</button>
+        <button class="term-btn" id="chat-new" title="New thread (old one stays saved)" data-os-id="btn:global:chat-new">+</button>
+        <button class="term-btn" id="canvas-toggle" title="Show or hide canvas" data-os-id="btn:global:canvas-toggle">▣</button>
       </div>
     </div>
     <div class="chat-list" id="chat-list" hidden></div>
@@ -46,8 +36,18 @@
       </div>
     </div>
   </aside>
+  <div class="right-col" data-os-id="panel:main-col">
+    <div class="canvas-resize" id="canvas-resize" title="Drag to resize canvas"></div>
+    <nav class="panel canvas-nav" id="canvas-nav" hidden></nav>
+    <section class="panel main" id="main" data-os-id="panel:main"><div class="scroll"><div style="padding:30px;color:var(--dim)">loading…</div></div></section>
+    <div class="panel term-panel" id="term-panel" data-os-id="panel:terminal">
+      <div class="tbar" id="term-tab"><span id="term-chevron">▸</span>&nbsp;Terminal
+        <span class="thint">full claude · all skills</span>
+        <button class="tclose" id="term-close" title="Toggle terminal" data-os-id="btn:global:terminal-toggle">open ⌃`</button></div>
+      <div class="term-mount" id="term"></div>
+    </div>
+  </div>
 </div>
-<button class="chat-reopen" id="chat-reopen" data-os-id="btn:global:chat-reopen">💬 Chat</button>
 <div id="toast" data-os-id="panel:toast"></div>
 <script src="/os-ids.js"></script>
 <script src="/post-copy.js"></script>

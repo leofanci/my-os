@@ -61,13 +61,15 @@ def list_meta():
             rec = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        out.append({k: rec.get(k) for k in ("id", "title", "created", "updated", "turn_count")})
+        out.append({k: rec.get(k) for k in ("id", "title", "created", "updated", "turn_count",
+                                            "room", "scope")})
     return sorted(out, key=lambda r: r.get("updated") or 0, reverse=True)
 
 
-def record_turn(sess, scope, user_msg, reply, bot=None):
+def record_turn(sess, scope, user_msg, reply, bot=None, room=None):
     """Append one exchange to the chat backing `sess` and snapshot its resume state.
-    `bot` = id of the teammate that answered (shown on the reply when reopened)."""
+    `bot` = id of the teammate that answered (shown on the reply when reopened);
+    `room` = channel/DM the thread started in (core.rooms; kept once set)."""
     rec = load(sess.session_id) or {
         "id": sess.session_id,
         "title": title_from(user_msg),
@@ -89,5 +91,7 @@ def record_turn(sess, scope, user_msg, reply, bot=None):
         "skill_explicit": sess._skill_explicit,
         "last_bot": getattr(sess, "_last_bot", None),
     })
+    if room and not rec.get("room"):
+        rec["room"] = room
     save(rec)
     return rec
