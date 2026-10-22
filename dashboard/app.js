@@ -397,48 +397,84 @@ function schemaFields(kind, memoType=null){
   return [];
 }
 
-// ── sidebar: views · channels (rooms) · DMs. Project tabs/profiles live in the
-// canvas nav (renderCanvasNav) so the sidebar reads like Slack.
-let _ROOMS = [];   // [{id, kind, name, project, members, lead}] from /api/rooms
+// ── workspaces (Slack-style): HQ = the holding's CEO office, every project =
+// one company. Each has its own channels, DMs, threads and switched-on bots;
+// bots in one never see another. The calendar is the one shared thing.
+let _WORKSPACES = [];  // [{id, name, kind}] from /api/workspaces
+let _WS = "hq";
+try { _WS = localStorage.getItem("wsId") || "hq"; } catch {}
+let _ROOMS = [];   // current workspace's rooms: [{id, kind, name, members, lead}]
 const roomById = id => _ROOMS.find(r => r.id === id);
+const wsById = id => _WORKSPACES.find(w => w.id === id);
+const wsProject = () => (_WS !== "hq" ? _TREE.find(p => p.slug === _WS) || null : null);
+
+function wsBadge(w){
+  if (w.id === "hq") return "HQ";
+  const words = (w.name || w.id).split(/[\s_-]+/).filter(Boolean);
+  return ((words[0] || "")[0] + ((words[1] || "")[0] || (words[0] || "")[1] || "")).toUpperCase();
+}
+
+function renderWsBar(){
+  const bar = $("#ws-bar"); if (!bar) return;
+  bar.innerHTML = _WORKSPACES.map(w => `<button class="ws-btn${w.id === _WS ? " active" : ""}${w.id === "hq" ? " hq" : ""}" data-ws="${esc(w.id)}" title="${esc(w.name)}${w.id === "hq" ? " · holding" : ` · ${esc(w.kind)}`}">${esc(wsBadge(w))}</button>`).join("")
+    + `<button class="ws-btn ws-add" id="new-project-btn" data-os-id="btn:global:new-project" title="New project (= new workspace)">＋</button>`;
+  bar.querySelectorAll("[data-ws]").forEach(b => b.onclick = () => switchWorkspace(b.dataset.ws));
+  $("#new-project-btn").onclick = e => { e.stopPropagation(); openNewProject(); };
+}
+
+async function switchWorkspace(ws){
+  if (window.ChatRooms?.busy()) return toast("Reply in progress · Esc to stop");
+  const changed = ws !== _WS;
+  _WS = ws;
+  try { localStorage.setItem("wsId", ws); } catch {}
+  await renderRail();
+  window.ChatRooms?.enterWorkspace();
+  if (changed) navigate(ws === "hq" ? "#/calendar" : `#/project/${ws}/${SECTIONS[0].key}`);
+}
+window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
   const regP = api("/api/id-registry").then(d => { IdReg.load(d); }).catch(() => IdReg.load({}));
   const schP = ensureSchemas();
-  const botsP = api("/api/bots").then(d => d.bots || []).catch(() => []);
-  const roomsP = api("/api/rooms").then(d => d.rooms || []).catch(() => []);
-  [_TREE, _POSTS, _SKILLS, , , _BOTS, _ROOMS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, botsP, roomsP]);
+  const wsP = api("/api/workspaces").then(d => d.workspaces || []).catch(() => [{ id: "hq", name: "HQ", kind: "hq" }]);
+  [_TREE, _POSTS, _SKILLS, , , _WORKSPACES] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, wsP]);
+  if (!wsById(_WS)) { _WS = "hq"; try { localStorage.setItem("wsId", "hq"); } catch {} }
+  const q = `?ws=${encodeURIComponent(_WS)}`;
+  [_BOTS, _ROOMS] = await Promise.all([
+    api("/api/bots" + q).then(d => d.bots || []).catch(() => []),
+    api("/api/rooms" + q).then(d => d.rooms || []).catch(() => []),
+  ]);
   await ensureIdRegistry();
+  renderWsBar();
+  const w = wsById(_WS) || { id: "hq", name: "HQ", kind: "hq" };
   const roomRow = r => {
     const b = r.kind === "dm" ? botById(r.lead) : null;
     const ico = b ? `<span class="bot-av">${esc(b.icon)}</span>` : `<span class="ico">#</span>`;
-    const sub = r.kind === "topic" && r.project ? `<span class="c">${esc(r.project)}</span>` : "";
-    return `<a class="room-row" data-room="${esc(r.id)}">${ico}<span class="rail-name">${esc(r.name)}</span>${sub}</a>`;
+    return `<a class="room-row" data-room="${esc(r.id)}">${ico}<span class="rail-name">${esc(r.name)}</span></a>`;
   };
   const channels = _ROOMS.filter(r => r.kind !== "dm");
   const dms = _ROOMS.filter(r => r.kind === "dm");
   $("#rail").innerHTML = `
-    <div class="brand" id="brand-btn"><img class="mark" src="/logo.svg" alt=""><b>myOS</b>
+    <div class="brand" id="brand-btn"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>
+      <span class="project-kind">${esc(w.id === "hq" ? "holding" : w.kind)}</span>
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
     <nav class="nav">
       <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
-      <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
+      <a data-view="calendar"><span class="ico">▦</span> Calendar <span class="c">shared</span></a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
       <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
     <div class="rail-hdr"><span class="label">Channels</span>
       <button class="add-btn" id="new-room-btn" title="New channel">＋</button></div>
-    <nav class="nav rooms">${channels.map(roomRow).join("")}
-      <a class="room-add" id="new-project-btn" data-os-id="btn:global:new-project">＋ Add project</a></nav>
+    <nav class="nav rooms">${channels.map(roomRow).join("")}</nav>
     <div class="rail-hdr"><span class="label">Direct messages</span></div>
     <nav class="nav rooms">${dms.map(roomRow).join("")}</nav>
     `;
   $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>selectGlobal(a.dataset.view));
   $("#rail").querySelectorAll("[data-room]").forEach(a=>a.onclick=()=>window.ChatRooms?.select(a.dataset.room));
   $("#new-room-btn").onclick=e=>{ e.stopPropagation(); navigate("#/room/new"); };
-  $("#new-project-btn").onclick=e=>{ e.stopPropagation(); openNewProject(); };
   const brandMenu = $("#brand-menu");
   $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
   document.addEventListener("click", () => brandMenu.classList.remove("open"));
@@ -455,11 +491,9 @@ function canvasProject(viewOnly=false){
   if (prof) return _TREE.find(p => p.profiles.some(x => x.slug === prof)) || null;
   if (STATE.channelGuidelines) return _TREE.find(p => p.profiles.some(pr => pr.channels.some(c => c.slug === STATE.channelGuidelines))) || null;
   const path = (location.hash || "").replace(/^#/, "");
-  const m = path.match(/^\/(?:project|room)\/([^/]+)/);
+  const m = path.match(/^\/project\/([^/]+)/);
   if (m && _TREE.some(p => p.slug === m[1])) return _TREE.find(p => p.slug === m[1]);
-  if (viewOnly) return null;
-  const room = roomById(window.ChatRooms?.current());
-  return room?.project ? (_TREE.find(p => p.slug === room.project) || null) : null;
+  return viewOnly ? null : wsProject();
 }
 
 // Canvas nav: the project's tabs + profiles (+ the open profile's social channels).
@@ -501,7 +535,7 @@ function renderCanvasNav(){
 
 // Topic channel form (canvas): name, project, members, lead.
 function renderRoomForm(name){
-  const existing = name ? roomById(`t-${name}`) : null;
+  const existing = name ? roomById(`${_WS}/t-${name}`) : null;
   if (name && !existing) { $("#main").innerHTML = `<div class="scroll"><div style="padding:30px;color:var(--dim)">Channel not found.</div></div>`; return; }
   const active = _BOTS.filter(b => b.active);
   const members = new Set(existing ? existing.members : []);
@@ -511,8 +545,7 @@ function renderRoomForm(name){
     <div class="scroll"><form class="form" id="room-form" style="max-width:560px">
       ${flabel("Name")}${finput("name", existing?.name || "", 'placeholder="acme-launch" autocomplete="off"')}
       <p class="field-help">Lowercase, digits, dashes. Shows as #name.</p>
-      ${flabel("Project")}${fsel("project", [["", "None (general)"], ..._TREE.map(p => [p.slug, p.name])], existing?.project || "")}
-      <p class="field-help">Bots load this project's data and memory here. None = general talk.</p>
+      <p class="field-help">In ${esc(wsById(_WS)?.name || "HQ")}: bots here only see this workspace.</p>
       ${flabel("Members")}
       <div class="chan-checks">${active.map(b => `<label class="chan-check"><input type="checkbox" class="room-member" value="${esc(b.id)}"${members.has(b.id) ? " checked" : ""}> <span class="bot-av">${esc(b.icon)}</span> ${esc(b.name)}</label>`).join("")}</div>
       ${flabel("Lead")}${fsel("lead", active.map(b => [b.id, b.name]), lead)}
@@ -524,9 +557,10 @@ function renderRoomForm(name){
     const v = formVals($("#room-form"));
     const picked = [...document.querySelectorAll(".room-member:checked")].map(i => i.value);
     try {
-      const out = await jpost("/api/rooms", { name: v.name, project: v.project, members: picked, lead: v.lead, replace: existing?.name || null });
+      const out = await jpost("/api/rooms", { ws: _WS, name: v.name, members: picked, lead: v.lead, replace: existing?.name || null });
       await renderRail();
       window.ChatRooms?.select(out.id);
+      history.back();
       toast(existing ? "Channel saved ✓" : "Channel created ✓");
     } catch (err) { toast("✗ " + err.message); }
   };
@@ -534,9 +568,9 @@ function renderRoomForm(name){
   if (del) del.onclick = async () => {
     if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Click again to delete"; return; }
     try {
-      await jpost(`/api/rooms/${existing.id}/delete`, {});
-      await renderRail(); window.ChatRooms?.select("hq");
-      toast("Channel deleted ✓ (threads moved to #hq)");
+      await jpost("/api/rooms/delete", { ws: _WS, name: existing.name });
+      await renderRail(); window.ChatRooms?.select(`${_WS}/general`);
+      toast("Channel deleted ✓ (threads moved to #general)");
     } catch (err) { toast("✗ " + err.message); }
   };
 }
@@ -700,21 +734,22 @@ async function renderTeam(){
           <div class="team-skills">${b.skills.map(s => `<span class="tag">${esc(s)}</span>`).join("")}${covered.map(s => `<span class="tag covered" title="covering">${esc(s)}</span>`).join("")}</div>
           ${coverNote}${offNote}
         </div>
+        ${b.recommended && !b.active ? `<span class="tag">recommended</span>` : ""}
         ${b.locked ? `<span class="tag">always on</span>` : `<button class="go" data-bot-toggle="${esc(b.id)}" data-on="${b.active ? 1 : 0}">${b.active ? "Switch off" : "Switch on"}</button>`}
       </div>`;
     }).join("");
     $("#team-list").innerHTML = `<div class="rowc">${rows}</div>`;
     $("#team-list").querySelectorAll("[data-bot-toggle]").forEach(btn => btn.onclick = async () => {
       try {
-        const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { active: btn.dataset.on !== "1" });
+        const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { ws: _WS, active: btn.dataset.on !== "1" });
         _BOTS = d.bots || _BOTS; draw(); renderRail().catch(() => {});
       } catch (e) { toast("✗ " + e.message); }
     });
   };
   $("#main").innerHTML = `
-    <div class="topbar"><div><div class="crumbs">Your company</div><h1 class="title">Team</h1></div></div>
-    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Tag a teammate with @handle in chat. Untagged messages go to the Chief of Staff. Each bot keeps separate memory per project.</div><div id="team-list"></div></div>`;
-  if (!_BOTS.length) _BOTS = (await api("/api/bots").catch(() => ({}))).bots || [];
+    <div class="topbar"><div><div class="crumbs">${esc(wsById(_WS)?.name || "HQ")} · ${esc(_WS === "hq" ? "holding" : wsById(_WS)?.kind || "")}</div><h1 class="title">Team</h1></div></div>
+    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
+  if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
   draw();
 }
 
@@ -1463,7 +1498,7 @@ function evDetail(r){
       try{
         await jpost("/api/activity/delete",{title:r.title});
         undoToast(`Activity "${r.title}" deleted`, async()=>{
-          await jpost("/api/activity/new",{title:r.title,entity:r.entity_slug,date:r.date,type:r.type||"task"});
+          await jpost("/api/activity/new",{title:r.title,entity:r.entity_slug,date:r.date,time:r.time||"",time_end:r.time_end||"",type:r.type||"task"});
           refreshViews();
         });
         refreshViews();
@@ -1503,8 +1538,8 @@ async function renderTimeline(){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), k=iso(d), out=d.getMonth()!==CAL.m;
     const evs=(byDay[k]||[]).map(r=>{
       const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev k-${esc(r.kind)}`;
-      const title=r.title||r.kind, mark=KIND_ICON[r.kind]||"•", label=`${KIND_NAME[r.kind]||r.kind}: ${title}`;
-      return `<div class="${cls}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc(title)}" data-ev='${esc(JSON.stringify({...r,title:title.slice(0,80)}))}'><span class="ev-mark" aria-hidden="true">${mark}</span><span class="ev-title">${esc(title)}</span></div>`;
+      const title=r.title||r.kind, mark=KIND_ICON[r.kind]||"•", label=`${KIND_NAME[r.kind]||r.kind}: ${r.time?r.time+" ":""}${title}`;
+      return `<div class="${cls}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc((r.time?`${r.time}-${r.time_end||""} `:"")+title)}" data-ev='${esc(JSON.stringify({...r,title:title.slice(0,80)}))}'><span class="ev-mark" aria-hidden="true">${mark}</span><span class="ev-title">${esc(title)}</span></div>`;
     }).join("");
     cells+=`<div class="day${out?" out":""}${k===today?" today":""}" data-day="${k}" title="Double-click to open this day"><div class="n">${d.getDate()}</div>${evs}</div>`;
     if(i>=34&&d.getMonth()!==CAL.m&&(i+1)%7===0) break;
@@ -1527,7 +1562,7 @@ async function renderTimeline(){
       const col=KIND_COLOR[r.kind]||"var(--dim)";
       return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
         <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when" style="margin-left:auto">${esc(r.status)}</span>`:""}</div>
-        <div class="t">${esc(r.title||r.kind)}</div>
+        <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
         <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
     }).join("");
     return `<div class="wk">${esc(dayLabel(dk))}</div><div class="cards postcards calcards">${rws}</div>`;
@@ -1589,7 +1624,7 @@ function calCard(r){
   const label = isPost ? plainStatus(r.status) : (KIND_NAME[r.kind]||r.kind);
   return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
     <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(label)}</span></div>
-    <div class="t">${esc(r.title||r.kind)}</div>
+    <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
     <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
 }
 const CAL_LEGEND = `<div class="cal-legend">
@@ -2319,7 +2354,7 @@ function renderNewProject(){
   s.oninput=()=>{ s.dataset.manual=s.value?"1":""; };
   document.getElementById("np-save").onclick=async()=>{
     const data=formVals($("#main"));
-    try{ await jpost("/api/project/new",data); if(data.slug){OPEN.projects.add(data.slug);saveOpen();} toast("Project created ✓"); await renderRail(); history.back(); }
+    try{ const out=await jpost("/api/project/new",data); toast("Project created ✓ · new workspace"); await window.Workspaces.switchTo(out.slug||data.slug); }
     catch(e){ toast("✗ "+e.message); }
   };
 }
@@ -2812,11 +2847,18 @@ async function renderNewActivity(extras={}){
       ${flabel("Title")}${finput("title","",'placeholder="e.g. Record intro video" required')}
       ${flabel("Project")}<select name="entity">${projectOpts}</select>
       ${flabel("Date")}${finput("date",extras.date||"",'type="date"')}
+      ${flabel("Start time (optional)")}${finput("time","",'type="time"')}
+      ${flabel("End time")}${finput("time_end","",'type="time"')}
+      <p class="field-help">One calendar across every workspace. Bots can't book over a timed slot; you can, with a warning.</p>
       ${flabel("Type")}<select name="type">${typeOpts}</select>
     </div></div>`;
   document.getElementById("na-save").onclick=async()=>{
     const data=formVals($("#main"));
-    try{ await jpost("/api/activity/new",data); toast("Activity added ✓"); history.back(); }
+    try{
+      const out=await jpost("/api/activity/new",data);
+      const clash=(out.overlaps||[]).map(o=>`${o.time}-${o.time_end} ${o.title} (${o.entity})`).join(", ");
+      toast(clash?`Added ✓ · overlaps ${clash}`:"Activity added ✓"); history.back();
+    }
     catch(e){ toast("✗ "+e.message); }
   };
 }
@@ -2997,21 +3039,23 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   window.addEventListener("resize", applyCanvas);
   document.getElementById("canvas-toggle").onclick = () => { canvasHidden = !canvasHidden; applyCanvas(); };
 
-  // ── rooms (Slack channels + DMs): each keeps its own threads ──────────────
-  // A thread is a saved chat; the room remembers its last open thread.
-  let activeRoomId = "hq";
-  let roomThreads = {};
+  // ── rooms (Slack channels + DMs) of the current workspace ────────────────
+  // A thread is a saved chat; each room remembers its last open thread and
+  // each workspace remembers its last open room. Room ids are "<ws>/<local>".
+  let activeRoomId = `${_WS}/general`;
+  let roomThreads = {}, wsRooms = {};
   try {
-    activeRoomId = localStorage.getItem("roomId") || "hq";
     roomThreads = JSON.parse(localStorage.getItem("roomThreads") || "{}") || {};
+    wsRooms = JSON.parse(localStorage.getItem("wsRooms") || "{}") || {};
   } catch {}
+  activeRoomId = wsRooms[_WS] || `${_WS}/general`;
   const roomTitleEl = document.getElementById("room-title");
   const roomMembersEl = document.getElementById("room-members");
   const roomEditBtn = document.getElementById("room-edit");
 
   function paintRoomHeader(){
     const room = roomById(activeRoomId);
-    if (!room) { roomTitleEl.textContent = activeRoomId === "hq" ? "# hq" : "…"; return; }
+    if (!room) { roomTitleEl.textContent = "# general"; return; }
     const lead = botById(room.lead);
     roomTitleEl.textContent = room.kind === "dm" ? `${lead?.icon || ""} ${room.name}` : `# ${room.name}`;
     roomMembersEl.innerHTML = room.kind === "dm" ? "" : room.members.map(id => {
@@ -3027,28 +3071,27 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
 
   function selectRoom(id){
     if (busy) return busyNote();
-    if (_ROOMS.length && !roomById(id)) id = "hq";
-    const changed = id !== activeRoomId;
+    if (_ROOMS.length && !roomById(id)) id = `${_WS}/general`;
     activeRoomId = id;
-    try { localStorage.setItem("roomId", id); } catch {}
+    wsRooms[_WS] = id;
+    try { localStorage.setItem("wsRooms", JSON.stringify(wsRooms)); } catch {}
     chatListEl.hidden = true;
     paintRoomHeader();
     const thread = roomThreads[id];
-    if (changed || !activeChatId || activeChatId !== thread) {
+    if (!activeChatId || activeChatId !== thread) {
       if (thread) openChat(thread);
       else { setActiveChat(null); showChat([]); statusEl.textContent = "Ready"; fetch("/api/chat-reset", { method: "POST" }).catch(() => {}); }
     }
-    // A project room points the canvas at that project (unless it already is).
-    const room = roomById(id);
-    if (changed && room?.project && canvasProject(true)?.slug !== room.project)
-      navigate(`#/project/${room.project}/${SECTIONS[0].key}`);
     highlight();
   }
   window.ChatRooms = {
     select: selectRoom,
     current: () => activeRoomId,
+    busy: () => busy,
+    // After a workspace switch: reopen that workspace's last room.
+    enterWorkspace: () => selectRoom(wsRooms[_WS] || `${_WS}/general`),
     refresh: () => {
-      if (_ROOMS.length && !roomById(activeRoomId)) return selectRoom("hq");
+      if (_ROOMS.length && !roomById(activeRoomId)) return selectRoom(wsRooms[_WS] || `${_WS}/general`);
       paintRoomHeader();
       if (!activeChatId && !history.length && !busy) showChat([]);   // welcome now knows the room
     },
@@ -3057,13 +3100,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── saved chats: each is its own claude session (server chat_store) ─────
   // Active chat id survives reloads; its transcript is loaded from the server.
   let activeChatId = null;
-  let activeChatProject = null;   // project the chat is bound to (see projectForTurn)
   const chatListEl = document.getElementById("chat-list");
   const chatTitleEl = document.getElementById("chat-title");
 
   function setActiveChat(id, title, project){
     activeChatId = id || null;
-    activeChatProject = (id && project) || null;
     chatTitleEl.textContent = (id && title) || "New thread";
     chatTitleEl.title = chatTitleEl.textContent;
     if (activeChatId) roomThreads[activeRoomId] = activeChatId;
@@ -3543,38 +3584,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return [...new Set(out)];
   }
 
-  function projectForTurn(text){
-    // A project's channels are bound to it (server enforces this too). Elsewhere
-    // (#hq, general topic channels, DMs) only an explicit reference binds a
-    // project; the open canvas view never does. Send only the slug; the server
-    // resolves any path from project.md and never trusts a client-supplied folder.
-    const project = slug => {
-      const p = _TREE.find(x => x.slug === slug);
-      return p?.slug || null;
-    };
-    const room = roomById(activeRoomId);
-    if (room?.project) return project(room.project);
-    for (const m of mentions) {
-      if (!text.includes(m.token)) continue;
-      if (m.type === "project") {
-        const slug = project(m.slug);
-        if (slug) return slug;
-      }
-      const ref = IdReg.resolve(m.osId || "")?.ref || {};
-      const slug = project(ref.project);
-      if (slug) return slug;
-    }
-    for (const id of pastedCanonicalIds(text)) {
-      const slug = project(IdReg.resolve(id)?.ref?.project);
-      if (slug) return slug;
-    }
-    // A saved chat stays with the project it started in; browsing elsewhere
-    // does not move it. Only an explicit reference above switches projects.
-    if (activeChatProject) {
-      const slug = project(activeChatProject);
-      if (slug) return slug;
-    }
-    return null;
+  function projectForTurn(){
+    // The workspace decides, never the open canvas view or an @mention: a
+    // company's rooms are bound to it (the server enforces this too) and HQ
+    // binds none. Send only the slug; the server resolves any folder itself.
+    return _WS !== "hq" && _TREE.some(p => p.slug === _WS) ? _WS : null;
   }
 
   async function buildContext(text){
@@ -3861,8 +3875,9 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   function showWelcome(){
     const room = roomById(activeRoomId);
     const lead = botById(room?.lead || "cos");
-    const where = room?.kind === "dm" ? "Direct message" : `#${room?.name || "hq"}`;
-    const scope = room?.project ? ` Working on ${room.project}.` : room?.kind === "dm" ? " General talk; @mention a project to bring it in." : "";
+    const wsName = wsById(_WS)?.name || "HQ";
+    const where = room?.kind === "dm" ? `Direct message in ${wsName}` : `#${room?.name || "general"} in ${wsName}`;
+    const scope = _WS === "hq" ? " The holding: sees every company." : " Bots here only know this workspace.";
     addMsg("assistant", `${where}.${scope} ${room?.kind === "dm" ? "" : `Untagged messages go to ${lead?.name || "the lead"}; @ tags a teammate.`}`.trim(), lead?.id);
     const SUGS = {
       cos: ["Weekly review", "/weekly-review "], product: ["Design a test", "@product /experiment-design "],

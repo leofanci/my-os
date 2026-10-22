@@ -6,10 +6,10 @@
   .titlebar{height:var(--ui-titlebar-height);flex-shrink:0;display:flex;align-items:center;padding-left:78px;
     -webkit-user-select:none;user-select:none}
   /* Slack-style shell: sidebar | chat (flexible) | canvas (resizable, hideable) */
-  .app{display:grid;grid-template-columns:var(--ui-shell-nav) minmax(0,1fr) var(--canvas-w,640px);grid-template-rows:minmax(0,1fr);gap:var(--ui-shell-gap);height:calc(100vh - var(--ui-titlebar-height));padding:0 var(--ui-shell-gap) var(--ui-shell-gap);
-       grid-template-areas:"nav chat center"}
-  #rail{grid-area:nav} .right-col{grid-area:center} #chat-dock{grid-area:chat}
-  .app.canvas-hidden{grid-template-columns:var(--ui-shell-nav) minmax(0,1fr);grid-template-areas:"nav chat"}
+  .app{display:grid;grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav) minmax(0,1fr) var(--canvas-w,640px);grid-template-rows:minmax(0,1fr);gap:var(--ui-shell-gap);height:calc(100vh - var(--ui-titlebar-height));padding:0 var(--ui-shell-gap) var(--ui-shell-gap);
+       grid-template-areas:"ws nav chat center"}
+  #ws-bar{grid-area:ws} #rail{grid-area:nav} .right-col{grid-area:center} #chat-dock{grid-area:chat}
+  .app.canvas-hidden{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav) minmax(0,1fr);grid-template-areas:"ws nav chat"}
   .app.canvas-hidden .right-col{display:none}
   .right-col{display:flex;flex-direction:column;gap:var(--ui-shell-gap);min-height:0;overflow:hidden}
   .panel{background:var(--glass);border:1px solid var(--gline);border-radius:var(--r-panel);box-shadow:var(--shadow);overflow:hidden}
@@ -621,8 +621,8 @@
 
   body{font:var(--ui-type-body)/1.46 var(--ui-font-sans);letter-spacing:-.005em;background:var(--ui-color-canvas)}
   .titlebar{height:var(--ui-titlebar-height)}
-  .app{grid-template-columns:var(--ui-shell-nav) minmax(0,1fr) var(--canvas-w,640px);gap:var(--ui-shell-gap);height:calc(100vh - var(--ui-titlebar-height));padding:0 var(--ui-shell-gap) var(--ui-shell-gap)}
-  .app.canvas-hidden{grid-template-columns:var(--ui-shell-nav) minmax(0,1fr)}
+  .app{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav) minmax(0,1fr) var(--canvas-w,640px);gap:var(--ui-shell-gap);height:calc(100vh - var(--ui-titlebar-height));padding:0 var(--ui-shell-gap) var(--ui-shell-gap)}
+  .app.canvas-hidden{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav) minmax(0,1fr)}
   .right-col{gap:var(--ui-shell-gap)}
   .panel{border:1px solid var(--gline);border-radius:var(--r-panel);box-shadow:none}
   #rail.panel{background:var(--ui-color-rail);border:0;border-right:1px solid var(--gline);border-radius:0;box-shadow:none}
@@ -835,7 +835,7 @@
 
   /* Below three-pane width the canvas floats over the chat (▣ hides it) instead of squeezing it. */
   @media (max-width:1180px){
-    .app,.app.canvas-hidden{grid-template-columns:var(--ui-shell-nav-compact) minmax(0,1fr);grid-template-areas:"nav chat"}
+    .app,.app.canvas-hidden{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav-compact) minmax(0,1fr);grid-template-areas:"ws nav chat"}
     .right-col{position:fixed;top:calc(var(--ui-titlebar-height) + 58px);right:var(--ui-shell-gap);bottom:var(--ui-shell-gap);width:min(var(--canvas-w,640px),calc(100vw - var(--ui-shell-nav-compact) - 48px));z-index:24;box-shadow:var(--ui-shadow-menu);border-radius:var(--r-panel)}
   }
   @media (max-width:1100px){
@@ -844,8 +844,8 @@
     .grid2{grid-template-columns:repeat(2,minmax(0,1fr))}
   }
   @media (min-width:1500px){
-    .app{grid-template-columns:var(--ui-shell-nav-wide) minmax(0,1fr) var(--canvas-w,640px)}
-    .app.canvas-hidden{grid-template-columns:var(--ui-shell-nav-wide) minmax(0,1fr)}
+    .app{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav-wide) minmax(0,1fr) var(--canvas-w,640px)}
+    .app.canvas-hidden{grid-template-columns:var(--ws-bar-w,52px) var(--ui-shell-nav-wide) minmax(0,1fr)}
     .scroll{padding-inline:var(--ui-page-padding-wide)}
   }
   @media (pointer:coarse){
@@ -875,3 +875,14 @@
   .cn-sep{width:1px;height:16px;background:var(--hair);margin:0 4px}
   .chat-head{min-width:0}
   .chat-head .sm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:320px}
+
+  /* ---- workspace switcher (far left, Slack-style) ---- */
+  .ws-bar{display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;overflow:auto}
+  .ws-btn{width:38px;height:38px;flex-shrink:0;border-radius:10px;border:1px solid var(--gline);background:#fff;color:var(--ink2);
+    font:700 12px/1 var(--disp);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:box-shadow .12s}
+  .ws-btn:hover{box-shadow:0 0 0 2px var(--sky-soft)}
+  .ws-btn.active{background:var(--navy);color:#fff;border-color:var(--navy);box-shadow:0 0 0 2px var(--canvas),0 0 0 4px var(--navy)}
+  .ws-btn.hq{font-size:11px;letter-spacing:.02em}
+  .ws-btn.ws-add{border-style:dashed;color:var(--dim);font-size:16px;background:none}
+  #rail .brand .project-kind{margin-left:6px}
+  .cal-time{font-weight:700;margin-right:4px;font-variant-numeric:tabular-nums}

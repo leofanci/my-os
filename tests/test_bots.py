@@ -10,6 +10,15 @@ from core import bots
 import dashboard.server as server
 
 SKILLS = {d.name for d in (Path(bots.ROOT) / "skills").iterdir() if (d / "SKILL.md").exists()}
+# A venture with profiles and a linked app: its smart default switches every bot on.
+VENTURE = {"slug": "acme", "kind": "venture", "profiles": [{"slug": "profile-a"}],
+           "local_folder": "/tmp/acme-app"}
+
+
+def venture_root(tmp):
+    root = Path(tmp)
+    (root / "projects" / "acme").mkdir(parents=True, exist_ok=True)
+    return root
 
 
 class Defs(unittest.TestCase):
@@ -29,18 +38,42 @@ class Defs(unittest.TestCase):
 class Team(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = venture_root(self.tmp.name)
 
     def tearDown(self):
         self.tmp.cleanup()
 
+    def team(self):
+        return bots.team(self.root, "acme", VENTURE)
+
+    def off(self, bot_id):
+        bots.set_active(bot_id, False, self.root, "acme", VENTURE)
+
+    def test_smart_defaults_by_project_type(self):
+        on = lambda t: sorted(b.id for b in t.bots.values() if b.active)  # noqa: E731
+        self.assertEqual(on(self.team()), sorted(bots.load_defs()))
+        self.assertEqual(on(bots.team(self.root)), ["cos"])  # HQ: CEO office
+        brand = {"slug": "acme", "kind": "brand", "profiles": [], "local_folder": None}
+        self.assertEqual(on(bots.team(self.root, "acme", brand)), ["cmo", "cos", "social"])
+        plain = {"slug": "acme", "kind": "venture", "profiles": [], "local_folder": None}
+        self.assertEqual(on(bots.team(self.root, "acme", plain)),
+                         ["cmo", "cos", "gtm", "product", "research"])
+
+    def test_teams_are_per_workspace(self):
+        (self.root / "projects" / "demo").mkdir()
+        self.off("cmo")
+        self.assertFalse(self.team().get("cmo").active)
+        self.assertTrue(bots.team(self.root, "demo", dict(VENTURE, slug="demo")).get("cmo").active)
+        with self.assertRaises(ValueError):
+            bots.set_active("cmo", False, self.root, "missing", None)
+
     def test_switched_off_bot_rolls_up_to_manager(self):
-        bots.set_active("social", False, self.root)
-        t = bots.team(self.root)
+        self.off("social")
+        t = self.team()
         self.assertEqual(t.owner("content-plan"), "cmo")
         self.assertIn("social", t.get("cmo").covering)
-        bots.set_active("cmo", False, self.root)
-        t = bots.team(self.root)
+        self.off("cmo")
+        t = self.team()
         self.assertEqual(t.owner("content-plan"), "cos")
         self.assertEqual(t.owner("positioning"), "cos")
 
@@ -49,8 +82,8 @@ class Team(unittest.TestCase):
             bots.set_active("cos", False, self.root)
 
     def test_mention_ignores_inactive_and_unknown(self):
-        bots.set_active("gtm", False, self.root)
-        t = bots.team(self.root)
+        self.off("gtm")
+        t = self.team()
         self.assertEqual(t.mentioned("hey @gtm then @cmo"), "cmo")
         self.assertIsNone(t.mentioned("ping x@cmo or @acme"))
 
@@ -89,7 +122,7 @@ class Memory(unittest.TestCase):
 class Routing(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.team = bots.team(Path(self.tmp.name))
+        self.team = bots.team(venture_root(self.tmp.name), "acme", VENTURE)
 
     def tearDown(self):
         self.tmp.cleanup()

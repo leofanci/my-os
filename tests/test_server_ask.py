@@ -162,6 +162,12 @@ class SSE(unittest.TestCase):
         }, tree)
         self.assertIsNone(seen["workspace_dir"])
         self.assertNotIn("Linked app workspace", seen["text"])
+        self.assertIn("Workspace: HQ", seen["text"])  # unknown project → HQ, no folder
+        seen = _captured({
+            "messages": [{"role": "user", "content": "inspect the app"}],
+            "room_id": "acme/general",
+        }, tree)
+        self.assertIsNone(seen["workspace_dir"])
         self.assertIn("App workspace unavailable", seen["text"])
         self.assertIn("Do not inspect the myOS source tree", seen["text"])
 

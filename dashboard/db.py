@@ -28,9 +28,10 @@ def db_exists():
 def timeline():
     return _rows(
         "SELECT t.date, t.date_end, t.entity_slug, e.name AS entity_name,"
-        " t.kind, t.title, t.status, t.priority, t.hours_per_week, t.ref_id"
+        " t.kind, t.title, t.status, t.priority, t.hours_per_week, t.ref_id,"
+        " t.time, t.time_end"
         " FROM timeline t LEFT JOIN entities e ON e.slug = t.entity_slug"
-        " ORDER BY (t.date IS NULL), t.date"
+        " ORDER BY (t.date IS NULL), t.date, (t.time IS NULL), t.time"
     )
 
 

@@ -1,12 +1,13 @@
 """bots.py — the team: named bots (Slack-style teammates) that own skills.
 
 Definitions are generic roles, tracked in `bots/<id>.md` (frontmatter + job
-description). Which bots are on, and what each one remembers, is user data and
-stays gitignored:
+description). Each workspace (HQ, or one project = one company of the holding)
+switches its own bots on/off and keeps its own memory. User data, gitignored:
 
-  team/state.json                   on/off per bot
-  team/memory/<bot>.md              HQ memory (chat not tied to a project)
-  projects/<slug>/team/<bot>.md     per-project memory (bots never mix projects)
+  team/state.json                   HQ on/off per bot
+  team/memory/<bot>.md              HQ memory
+  projects/<slug>/team/state.json   that workspace's on/off (smart defaults until set)
+  projects/<slug>/team/<bot>.md     that workspace's memory (bots never mix workspaces)
 
 Every skill always has exactly one owner: a switched-off bot's skills roll up
 to its nearest active manager. `cos` is the root and is always on.
@@ -22,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ROOT_BOT = "cos"
 CEO = "ceo"  # the user; top of the org chart, not a bot
+HQ = "hq"    # the holding's own workspace (CEO office); every other workspace is a project
 MEMORY_MAX_LINES = 40
 MEMORY_TAIL_LINES = 20
 MEMORY_LINE_MAX = 300
@@ -77,16 +79,44 @@ def load_defs(root=ROOT):
     return out
 
 
-def _state_path(root):
-    return Path(root) / "team" / "state.json"
+def ws_dir(ws=HQ, root=ROOT):
+    """Folder holding a workspace's team state (HQ, or an existing project)."""
+    root = Path(root)
+    if not ws or ws == HQ:
+        return root / "team"
+    if not _SLUG_RE.match(ws) or not (root / "projects" / ws).is_dir():
+        raise ValueError(f"unknown workspace: {ws}")
+    return root / "projects" / ws / "team"
 
 
-def load_state(root=ROOT):
+def default_active(project=None):
+    """Smart starting team for a workspace; the user can switch any bot later.
+    HQ: Chief of Staff only. Venture: product + go-to-market team (Social if it
+    has profiles). Brand: content team. CTO only when an app folder is linked."""
+    if project is None:
+        return {ROOT_BOT}
+    if (project.get("kind") or "venture") == "brand":
+        on = {ROOT_BOT, "social", "cmo"}
+    else:
+        on = {ROOT_BOT, "product", "cmo", "gtm", "research"}
+        if project.get("profiles"):
+            on.add("social")
+    if project.get("local_folder"):
+        on.add("cto")
+    return on
+
+
+def load_state(root=ROOT, ws=HQ, project=None):
+    """{bot_id: on} for a workspace: saved choices over the smart defaults."""
+    defaults = default_active(project)
+    state = {b: b in defaults for b in load_defs()}
     try:
-        data = json.loads(_state_path(root).read_text())
+        data = json.loads((ws_dir(ws, root) / "state.json").read_text())
+        saved = data.get("active") if isinstance(data, dict) else None
+        state.update({k: bool(v) for k, v in (saved or {}).items() if k in state})
     except (OSError, ValueError):
-        return {}
-    return {k: bool(v) for k, v in (data.get("active") or {}).items()} if isinstance(data, dict) else {}
+        pass
+    return state
 
 
 def _atomic_write(path, text):
@@ -97,16 +127,15 @@ def _atomic_write(path, text):
     os.replace(tmp, path)
 
 
-def set_active(bot_id, active, root=ROOT):
-    defs = load_defs()
-    if bot_id not in defs:
+def set_active(bot_id, active, root=ROOT, ws=HQ, project=None):
+    if bot_id not in load_defs():
         raise ValueError(f"unknown bot: {bot_id}")
     if bot_id == ROOT_BOT and not active:
         raise ValueError("Chief of Staff is always on (other bots roll up to it)")
-    state = load_state(root)
+    state = load_state(root, ws, project)
     state[bot_id] = bool(active)
-    _atomic_write(_state_path(root), json.dumps({"active": state}, indent=2) + "\n")
-    return team(root)
+    _atomic_write(ws_dir(ws, root) / "state.json", json.dumps({"active": state}, indent=2) + "\n")
+    return team(root, ws, project)
 
 
 class Team:
@@ -180,6 +209,7 @@ class Team:
             "skills": list(b.skills), "effective_skills": self.skills_of(b.id),
             "covering": b.covering, "default_skill": b.default_skill,
             "about": b.body.split("\n", 1)[0],
+            "recommended": b.id in getattr(self, "recommended", ()),
         } for b in self.ordered()]
 
     def ordered(self):
@@ -202,9 +232,13 @@ class Team:
         return out
 
 
-def team(root=ROOT):
-    """Team with on/off state (and memory) read from data `root`."""
-    return Team(load_defs(), load_state(root))
+def team(root=ROOT, ws=HQ, project=None):
+    """One workspace's team: on/off read from data `root` (smart defaults
+    from the `project` record until the user changes them)."""
+    t = Team(load_defs(), load_state(root, ws, project))
+    t.ws = ws or HQ
+    t.recommended = default_active(project)
+    return t
 
 
 # --------------------------------------------------------------------------- #

@@ -261,11 +261,13 @@ def linked_workspace_prompt(project_slug, workspace_dir, *, graph_context="",
     )
 
 
-def state_snapshot(projects):
+def state_snapshot(projects, only=None):
     """COMPACT OS index for the chat agent — projects/profiles/channels plus
     per-entity counts, NOT full content. Bounded in size as content grows (the
     old version enumerated every post/memo/activity every turn). The agent pulls
-    detail on demand via osctl get-posts / get-project / read-file."""
+    detail on demand via osctl get-posts / get-project / read-file. `only` =
+    the workspace's project slug: list just that one (ids still numbered
+    from every project so they stay stable)."""
     lines = ["## Current myOS state",
              "(index only — fetch detail with osctl get-posts / get-project / read-file)"]
     if not projects:
@@ -294,6 +296,8 @@ def state_snapshot(projects):
 
     for p in projects:
         slug = p["slug"]
+        if only and slug != only:
+            continue
         pr_id = reg.get(f"proj:{slug}") or slug
         head = f"\n### {slug} id={pr_id} ({p.get('kind') or p.get('type')}"
         if p.get("priority"):
@@ -590,6 +594,10 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
     lines = []
     if fresh or getattr(session, "_last_bot", None) != bot_id:
         lines.append(f"## Speaking as @{b.handle}: {b.name}\n{b.body}")
+        ws = getattr(team, "ws", bots.HQ)
+        lines.append("Workspace: HQ, the holding's CEO office (sees every company)." if ws == bots.HQ
+                     else f"Workspace: {ws}. You work only for this company; other workspaces "
+                          "are invisible except as busy time in the shared calendar.")
         if b.covering:
             names = ", ".join(team.get(c).name for c in b.covering)
             lines.append(f"Also covering for (switched off): {names}.")
@@ -605,6 +613,8 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
         scope = f" --project {project_slug}" if project_slug else ""
         lines.append("When the user states a lasting decision or preference, save one line: "
                      f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
+        lines.append("Calendar: one for all workspaces (the user's time). Before a timed "
+                     "`create-activity`, run `get-busy --from <date>`; overlaps are refused.")
     else:
         lines.append(f"(speaking as @{b.handle})")
     if handoff_from and team.get(handoff_from):
@@ -635,7 +645,8 @@ _RAIL_COVERED_SKILL_STUBS: dict[str, str] = {
 
 
 def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=None,
-                        explicit=False, workspace=None, bot=None, suggest_owner=None):
+                        explicit=False, workspace=None, bot=None, suggest_owner=None,
+                        only_project=None):
     """Assemble one chat turn. Snapshot + full skill body only on fresh session.
     `bot` = the persona block from _bot_block (speaker, team, memory)."""
     parts = []
@@ -643,7 +654,7 @@ def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=
 
     if fresh:
         try:
-            parts.append(state_snapshot(projects))
+            parts.append(state_snapshot(projects, only=only_project))
         except Exception:  # noqa: BLE001
             pass
     else:
@@ -712,6 +723,29 @@ def _skills_index():
         out.append({"name": fm.get("name", d.name),
                     "description": fm.get("description", "")})
     return out
+
+
+def _resolve_workspace(ws, projects):
+    """(workspace id, project record) — HQ when missing or unknown."""
+    record = next((p for p in projects if p.get("slug") == ws), None) if ws and ws != bots.HQ else None
+    return (record["slug"], record) if record else (bots.HQ, None)
+
+
+def _workspace_deny_dirs(ws, projects):
+    """Folders a company's bots may not Read/Grep: other companies, plus the
+    stores that hold every workspace at once (chats, team, calendar, index).
+    HQ is the holding's CEO office and sees everything."""
+    if ws == bots.HQ:
+        return ()
+    dirs = [ROOT / "projects" / p["slug"] for p in projects if p.get("slug") != ws]
+    dirs += [ROOT / "chats", ROOT / "team", ROOT / "portfolio", ROOT / "database"]
+    return tuple(str(d) for d in dirs)
+
+
+def _workspaces(projects):
+    return ([{"id": bots.HQ, "name": "HQ", "kind": "hq"}]
+            + [{"id": p["slug"], "name": p.get("name") or p["slug"], "kind": p.get("kind") or "venture"}
+               for p in projects])
 
 
 _CHAT = None
@@ -864,11 +898,14 @@ class Handler(BaseHTTPRequestHandler):
         # Per-turn routing: explicit @bot or /skill tags only (keyword → hint, not Sonnet).
         context = (body.get("context") or "").strip()
         projects = db.tree()
-        team = bots.team(ROOT)
-        room = rooms.get_room(str(body.get("room_id") or "hq"), team, projects, ROOT)
-        project_slug = str(body.get("project_slug") or "").strip()
-        if room and room.get("project"):
-            project_slug = room["project"]  # a project's channels never mix projects
+        ws, project_record = _resolve_workspace(
+            rooms.split_id(body.get("room_id"))[0] or str(body.get("project_slug") or "").strip(),
+            projects)
+        team = bots.team(ROOT, ws, project_record)
+        room = (rooms.get_room(str(body.get("room_id") or ""), team, ROOT)
+                or rooms.get_room(f"{ws}/general", team, ROOT))
+        # A company's rooms are bound to it; HQ (the holding) binds none.
+        project_slug = ws if project_record else ""
         project_record = next(
             (p for p in projects if p.get("slug") == project_slug), None,
         )
@@ -878,6 +915,8 @@ class Handler(BaseHTTPRequestHandler):
         )
         chat_id = body.get("chat_id") or None
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
+        sess.workspace = ws
+        sess.deny_dirs = _workspace_deny_dirs(ws, projects)
         bot_id, skill, routed, handoff_from = _route_bot(
             team, user_msg, sess,
             default_bot=(room or {}).get("lead") or bots.ROOT_BOT,
@@ -1009,6 +1048,7 @@ class Handler(BaseHTTPRequestHandler):
             bot=_bot_block(team, bot_id, sess, project_slug if project_record else None,
                            handoff_from, fresh=sess.is_fresh(),
                            members=(room["members"] if room and room["kind"] == "topic" else None)),
+            only_project=(project_slug or None),
             suggest_owner=(team.get(team.owner(suggest)).handle if suggest else None),
         )
         sess.note_skill(skill, explicit=bool(explicit))
@@ -1227,8 +1267,11 @@ class Handler(BaseHTTPRequestHandler):
                 chats = chat_store.list_meta()
                 room = (parse_qs(urlparse(self.path).query).get("room") or [None])[0]
                 if room:
-                    ids = {r["id"] for r in rooms.list_rooms(bots.team(ROOT), db.tree(), ROOT)}
-                    chats = [c for c in chats if rooms.room_of_chat(c, ids) == room]
+                    projects = db.tree()
+                    ws, record = _resolve_workspace(rooms.split_id(room)[0], projects)
+                    ids = {r["id"] for r in rooms.list_rooms(bots.team(ROOT, ws, record), ws, ROOT)}
+                    spaces = {w["id"] for w in _workspaces(projects)}
+                    chats = [c for c in chats if rooms.room_of_chat(c, ids, spaces) == room]
                 return self._send(200, {"chats": chats})
             if path.startswith("/api/chats/"):
                 rec = chat_store.load(path[len("/api/chats/"):])
@@ -1243,10 +1286,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, db.posts())
             if path == "/api/skills-index":
                 return self._send(200, _skills_index())
-            if path == "/api/bots":
-                return self._send(200, {"bots": bots.team(ROOT).to_api()})
-            if path == "/api/rooms":
-                return self._send(200, {"rooms": rooms.list_rooms(bots.team(ROOT), db.tree(), ROOT)})
+            if path == "/api/workspaces":
+                return self._send(200, {"workspaces": _workspaces(db.tree())})
+            if path in ("/api/bots", "/api/rooms"):
+                ws, record = _resolve_workspace(
+                    (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
+                team = bots.team(ROOT, ws, record)
+                if path == "/api/bots":
+                    return self._send(200, {"ws": ws, "bots": team.to_api()})
+                return self._send(200, {"ws": ws, "rooms": rooms.list_rooms(team, ws, ROOT)})
             if path == "/api/schemas":
                 return self._send(200, schemas_for_api())
             if path == "/api/id-catalog":
@@ -1554,7 +1602,8 @@ class Handler(BaseHTTPRequestHandler):
                 slug = (body.get("slug") or fileops._slugify(body.get("platform", ""))).strip()
                 return self._send(200, {"ok": True, **fileops.create_channel(prof, slug, body.get("platform",""), body.get("handle",""))})
             if path == "/api/activity/new":
-                return self._send(200, {"ok": True, **fileops.create_activity(body)})
+                # Your own booking: overlaps are allowed but reported (bots are refused).
+                return self._send(200, {"ok": True, **fileops.create_activity(body, allow_overlap=True)})
             if path == "/api/activity/done":
                 return self._send(200, {"ok": True, **fileops.mark_activity_done(body.get("title",""), body.get("entity",""))})
             if path == "/api/milestone/new":
@@ -1567,22 +1616,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
-            if path == "/api/rooms":
+            if path in ("/api/rooms", "/api/rooms/delete"):
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                if path == "/api/rooms/delete":
+                    rooms.delete_topic(ws, str(body.get("name") or ""), ROOT)
+                    return self._send(200, {"ok": True})
                 members = body.get("members") or []
                 if not isinstance(members, list):
                     raise ValueError("members must be a list")
-                room_id = rooms.save_topic(
-                    body.get("name"), body.get("project") or None, members,
-                    body.get("lead"), db.tree(), ROOT, replace=body.get("replace") or None)
+                room_id = rooms.save_topic(ws, body.get("name"), members, body.get("lead"), ROOT,
+                                           replace=body.get("replace") or None)
                 return self._send(200, {"id": room_id, "rooms": rooms.list_rooms(
-                    bots.team(ROOT), db.tree(), ROOT)})
-            if path.startswith("/api/rooms/t-") and path.endswith("/delete"):
-                rooms.delete_topic(path[len("/api/rooms/t-"):-len("/delete")], ROOT)
-                return self._send(200, {"ok": True})
+                    bots.team(ROOT, ws, record), ws, ROOT)})
             if path.startswith("/api/bots/") and path.endswith("/active"):
                 bot_id = path[len("/api/bots/"):-len("/active")]
-                team = bots.set_active(bot_id, bool(body.get("active")), ROOT)
-                return self._send(200, {"bots": team.to_api()})
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                team = bots.set_active(bot_id, bool(body.get("active")), ROOT, ws, record)
+                return self._send(200, {"ws": ws, "bots": team.to_api()})
             if path == "/api/upload-temp":
                 encoded = body.get("data", "")
                 if not isinstance(encoded, str):

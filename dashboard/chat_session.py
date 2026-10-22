@@ -15,6 +15,7 @@ stream_event/content_block_start/tool_use, and the turn ends with a top-level
 `result` line. A plain-text stdin turn (no positional prompt) is accepted.
 """
 import json
+import os
 import re
 import subprocess
 import uuid
@@ -133,6 +134,10 @@ class ChatSession:
         self._pending_skill_explicit = False
         self._last_bot = None  # bot that spoke last (server routes untagged turns to it)
         self._pending_bot = None
+        # Workspace isolation, set by the server before each turn: osctl reads
+        # MYOS_WORKSPACE; deny_dirs are other workspaces' folders (no Read/Grep).
+        self.workspace = None
+        self.deny_dirs = ()
 
     @classmethod
     def restore(cls, repo_dir, rail, rec, **kw):
@@ -184,6 +189,7 @@ class ChatSession:
         denied = [f"Read(**/{g})" for g in SECRET_FILE_GLOBS]
         if workspace_dir and file_search_mode:
             denied += [f"Read(/{workspace_dir}/**/{g})" for g in SECRET_FILE_GLOBS]
+        denied += [f"Read(/{d}/**)" for d in self.deny_dirs]
         cmd = [self.claude_bin, "-p",
                "--output-format", "stream-json",
                "--include-partial-messages",
@@ -221,6 +227,7 @@ class ChatSession:
             self._base_cmd(with_web, model, workspace_dir, file_search_mode,
                            web_domains),
             cwd=self.repo_dir,
+            env={**os.environ, "MYOS_WORKSPACE": self.workspace or "hq"},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
         self._started = True
