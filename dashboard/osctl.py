@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root
 from dashboard import chat_session, db, fileops  # noqa: E402
+from core import bots  # noqa: E402
 from core.ids import (  # noqa: E402
     bare_slug,
     build_catalog,
@@ -160,6 +161,17 @@ def _build_parser():
             body_extra = json.loads(raw)
         return fileops.create_memo(a.project, a.memo_type, fields, body_extra=body_extra)
     p.set_defaults(_run=_create_memo)
+
+    p = sub.add_parser("remember", help="Append one line to a bot's memory (per project, or HQ)")
+    p.add_argument("--bot", required=True)
+    p.add_argument("--project", help="project slug; omit for HQ memory")
+    p.add_argument("--text", required=True)
+    p.set_defaults(_run=lambda a: {"path": bots.remember(a.bot, a.text, a.project)})
+
+    p = sub.add_parser("get-memory", help="Read a bot's memory (per project, or HQ)")
+    p.add_argument("--bot", required=True)
+    p.add_argument("--project")
+    p.set_defaults(_run=lambda a: {"memory": bots.read_memory(a.bot, a.project, tail=0)})
 
     p = sub.add_parser("create-experiment", help="Create strategy/experiments/<stem>.json")
     p.add_argument("--project", required=True)

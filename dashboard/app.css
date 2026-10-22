@@ -252,6 +252,18 @@
   .msg.ai .b strong,.msg.me .b strong{font-weight:700;color:var(--ink)}
   .msg.ai .b em,.msg.me .b em{font-style:italic;color:var(--ink2)}
   .msg.me{align-self:flex-end}
+  /* Team: bot name above its reply, avatars, org chart rows */
+  .bot-label{display:flex;align-items:center;gap:6px;font:600 11.5px/1 var(--body);color:var(--ink);margin:0 0 6px 2px}
+  .bot-av{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;
+    background:var(--sky-soft);color:var(--navy);font-size:11px;flex-shrink:0}
+  .bot-handoff{font-weight:500;color:var(--dim)}
+  .bot-handle{font:500 11.5px/1 var(--body);color:var(--dim)}
+  .team-row .bot-av{width:30px;height:30px;font-size:14px;border-radius:8px}
+  .team-row .t small{display:block;margin-top:3px}
+  .team-row.off{opacity:.55}
+  .team-skills{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
+  .team-skills .tag.covered{background:none;border:1px dashed var(--gline);padding:3px 8px}
+  .team-cover{color:var(--dim);font-style:italic}
   .msg.me .b{background:var(--navy);color:#fff;border-radius:12px 12px 4px;padding:10px 13px}
   .sug{align-self:flex-start;font:600 11.5px/1.35 var(--body);border:1px solid var(--gline);background:#fff;
     color:var(--navy);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer;text-align:left}

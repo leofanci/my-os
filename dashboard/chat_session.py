@@ -131,6 +131,8 @@ class ChatSession:
         self._skill_explicit = False  # True when user tagged @/skill (Sonnet gate)
         self._pending_skill = None
         self._pending_skill_explicit = False
+        self._last_bot = None  # bot that spoke last (server routes untagged turns to it)
+        self._pending_bot = None
 
     @classmethod
     def restore(cls, repo_dir, rail, rec, **kw):
@@ -140,6 +142,7 @@ class ChatSession:
         sess._turn_count = int(rec.get("turn_count") or 0)
         sess._last_skill = rec.get("last_skill")
         sess._skill_explicit = bool(rec.get("skill_explicit"))
+        sess._last_bot = rec.get("last_bot")
         return sess
 
     def is_fresh(self):
@@ -246,6 +249,9 @@ class ChatSession:
                     self._skill_explicit = self._pending_skill_explicit
                 self._pending_skill = None
                 self._pending_skill_explicit = False
+                if self._pending_bot:
+                    self._last_bot = self._pending_bot
+                self._pending_bot = None
         finally:
             for stream in (proc.stdout, proc.stderr):
                 try:
@@ -258,6 +264,10 @@ class ChatSession:
         """Record routed skill for this turn (applied after successful completion)."""
         self._pending_skill = skill
         self._pending_skill_explicit = bool(explicit and skill)
+
+    def note_bot(self, bot_id):
+        """Record the speaking bot for this turn (applied after successful completion)."""
+        self._pending_bot = bot_id
 
     def close(self):
         """Terminate any in-flight turn. Safe to call when idle (no-op)."""

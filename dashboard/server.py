@@ -39,6 +39,7 @@ import fileops           # noqa: E402
 import chat_session      # noqa: E402
 import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
+from core import bots    # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
 from ai_rules import CHAT_RAIL  # noqa: E402
@@ -393,14 +394,53 @@ def _explicit_skill(text):
     return None
 
 
-def _suggest_skill(text):
-    """Keyword hint for untagged turns — does not activate skill or Sonnet."""
+def _suggest_skill(text, among=None):
+    """Keyword hint for untagged turns — does not activate skill or Sonnet.
+    `among` checks those skills first (a tagged bot's own), then all."""
     if not text:
         return None
-    for name, rx in _COMPILED_ROUTES:
+    routes = _COMPILED_ROUTES
+    if among:
+        routes = ([r for r in routes if r[0] in among]
+                  + [r for r in routes if r[0] not in among])
+    for name, rx in routes:
         if rx.search(text):
             return name
     return None
+
+
+def _route_bot(team, user_msg, session):
+    """Pick (bot, skill, explicit, handoff_from) for one turn.
+
+    explicit /skill → its owner bot. @bot → that bot; the skill its wording
+    matches (if another bot owns it, hand off to that owner); a write with no
+    match uses the bot's default skill; a single-skill bot always uses it.
+    Untagged → whoever spoke last in this chat (Chief of Staff on a new one),
+    no skill: the write gate and Haiku policy stay exactly as before.
+    """
+    tagged_skill = _explicit_skill(user_msg)
+    mentioned = team.mentioned(user_msg)
+    if tagged_skill:
+        bot = team.owner(tagged_skill)
+        return bot, tagged_skill, True, (mentioned if mentioned and mentioned != bot else None)
+    if mentioned:
+        own = team.skills_of(mentioned)
+        hit = _suggest_skill(user_msg, among=own)
+        if hit:
+            owner = team.owner(hit)
+            return owner, hit, True, (mentioned if owner != mentioned else None)
+        if len(own) == 1:
+            return mentioned, own[0], True, None
+        if (_WRITE_TURN_RE.search(user_msg or "")
+                and not _continuation_allowed(session, user_msg)):
+            b = team.get(mentioned)
+            skill = b.default_skill if b.default_skill in own else (own[0] if own else None)
+            return mentioned, skill, bool(skill), None
+        return mentioned, None, False, None
+    if _continuation_allowed(session, user_msg):
+        return team.owner(session._last_skill), None, False, None
+    last_bot = team.get(getattr(session, "_last_bot", None) or "")
+    return (last_bot.id if last_bot and last_bot.active else bots.ROOT_BOT), None, False, None
 
 
 def _route_skill(text):
@@ -522,13 +562,49 @@ def _pick_model(skill, web, user_msg="", session=None, *, explicit=False):
     return chat_session.CHAT_MODEL
 
 
-def _tag_gate_message(suggest):
+def _tag_gate_message(suggest, team=None):
     skill = f"/{suggest}" if suggest else "/workspace or the skill for your task"
+    who = ""
+    if suggest and team is not None:
+        owner = team.get(team.owner(suggest))
+        if owner:
+            who = f"@{owner.handle} ({owner.name}) or "
     return (
-        f"Tag {skill} first (type / or tap ⊕ in the composer). "
+        f"Tag {who}{skill} first (type @ or / in the composer). "
         "Writes and GTM playbooks run on Sonnet only after you tag. "
         "Untagged turns stay on Haiku for reads and routing chat only."
     )
+
+
+def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fresh=False):
+    """Persona for the speaking bot. Full card (job, team, memory) when the
+    session is fresh or the speaker changed; a one-line marker otherwise."""
+    b = team.get(bot_id) if team else None
+    if not b:
+        return ""
+    lines = []
+    if fresh or getattr(session, "_last_bot", None) != bot_id:
+        lines.append(f"## Speaking as @{b.handle}: {b.name}\n{b.body}")
+        if b.covering:
+            names = ", ".join(team.get(c).name for c in b.covering)
+            lines.append(f"Also covering for (switched off): {names}.")
+        lines.append("Team (tag the owner for work outside your skills):\n"
+                     + "\n".join(team.roster_line(o.id) for o in team.ordered()
+                                  if o.active and o.id != bot_id))
+        mem = bots.read_memory(bot_id, project_slug or None, ROOT)
+        where = project_slug or "HQ"
+        lines.append(f"Your memory ({where}):\n{mem}" if mem
+                     else f"Your memory ({where}): empty")
+        scope = f" --project {project_slug}" if project_slug else ""
+        lines.append("When the user states a lasting decision or preference, save one line: "
+                     f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
+    else:
+        lines.append(f"(speaking as @{b.handle})")
+    if handoff_from and team.get(handoff_from):
+        h = team.get(handoff_from)
+        lines.append(f"Handoff: user tagged @{h.handle}; this is your skill, so you own it. "
+                     f"Open with one short line that you are taking it from @{h.handle}.")
+    return "\n".join(lines)
 
 
 _SKILL_CONTINUATION = (
@@ -552,8 +628,9 @@ _RAIL_COVERED_SKILL_STUBS: dict[str, str] = {
 
 
 def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=None,
-                        explicit=False, workspace=None):
-    """Assemble one chat turn. Snapshot + full skill body only on fresh session."""
+                        explicit=False, workspace=None, bot=None, suggest_owner=None):
+    """Assemble one chat turn. Snapshot + full skill body only on fresh session.
+    `bot` = the persona block from _bot_block (speaker, team, memory)."""
     parts = []
     fresh = session.is_fresh() if hasattr(session, "is_fresh") else not getattr(session, "_started", False)
 
@@ -564,6 +641,9 @@ def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=
             pass
     else:
         parts.append(_RESUME_NOTE)
+
+    if bot:
+        parts.append(bot)
 
     if workspace:
         parts.append(workspace)
@@ -582,7 +662,8 @@ def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=
         parts.append(
             f"## Skill hint (not active)\n"
             f"Wording suggests `{suggest}` — user did not tag. "
-            f"Before any osctl write: tell them to add `/{suggest}` (⊕ picker). "
+            f"Before any osctl write: tell them to tag "
+            f"{'`@' + suggest_owner + '` or ' if suggest_owner else ''}`/{suggest}`. "
             "Reads ok; no commits this turn unless they tagged or this is a continuation."
         )
 
@@ -773,11 +854,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "no user message"})
         user_msg = messages[-1]["content"]
 
-        # Per-turn routing: explicit @/skill tags only (keyword → hint, not Sonnet).
+        # Per-turn routing: explicit @bot or /skill tags only (keyword → hint, not Sonnet).
         context = (body.get("context") or "").strip()
-        explicit = _explicit_skill(user_msg)
-        suggest = _suggest_skill(user_msg) if not explicit else None
-        skill = explicit
         projects = db.tree()
         project_slug = str(body.get("project_slug") or "").strip()
         project_record = next(
@@ -789,6 +867,10 @@ class Handler(BaseHTTPRequestHandler):
         )
         chat_id = body.get("chat_id") or None
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
+        team = bots.team(ROOT)
+        bot_id, skill, routed, handoff_from = _route_bot(team, user_msg, sess)
+        explicit = skill if routed else None
+        suggest = _suggest_skill(user_msg) if not explicit else None
 
         if (_WRITE_TURN_RE.search(user_msg or "")
                 and not explicit
@@ -798,7 +880,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
-            gate = _tag_gate_message(suggest)
+            gate = _tag_gate_message(suggest, team)
             self.wfile.write(f"data: {json.dumps({'delta': gate})}\n\n".encode())
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
@@ -911,14 +993,19 @@ class Handler(BaseHTTPRequestHandler):
             suggest=suggest,
             explicit=bool(explicit),
             workspace=workspace,
+            bot=_bot_block(team, bot_id, sess, project_slug if project_record else None,
+                           handoff_from, fresh=sess.is_fresh()),
+            suggest_owner=(team.get(team.owner(suggest)).handle if suggest else None),
         )
         sess.note_skill(skill, explicit=bool(explicit))
+        if hasattr(sess, "note_bot"):
+            sess.note_bot(bot_id)
 
         ctx_len = len((body.get("context") or "").strip())
         fresh = sess.is_fresh()
         self.log_message(
-            "chat turn prompt=%d ctx=%d skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s fresh=%s turn=%d",
-            len(text), ctx_len, skill or "-", bool(explicit), model, with_web,
+            "chat turn prompt=%d ctx=%d bot=%s skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s fresh=%s turn=%d",
+            len(text), ctx_len, bot_id, skill or "-", bool(explicit), model, with_web,
             bool(workspace_dir), bool(graph_context), file_search_mode, fresh,
             sess._turn_count,
         )
@@ -942,6 +1029,9 @@ class Handler(BaseHTTPRequestHandler):
                 emit({"chat_id": sess.session_id,
                       "title": (saved or {}).get("title") or chat_store.title_from(user_msg),
                       "project": project_scope[0] if project_scope else None})
+            b = team.get(bot_id)
+            emit({"bot": {"id": b.id, "name": b.name, "handle": b.handle, "icon": b.icon,
+                          "skill": skill, "handoff_from": handoff_from}})
             for kind, payload in sess.ask(
                     text, with_web=with_web, model=model,
                     workspace_dir=(workspace_dir if file_search_mode else None),
@@ -963,7 +1053,8 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
-                    chat_store.record_turn(sess, project_scope, user_msg, "".join(reply))
+                    chat_store.record_turn(sess, project_scope, user_msg, "".join(reply),
+                                           bot=bot_id)
                 except (OSError, ValueError):
                     traceback.print_exc()
             try:
@@ -1133,6 +1224,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, db.posts())
             if path == "/api/skills-index":
                 return self._send(200, _skills_index())
+            if path == "/api/bots":
+                return self._send(200, {"bots": bots.team(ROOT).to_api()})
             if path == "/api/schemas":
                 return self._send(200, schemas_for_api())
             if path == "/api/id-catalog":
@@ -1453,6 +1546,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path.startswith("/api/bots/") and path.endswith("/active"):
+                bot_id = path[len("/api/bots/"):-len("/active")]
+                team = bots.set_active(bot_id, bool(body.get("active")), ROOT)
+                return self._send(200, {"bots": team.to_api()})
             if path == "/api/upload-temp":
                 encoded = body.get("data", "")
                 if not isinstance(encoded, str):

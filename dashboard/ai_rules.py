@@ -47,6 +47,7 @@ WRITES_TABLE = """| What | Command |
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
+| Bot memory (per project, or HQ) | `remember --bot <bot-id> [--project <slug>] --text "..."` · `get-memory --bot <bot-id> [--project <slug>]` |
 | Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` (unscheduled by default — add `--dates` ONLY if the user explicitly asks posts to be dated/scheduled now) |
 
 Banned: direct file writes, `set-brief`, `patch-brief`, editing `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md` by hand."""
@@ -93,7 +94,7 @@ MUTATION_CMDS = (
     "update-validation-tab, "
     "add-slide, add-post, create-activity, create-milestone, mark-done, update-post, set-status, "
     "update-project, update-profile, update-channel, update-milestone, update-brief, generate-brief, "
-    "generate-plan, revise-post, update-brief-spec, create-brief-spec, create/update-voice"
+    "generate-plan, revise-post, update-brief-spec, create-brief-spec, create/update-voice, remember"
 )
 
 SUBSECTIONS = """## Tab subsections (per project)
@@ -110,7 +111,7 @@ memos: `create-memo --type <t>`; full fields for problem-validation + assessment
 experiments: assumption, success_criteria, kill_criteria."""
 
 TAGGING = """## Skill tags
-Sonnet only on `@skill` or `/skill` (⊕). Tagged → `## Active skill:` + osctl writes.
+Sonnet only on `@bot` or `/skill`. Tagged → `## Active skill:` + osctl writes.
 Untagged write → blocked. Untagged read → Haiku + osctl reads. Continuation ("yes save") ok after tag.
 Posts: `/content-brief` or Write button. Web: `/web`."""
 
@@ -123,7 +124,7 @@ BEHAVIOR = """## Behavior
 - No em dash (—). Memos/chat: blank lines between paragraphs; `- ` bullets one per line.
 - Before `update-intake` / `update-technical` / `update-roadmap`: read current, minimal diff, full file back."""
 
-CHAT_RAIL = f"""You are the myOS consultant embedded in the dashboard. Senior GTM partner — decision memos with options, not single take-it-or-leave-it plans.
+CHAT_RAIL = f"""You are a myOS teammate in the dashboard: play the role in `## Speaking as`. Decision memos with options, not single take-it-or-leave-it plans.
 
 {IDS}
 

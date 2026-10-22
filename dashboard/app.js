@@ -191,6 +191,7 @@ const ROUTES = [
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
   [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
+  [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
   [/^\/project\/([^/]+)\/edit$/,                ([s])    => renderEditProject(s)],
@@ -316,6 +317,8 @@ let STATE = {view:"calendar", project:null, section:null, profile:null, channelG
 let _TREE = [];
 let _POSTS = [];   // flat post index for @-mentions, refreshed in renderRail
 let _SKILLS = [];  // [{name, description}] for the manual skill picker (/ and ⊕)
+let _BOTS = [];    // team roster from /api/bots (@handle teammates that own skills)
+const botById = id => _BOTS.find(b => b.id === id);
 // Post open in detail view. Full slot+brief inlined only when the turn needs it
 // (content keywords, @mention) — otherwise a compact pointer saves tokens.
 // Set in renderPostDetail, cleared on every navigation in parseRoute.
@@ -407,7 +410,8 @@ async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
   const regP = api("/api/id-registry").then(d => { IdReg.load(d); }).catch(() => IdReg.load({}));
   const schP = ensureSchemas();
-  [_TREE, _POSTS, _SKILLS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP]);
+  const botsP = api("/api/bots").then(d => d.bots || []).catch(() => []);
+  [_TREE, _POSTS, _SKILLS, , , _BOTS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, botsP]);
   await ensureIdRegistry();
   const projects = _TREE.map((p,pi)=>{
     const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
@@ -452,6 +456,7 @@ async function renderRail(){
       <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
+      <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
     <div class="rail-hdr"><span class="label">Projects</span>
       <button class="add-btn" id="new-project-btn" data-os-id="btn:global:new-project" title="New project">＋</button></div>
@@ -540,6 +545,7 @@ async function refreshViews(){
   if (v === "calendar") return renderTimeline();
   if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
+  if (v === "team") return renderTeam();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -615,6 +621,43 @@ async function renderOperations(){
   draw();
   $("#newOpBtn").onclick=()=>navigate("#/activity/new");
 }
+// ── Team: bots as teammates, org chart + on/off. A switched-off bot's skills
+// roll up to its manager (server decides); Chief of Staff is always on.
+async function renderTeam(){
+  const draw = () => {
+    const depth = b => { let d = 0, cur = b; while (cur && cur.reports_to !== "ceo" && d < 5) { cur = botById(cur.reports_to); d++; } return d; };
+    const rows = _BOTS.map(b => {
+      const own = new Set(b.skills);
+      const covered = b.effective_skills.filter(s => !own.has(s));
+      const boss = b.reports_to === "ceo" ? "You (CEO)" : (botById(b.reports_to)?.name || b.reports_to);
+      const coverNote = b.covering.length ? `<small class="team-cover">covering for ${b.covering.map(c => esc(botById(c)?.name || c)).join(", ")}</small>` : "";
+      const offNote = !b.active ? `<small class="team-cover">off · skills handled by ${esc(botById(b.manager)?.name || "Chief of Staff")}</small>` : "";
+      return `<div class="post team-row${b.active ? "" : " off"}" style="margin-left:${depth(b) * 22}px">
+        <span class="bot-av">${esc(b.icon)}</span>
+        <div class="t"><b>${esc(b.name)}</b> <span class="bot-handle">@${esc(b.handle)}</span>
+          <small>${esc(b.about)}</small>
+          <small>Reports to ${esc(boss)}</small>
+          <div class="team-skills">${b.skills.map(s => `<span class="tag">${esc(s)}</span>`).join("")}${covered.map(s => `<span class="tag covered" title="covering">${esc(s)}</span>`).join("")}</div>
+          ${coverNote}${offNote}
+        </div>
+        ${b.locked ? `<span class="tag">always on</span>` : `<button class="go" data-bot-toggle="${esc(b.id)}" data-on="${b.active ? 1 : 0}">${b.active ? "Switch off" : "Switch on"}</button>`}
+      </div>`;
+    }).join("");
+    $("#team-list").innerHTML = `<div class="rowc">${rows}</div>`;
+    $("#team-list").querySelectorAll("[data-bot-toggle]").forEach(btn => btn.onclick = async () => {
+      try {
+        const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { active: btn.dataset.on !== "1" });
+        _BOTS = d.bots || _BOTS; draw(); renderRail().catch(() => {});
+      } catch (e) { toast("✗ " + e.message); }
+    });
+  };
+  $("#main").innerHTML = `
+    <div class="topbar"><div><div class="crumbs">Your company</div><h1 class="title">Team</h1></div></div>
+    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Tag a teammate with @handle in chat. Untagged messages go to the Chief of Staff. Each bot keeps separate memory per project.</div><div id="team-list"></div></div>`;
+  if (!_BOTS.length) _BOTS = (await api("/api/bots").catch(() => ({}))).bots || [];
+  draw();
+}
+
 function plainStatus(s){ return ({planned:"Idea",approved_slot:"Idea",briefed:"Draft",approved:"Ready",published:"Published",rejected:"Archived"})[s]||s; }
 
 function latestMemo(project, type){
@@ -2952,7 +2995,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   function showChat(msgs){
     history.length = 0; stream.innerHTML = "";
     if (!msgs || !msgs.length) return showWelcome();
-    msgs.forEach(m => { history.push(m); addMsg(m.role, m.content); });
+    msgs.forEach(m => { history.push(m); addMsg(m.role, m.content, m.bot); });
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
   async function openChat(id){
@@ -3157,6 +3200,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         out.push({ type:"skill", slug:s.name, name:s.name, meta:(s.description||"").slice(0, 90) });
       return out;
     }
+    for (const b of _BOTS.filter(b => b.active))
+      out.push({ type:"bot", slug:b.handle, name:b.name, meta:"@" + b.handle, icon:b.icon });
     for (const p of _TREE) {
       out.push({ type:"project", slug:p.slug, osId:OSID.proj(p.slug), name:p.name, meta:(p.kind||p.type||"project") });
       for (const s of PROJECT_SECTIONS)
@@ -3204,7 +3249,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const ICON = { project:"▣", profile:"◐", channel:"▶", post:"✎", section:"◎", skill:"✦", tool:"🌐", action:"📎" };
     menu.innerHTML = menuItems.map((c, i) =>
       `<div class="mi${i===menuIdx?" sel":""}" data-i="${i}">
-         <span class="mi-ic">${ICON[c.type]||"·"}</span><b>${esc(c.name)}</b>
+         <span class="mi-ic">${esc(c.icon||ICON[c.type]||"·")}</span><b>${esc(c.name)}</b>
          <span class="mi-meta">${esc(c.type)} · ${esc(c.meta)}</span></div>`
     ).join("");
     menu.querySelectorAll(".mi").forEach(el =>
@@ -3221,14 +3266,15 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       closeMenu(); fileInput.click(); input.dispatchEvent(new Event("input"));
       return;
     }
-    // Skills/tools are routing tokens (/slug) read server-side — never inlined,
-    // so they are NOT tracked in mentions[]. Entities use @slug and ARE tracked.
+    // Skills/tools (/slug) and bots (@handle) are routing tokens read server-side,
+    // never inlined, so they are NOT tracked in mentions[]. Entities use @slug and ARE tracked.
     const sigil = (c.type === "skill" || c.type === "tool") ? "/" : "@";
     const token = sigil + (c.osId || c.slug);
+    const routing = c.type === "skill" || c.type === "tool" || c.type === "bot";
     input.value = input.value.slice(0, aq.start) + token + " " + input.value.slice(aq.end);
     const caret = aq.start + token.length + 1;
     input.setSelectionRange(caret, caret);
-    if (sigil === "@" && !mentions.some(m => m.token === token))
+    if (!routing && !mentions.some(m => m.token === token))
       mentions.push({ token, type:c.type, slug:mentionBare(c), osId:c.osId||null, name:c.name });
     closeMenu(); input.focus();
     input.dispatchEvent(new Event("input"));   // keep textarea autosize in sync
@@ -3274,11 +3320,22 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     else el.textContent = text;
   }
 
-  function addMsg(role, text){
+  function botLabel(div, bot, handoffFrom){
+    const b = typeof bot === "string" ? botById(bot) : bot;
+    if (!b) return;
+    let lab = div.querySelector(".bot-label");
+    if (!lab) { lab = document.createElement("div"); lab.className = "bot-label"; div.prepend(lab); }
+    const from = handoffFrom ? botById(handoffFrom) : null;
+    lab.innerHTML = `<span class="bot-av">${esc(b.icon || "●")}</span><b>${esc(b.name)}</b>`
+      + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "");
+  }
+
+  function addMsg(role, text, bot){
     const div = document.createElement("div");
     const uiRole = role === "user" ? "me" : "ai";
     div.className = "msg " + uiRole;
     div.innerHTML = `<div class="b"></div>`;
+    if (bot) botLabel(div, bot);
     const bubble = div.querySelector(".b");
     setMsgContent(bubble, role, text);
     stream.appendChild(div);
@@ -3695,6 +3752,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               }
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
+            if (obj.bot) botLabel(bubble.parentElement, obj.bot, obj.bot.handoff_from);
             if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
@@ -3742,12 +3800,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   });
 
   function showWelcome(){
-    addMsg("assistant", "I can update posts, projects, experiments, and plans. Ask for a change or choose a starting point.");
+    addMsg("assistant", "Your team is here. Tag a teammate with @, or just ask and the Chief of Staff routes it.", "cos");
     const cmds = [
-      ["Draft post",    "/content-brief "],
-      ["Plan content",  "/content-plan "],
-      ["Design test",   "/experiment-design "],
-      ["Weekly review", "/weekly-review "],
+      ["@social draft post",   "@social "],
+      ["@product design test", "@product /experiment-design "],
+      ["@cmo positioning",     "@cmo /positioning "],
+      ["@cos weekly review",   "@cos /weekly-review "],
     ];
     const wrap = document.createElement("div");
     wrap.className = "sugs";

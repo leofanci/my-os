@@ -65,8 +65,9 @@ def list_meta():
     return sorted(out, key=lambda r: r.get("updated") or 0, reverse=True)
 
 
-def record_turn(sess, scope, user_msg, reply):
-    """Append one exchange to the chat backing `sess` and snapshot its resume state."""
+def record_turn(sess, scope, user_msg, reply, bot=None):
+    """Append one exchange to the chat backing `sess` and snapshot its resume state.
+    `bot` = id of the teammate that answered (shown on the reply when reopened)."""
     rec = load(sess.session_id) or {
         "id": sess.session_id,
         "title": title_from(user_msg),
@@ -75,7 +76,10 @@ def record_turn(sess, scope, user_msg, reply):
     }
     rec["messages"].append({"role": "user", "content": user_msg})
     if reply:
-        rec["messages"].append({"role": "assistant", "content": reply})
+        msg = {"role": "assistant", "content": reply}
+        if bot:
+            msg["bot"] = bot
+        rec["messages"].append(msg)
     rec.update({
         "updated": time.time(),
         "scope": list(scope) if scope else None,
@@ -83,6 +87,7 @@ def record_turn(sess, scope, user_msg, reply):
         "turn_count": sess._turn_count,
         "last_skill": sess._last_skill,
         "skill_explicit": sess._skill_explicit,
+        "last_bot": getattr(sess, "_last_bot", None),
     })
     save(rec)
     return rec
