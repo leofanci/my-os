@@ -279,3 +279,16 @@ def remember(bot_id, text, project=None, root=ROOT, today=None):
     lines.append(f"- {(today or date.today()).isoformat()} {line}")
     _atomic_write(path, "\n".join(lines[-MEMORY_MAX_LINES:]) + "\n")
     return str(path.relative_to(Path(root)))
+
+
+def forget(bot_id, line, project=None, root=ROOT):
+    """Delete one memory line (exact text, first match). True if removed."""
+    existing = read_memory(bot_id, project, root, tail=0)
+    lines = existing.splitlines() if existing else []
+    target = (line or "").strip()
+    if target not in lines:
+        return False
+    lines.remove(target)
+    path = memory_path(bot_id, project, root)
+    _atomic_write(path, ("\n".join(lines) + "\n") if lines else "")
+    return True

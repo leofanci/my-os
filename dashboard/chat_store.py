@@ -62,14 +62,27 @@ def list_meta():
         except (OSError, json.JSONDecodeError):
             continue
         out.append({k: rec.get(k) for k in ("id", "title", "created", "updated", "turn_count",
-                                            "room", "scope")})
+                                            "room", "scope", "tokens", "cost")})
     return sorted(out, key=lambda r: r.get("updated") or 0, reverse=True)
 
 
-def record_turn(sess, scope, user_msg, reply, bot=None, room=None):
+def records():
+    """Every saved chat, full records (for cost roll-ups)."""
+    for f in CHATS_DIR.glob("*.json") if CHATS_DIR.is_dir() else []:
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(rec, dict):
+            yield rec
+
+
+def record_turn(sess, scope, user_msg, reply, bot=None, room=None, meta=None):
     """Append one exchange to the chat backing `sess` and snapshot its resume state.
     `bot` = id of the teammate that answered (shown on the reply when reopened);
-    `room` = channel/DM the thread started in (core.rooms; kept once set)."""
+    `room` = channel/DM the thread started in (core.rooms; kept once set);
+    `meta` = extra reply fields (approval id, tokens, cost) — tokens/cost also
+    add up on the chat so threads show their running cost."""
     rec = load(sess.session_id) or {
         "id": sess.session_id,
         "title": title_from(user_msg),
@@ -78,10 +91,14 @@ def record_turn(sess, scope, user_msg, reply, bot=None, room=None):
     }
     rec["messages"].append({"role": "user", "content": user_msg})
     if reply:
-        msg = {"role": "assistant", "content": reply}
+        msg = {"role": "assistant", "content": reply, "ts": time.time()}
         if bot:
             msg["bot"] = bot
+        msg.update({k: v for k, v in (meta or {}).items() if v is not None})
         rec["messages"].append(msg)
+    for key in ("tokens", "cost"):
+        if (meta or {}).get(key):
+            rec[key] = (rec.get(key) or 0) + meta[key]
     rec.update({
         "updated": time.time(),
         "scope": list(scope) if scope else None,

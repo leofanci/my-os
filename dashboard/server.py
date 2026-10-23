@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -41,6 +42,7 @@ import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
 from core import bots    # noqa: E402
 from core import rooms   # noqa: E402
+from core import approvals  # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
 from ai_rules import CHAT_RAIL  # noqa: E402
@@ -613,6 +615,8 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
         scope = f" --project {project_slug}" if project_slug else ""
         lines.append("When the user states a lasting decision or preference, save one line: "
                      f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
+        lines.append("When you propose a write and wait for the user's OK, end with one line "
+                     "`APPROVAL: <what you will save, where>`; the UI turns it into Approve/No buttons.")
         lines.append("Calendar: one for all workspaces (the user's time). Before a timed "
                      "`create-activity`, run `get-busy --from <date>`; overlaps are refused.")
     else:
@@ -740,6 +744,26 @@ def _workspace_deny_dirs(ws, projects):
     dirs = [ROOT / "projects" / p["slug"] for p in projects if p.get("slug") != ws]
     dirs += [ROOT / "chats", ROOT / "team", ROOT / "portfolio", ROOT / "database"]
     return tuple(str(d) for d in dirs)
+
+
+def _costs(ws, projects, days=30):
+    """Estimated spend + tokens per bot (and total) in a workspace over `days`;
+    HQ covers every workspace. Read from the saved threads' reply metadata."""
+    since = time.time() - days * 86400
+    spaces = {w["id"] for w in _workspaces(projects)}
+    per_bot, total = {}, {"cost": 0.0, "tokens": 0, "turns": 0}
+    for rec in chat_store.records():
+        if ws != bots.HQ and rooms.split_id(rooms.room_of_chat(rec, set(), spaces))[0] != ws:
+            continue
+        for m in rec.get("messages") or []:
+            if m.get("role") != "assistant" or (m.get("ts") or 0) < since:
+                continue
+            row = per_bot.setdefault(m.get("bot") or bots.ROOT_BOT, {"cost": 0.0, "tokens": 0, "turns": 0})
+            for agg in (row, total):
+                agg["cost"] += float(m.get("cost") or 0)
+                agg["tokens"] += int(m.get("tokens") or 0)
+                agg["turns"] += 1
+    return {"days": days, "bots": per_bot, "total": total}
 
 
 def _workspaces(projects):
@@ -915,6 +939,9 @@ class Handler(BaseHTTPRequestHandler):
         )
         chat_id = body.get("chat_id") or None
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
+        if chat_id:
+            answer = body.get("approval")
+            approvals.resolve_chat(chat_id, answer if answer in ("approved", "rejected") else "answered", ROOT)
         sess.workspace = ws
         sess.deny_dirs = _workspace_deny_dirs(ws, projects)
         bot_id, skill, routed, handoff_from = _route_bot(
@@ -1074,7 +1101,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode())
             self.wfile.flush()
 
-        reply = []
+        reply, done, meta = [], {}, {"model": model}
         try:
             # Tell the client which saved chat this turn belongs to (a scope
             # change or first turn may have started a new one).
@@ -1098,7 +1125,17 @@ class Handler(BaseHTTPRequestHandler):
                     emit({"tool": payload})
                 elif kind == "error":
                     emit({"error": payload})
-                # "done" → fall through to [DONE]
+                elif kind == "done":
+                    done = payload or {}
+            meta.update(tokens=done.get("tokens") or None, cost=done.get("cost"))
+            if meta["tokens"] or meta["cost"]:
+                emit({"usage": {"tokens": meta["tokens"], "cost": meta["cost"], "model": model}})
+            clean, summary = approvals.extract("".join(reply))
+            if summary and isinstance(getattr(sess, "session_id", None), str):
+                rec = approvals.add(ROOT, ws=ws, room=(room or {}).get("id"), chat=sess.session_id,
+                                    bot=bot_id, summary=summary)
+                reply, meta["approval"] = [clean], rec["id"]
+                emit({"approval": rec, "clean": clean})
         except (BrokenPipeError, ConnectionResetError):
             pass  # client stopped/closed; still save what streamed so far
         except Exception:  # noqa: BLE001
@@ -1108,7 +1145,7 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
                     chat_store.record_turn(sess, project_scope, user_msg, "".join(reply),
-                                           bot=bot_id, room=(room or {}).get("id"))
+                                           bot=bot_id, room=(room or {}).get("id"), meta=meta)
                 except (OSError, ValueError):
                     traceback.print_exc()
             try:
@@ -1288,6 +1325,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _skills_index())
             if path == "/api/workspaces":
                 return self._send(200, {"workspaces": _workspaces(db.tree())})
+            if path in ("/api/approvals", "/api/costs", "/api/memory"):
+                qs = parse_qs(urlparse(self.path).query)
+                ws, record = _resolve_workspace((qs.get("ws") or [None])[0], db.tree())
+                if path == "/api/approvals":
+                    return self._send(200, {"ws": ws, "approvals": approvals.pending(ROOT, ws)})
+                if path == "/api/costs":
+                    return self._send(200, {"ws": ws, **_costs(ws, db.tree())})
+                bot_id = (qs.get("bot") or [""])[0]
+                if bot_id not in bots.load_defs():
+                    raise ValueError(f"unknown bot: {bot_id}")
+                text = bots.read_memory(bot_id, record and ws, ROOT, tail=0)
+                return self._send(200, {"ws": ws, "bot": bot_id, "lines": text.splitlines() if text else []})
             if path in ("/api/bots", "/api/rooms"):
                 ws, record = _resolve_workspace(
                     (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
@@ -1616,6 +1665,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path in ("/api/memory", "/api/memory/delete"):
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                bot_id, project = str(body.get("bot") or ""), (ws if record else None)
+                if path == "/api/memory":
+                    bots.remember(bot_id, body.get("text"), project, ROOT)
+                elif not bots.forget(bot_id, body.get("line"), project, ROOT):
+                    raise ValueError("memory line not found")
+                text = bots.read_memory(bot_id, project, ROOT, tail=0)
+                return self._send(200, {"lines": text.splitlines() if text else []})
+            if path == "/api/approvals/dismiss":
+                approvals.resolve_chat(str(body.get("chat") or ""), "rejected", ROOT)
+                return self._send(200, {"ok": True})
             if path in ("/api/rooms", "/api/rooms/delete"):
                 ws, record = _resolve_workspace(body.get("ws"), db.tree())
                 if path == "/api/rooms/delete":

@@ -36,7 +36,11 @@ def parse_event(obj):
             if block.get("type") == "tool_use":
                 return ("tool", block.get("name", ""))
     elif t == "result":
-        return ("done", {"result": obj.get("result"), "subtype": obj.get("subtype")})
+        usage = obj.get("usage") or {}
+        tokens = sum(int(usage.get(k) or 0) for k in (
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
+        return ("done", {"result": obj.get("result"), "subtype": obj.get("subtype"),
+                         "tokens": tokens, "cost": obj.get("total_cost_usd")})
     return (None, None)
 
 

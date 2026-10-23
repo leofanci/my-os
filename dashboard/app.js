@@ -192,6 +192,7 @@ const ROUTES = [
   [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
+  [/^\/approvals$/,                             ()       => { setState("approvals"); renderApprovals(); }],
   [/^\/room\/new$/,                              ()       => renderRoomForm(null)],
   [/^\/room\/([a-z0-9-]+)\/edit$/,                ([n])    => renderRoomForm(n)],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
@@ -404,6 +405,10 @@ let _WORKSPACES = [];  // [{id, name, kind}] from /api/workspaces
 let _WS = "hq";
 try { _WS = localStorage.getItem("wsId") || "hq"; } catch {}
 let _ROOMS = [];   // current workspace's rooms: [{id, kind, name, members, lead}]
+let _APPROVALS = [];  // pending approvals visible here (HQ: every workspace)
+const fmtTokens = n => !n ? "" : n >= 1e6 ? `${(n/1e6).toFixed(1)}M tok` : n >= 1000 ? `${(n/1000).toFixed(1)}k tok` : `${n} tok`;
+const fmtCost = c => c ? `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}` : "";
+const fmtUsage = (tokens, cost) => [fmtTokens(tokens), fmtCost(cost)].filter(Boolean).join(" · ");
 const roomById = id => _ROOMS.find(r => r.id === id);
 const wsById = id => _WORKSPACES.find(w => w.id === id);
 const wsProject = () => (_WS !== "hq" ? _TREE.find(p => p.slug === _WS) || null : null);
@@ -428,7 +433,7 @@ async function switchWorkspace(ws){
   _WS = ws;
   try { localStorage.setItem("wsId", ws); } catch {}
   await renderRail();
-  window.ChatRooms?.enterWorkspace();
+  await window.ChatRooms?.enterWorkspace();
   if (changed) navigate(ws === "hq" ? "#/calendar" : `#/project/${ws}/${SECTIONS[0].key}`);
 }
 window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
@@ -441,9 +446,10 @@ async function renderRail(){
   [_TREE, _POSTS, _SKILLS, , , _WORKSPACES] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, wsP]);
   if (!wsById(_WS)) { _WS = "hq"; try { localStorage.setItem("wsId", "hq"); } catch {} }
   const q = `?ws=${encodeURIComponent(_WS)}`;
-  [_BOTS, _ROOMS] = await Promise.all([
+  [_BOTS, _ROOMS, _APPROVALS] = await Promise.all([
     api("/api/bots" + q).then(d => d.bots || []).catch(() => []),
     api("/api/rooms" + q).then(d => d.rooms || []).catch(() => []),
+    api("/api/approvals" + q).then(d => d.approvals || []).catch(() => []),
   ]);
   await ensureIdRegistry();
   renderWsBar();
@@ -461,6 +467,7 @@ async function renderRail(){
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
     <nav class="nav">
+      <a data-view="approvals"><span class="ico">✔</span> Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : `<span class="c">0</span>`}</a>
       <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
       <a data-view="calendar"><span class="ico">▦</span> Calendar <span class="c">shared</span></a>
       <a data-view="operations"><span class="ico">✓</span> Operations</a>
@@ -640,6 +647,7 @@ async function refreshViews(){
   if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
   if (v === "team") return renderTeam();
+  if (v === "approvals") return renderApprovals();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -718,6 +726,7 @@ async function renderOperations(){
 // ── Team: bots as teammates, org chart + on/off. A switched-off bot's skills
 // roll up to its manager (server decides); Chief of Staff is always on.
 async function renderTeam(){
+  let costs = { bots: {}, total: {}, days: 30 };
   const draw = () => {
     const depth = b => { let d = 0, cur = b; while (cur && cur.reports_to !== "ceo" && d < 5) { cur = botById(cur.reports_to); d++; } return d; };
     const rows = _BOTS.map(b => {
@@ -733,12 +742,17 @@ async function renderTeam(){
           <small>Reports to ${esc(boss)}</small>
           <div class="team-skills">${b.skills.map(s => `<span class="tag">${esc(s)}</span>`).join("")}${covered.map(s => `<span class="tag covered" title="covering">${esc(s)}</span>`).join("")}</div>
           ${coverNote}${offNote}
+          <small class="team-usage">${(() => { const c = costs.bots[b.id]; return c && c.turns ? `${c.turns} ${c.turns === 1 ? "reply" : "replies"} · ${fmtUsage(c.tokens, c.cost)} (est., ${costs.days}d)` : `no replies in ${costs.days}d`; })()}
+            · <a class="mem-toggle" data-mem="${esc(b.id)}">Memory</a></small>
+          <div class="mem-box" hidden></div>
         </div>
         ${b.recommended && !b.active ? `<span class="tag">recommended</span>` : ""}
         ${b.locked ? `<span class="tag">always on</span>` : `<button class="go" data-bot-toggle="${esc(b.id)}" data-on="${b.active ? 1 : 0}">${b.active ? "Switch off" : "Switch on"}</button>`}
       </div>`;
     }).join("");
-    $("#team-list").innerHTML = `<div class="rowc">${rows}</div>`;
+    const t = costs.total || {};
+    $("#team-list").innerHTML = `<div class="team-total">${t.turns ? `Last ${costs.days} days: ${t.turns} ${t.turns === 1 ? "reply" : "replies"} · ${fmtUsage(t.tokens, t.cost)} (est.)` : ""}</div><div class="rowc">${rows}</div>`;
+    $("#team-list").querySelectorAll("[data-mem]").forEach(a => a.onclick = () => toggleMemory(a.closest(".team-row"), a.dataset.mem));
     $("#team-list").querySelectorAll("[data-bot-toggle]").forEach(btn => btn.onclick = async () => {
       try {
         const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { ws: _WS, active: btn.dataset.on !== "1" });
@@ -750,7 +764,59 @@ async function renderTeam(){
     <div class="topbar"><div><div class="crumbs">${esc(wsById(_WS)?.name || "HQ")} · ${esc(_WS === "hq" ? "holding" : wsById(_WS)?.kind || "")}</div><h1 class="title">Team</h1></div></div>
     <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
   if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
+  costs = await api(`/api/costs?ws=${encodeURIComponent(_WS)}`).catch(() => costs);
   draw();
+}
+
+// ── Approvals inbox: proposals bots are waiting on you for (HQ: every company).
+function relAge(ts){
+  const d = Date.now() / 1000 - (ts || 0);
+  return d < 60 ? "now" : d < 3600 ? `${Math.floor(d / 60)}m` : d < 86400 ? `${Math.floor(d / 3600)}h` : `${Math.floor(d / 86400)}d`;
+}
+async function renderApprovals(){
+  const items = _APPROVALS;
+  const rows = items.length ? items.map(a => {
+    const b = botById(a.bot) || { name: a.bot, icon: "●" };
+    const room = (a.room || "").split("/")[1] || "general";
+    const where = `${wsById(a.ws)?.name || a.ws} · ${room.startsWith("dm-") ? "DM" : "#" + room.replace(/^t-/, "")}`;
+    return `<div class="post approval-row">
+      <span class="bot-av">${esc(b.icon)}</span>
+      <div class="t">${esc(a.summary)}<small>${esc(b.name)} · ${esc(where)} · ${relAge(a.created)}</small></div>
+      <button class="go" data-ap-go="${esc(a.id)}">Open</button>
+      <button class="go primary-go" data-ap-ok="${esc(a.id)}">Approve</button>
+      <button class="more" data-ap-no="${esc(a.id)}">Dismiss</button>
+    </div>`;
+  }).join("") : `<div style="padding:24px 4px;color:var(--dim)">Nothing waiting on you.</div>`;
+  $("#main").innerHTML = `
+    <div class="topbar"><div><div class="crumbs">${esc(_WS === "hq" ? "Every workspace" : wsById(_WS)?.name || "")}</div><h1 class="title">Approvals</h1></div></div>
+    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it.</div><div class="rowc">${rows}</div></div>`;
+  const find = id => items.find(a => a.id === id);
+  $("#main").querySelectorAll("[data-ap-go]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apGo)));
+  $("#main").querySelectorAll("[data-ap-ok]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apOk), "approved"));
+  $("#main").querySelectorAll("[data-ap-no]").forEach(b => b.onclick = async () => {
+    try { await jpost("/api/approvals/dismiss", { chat: find(b.dataset.apNo).chat }); await renderRail(); renderApprovals(); }
+    catch (e) { toast("✗ " + e.message); }
+  });
+}
+
+async function toggleMemory(row, botId){
+  const box = row.querySelector(".mem-box");
+  if (!box.hidden) { box.hidden = true; return; }
+  const draw = lines => {
+    box.innerHTML = `${lines.length ? lines.map(l => `<div class="mem-line"><span>${esc(l.replace(/^- /, ""))}</span><button class="cl-del" data-mem-del="${esc(l)}" title="Forget">✕</button></div>`).join("") : `<div class="mem-empty">Nothing remembered in this workspace yet.</div>`}
+      <form class="mem-add"><input name="text" placeholder="Add a fact this bot should remember here…" maxlength="300"><button class="btn" type="submit">Add</button></form>`;
+    box.querySelectorAll("[data-mem-del]").forEach(b => b.onclick = async () => {
+      try { draw((await jpost("/api/memory/delete", { ws: _WS, bot: botId, line: b.dataset.memDel })).lines); } catch (e) { toast("✗ " + e.message); }
+    });
+    box.querySelector(".mem-add").onsubmit = async e => {
+      e.preventDefault();
+      const text = e.target.text.value.trim(); if (!text) return;
+      try { draw((await jpost("/api/memory", { ws: _WS, bot: botId, text })).lines); } catch (err) { toast("✗ " + err.message); }
+    };
+  };
+  box.hidden = false;
+  try { draw((await api(`/api/memory?ws=${encodeURIComponent(_WS)}&bot=${encodeURIComponent(botId)}`)).lines || []); }
+  catch (e) { toast("✗ " + e.message); }
 }
 
 function plainStatus(s){ return ({planned:"Idea",approved_slot:"Idea",briefed:"Draft",approved:"Ready",published:"Published",rejected:"Archived"})[s]||s; }
@@ -3078,14 +3144,26 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     chatListEl.hidden = true;
     paintRoomHeader();
     const thread = roomThreads[id];
+    let opened = Promise.resolve();
     if (!activeChatId || activeChatId !== thread) {
-      if (thread) openChat(thread);
+      if (thread) opened = openChat(thread);
       else { setActiveChat(null); showChat([]); statusEl.textContent = "Ready"; fetch("/api/chat-reset", { method: "POST" }).catch(() => {}); }
     }
     highlight();
+    return opened;
+  }
+  // Jump to an approval's thread (any workspace); optionally answer it.
+  async function openThread(a, answer){
+    if (!a || busy) return busyNote();
+    roomThreads[a.room] = a.chat;
+    wsRooms[a.ws] = a.room;   // so entering the workspace lands on this thread
+    if (a.ws !== _WS) await window.Workspaces.switchTo(a.ws);
+    else await selectRoom(a.room);
+    if (answer === "approved") send("Yes, approved.", { approval: "approved" });
   }
   window.ChatRooms = {
     select: selectRoom,
+    openThread,
     current: () => activeRoomId,
     busy: () => busy,
     // After a workspace switch: reopen that workspace's last room.
@@ -3100,11 +3178,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── saved chats: each is its own claude session (server chat_store) ─────
   // Active chat id survives reloads; its transcript is loaded from the server.
   let activeChatId = null;
+  let threadUsage = { tokens: 0, cost: 0 };   // running total of the open thread
   const chatListEl = document.getElementById("chat-list");
   const chatTitleEl = document.getElementById("chat-title");
 
   function setActiveChat(id, title, project){
     activeChatId = id || null;
+    if (!id) threadUsage = { tokens: 0, cost: 0 };
     chatTitleEl.textContent = (id && title) || "New thread";
     chatTitleEl.title = chatTitleEl.textContent;
     if (activeChatId) roomThreads[activeRoomId] = activeChatId;
@@ -3114,7 +3194,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   function showChat(msgs){
     history.length = 0; stream.innerHTML = "";
     if (!msgs || !msgs.length) return showWelcome();
-    msgs.forEach(m => { history.push(m); addMsg(m.role, m.content, m.bot); });
+    msgs.forEach(m => {
+      history.push(m);
+      const b = addMsg(m.role, m.content, m.bot);
+      if (m.role === "assistant") decorateReply(b.parentElement, m);
+    });
     stream.scrollTop = stream.scrollHeight;
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
@@ -3123,6 +3207,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const rec = await fetch(`/api/chats/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null).catch(() => null);
     if (!rec) { setActiveChat(null); showChat([]); return; }
     setActiveChat(rec.id, rec.title, rec.scope && rec.scope[0]); showChat(rec.messages);
+    threadUsage = { tokens: rec.tokens || 0, cost: rec.cost || 0 };
     statusEl.textContent = "Ready";
   }
   function newChat(){
@@ -3142,6 +3227,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     chatListEl.innerHTML = chats.length ? chats.map(c =>
       `<div class="cl-row${c.id === activeChatId ? " active" : ""}" data-chat="${esc(c.id)}">
          <span class="cl-title">${esc(c.title || "New chat")}</span>
+         ${c.tokens || c.cost ? `<span class="cl-when">${esc(fmtUsage(c.tokens, c.cost))}</span>` : ""}
          <span class="cl-when">${relTime(c.updated)}</span>
          <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat">✕</button>
        </div>`).join("") : `<div class="cl-empty">No threads in this channel yet.</div>`;
@@ -3261,7 +3347,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     try {
       const { turn_count } = await fetch("/api/chat-session").then(r => r.json());
       const n = turn_count || 0;
-      statusEl.textContent = (base || "Ready") + ` · turn ${n}`;
+      const usage = fmtUsage(threadUsage.tokens, threadUsage.cost);
+      statusEl.textContent = (base || "Ready") + ` · turn ${n}` + (usage ? ` · ${usage}` : "");
     } catch {
       if (base) statusEl.textContent = base;
     }
@@ -3450,6 +3537,33 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const from = handoffFrom ? botById(handoffFrom) : null;
     lab.innerHTML = `<span class="bot-av">${esc(b.icon || "●")}</span><b>${esc(b.name)}</b>`
       + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "");
+  }
+
+  // Usage line + approval bar under a bot reply.
+  function decorateReply(div, m){
+    div.querySelector(".msg-meta")?.remove();
+    div.querySelector(".approval-bar")?.remove();
+    const usage = fmtUsage(m.tokens, m.cost);
+    if (usage) {
+      const meta = document.createElement("div");
+      meta.className = "msg-meta"; meta.textContent = usage; meta.title = "tokens · estimated cost";
+      div.appendChild(meta);
+    }
+    if (m.approval && _APPROVALS.some(a => a.id === (m.approval.id || m.approval))) {
+      const a = typeof m.approval === "object" ? m.approval : _APPROVALS.find(x => x.id === m.approval);
+      const bar = document.createElement("div");
+      bar.className = "approval-bar";
+      bar.innerHTML = `<span class="ap-sum">✔ ${esc(a.summary)}</span>
+        <button class="btn primary" data-ap="approved">Approve</button>
+        <button class="btn" data-ap="edit">Edit</button>
+        <button class="btn" data-ap="rejected">No</button>`;
+      bar.querySelectorAll("[data-ap]").forEach(b => b.onclick = () => {
+        if (b.dataset.ap === "edit") { input.value = "Change before saving: "; input.focus(); input.dispatchEvent(new Event("input")); return; }
+        bar.remove();
+        send(b.dataset.ap === "approved" ? "Yes, approved." : "No, don't save that.", { approval: b.dataset.ap });
+      });
+      div.appendChild(bar);
+    }
   }
 
   function addMsg(role, text, bot){
@@ -3757,11 +3871,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return ctx;
   }
 
-  async function send(){
-    const text = input.value.trim();
+  async function send(override, extra){
+    const text = (typeof override === "string" ? override : input.value).trim();
     if (!text || busy) return;
     busy = true;
-    input.value = "";
+    if (typeof override !== "string") input.value = "";
+    const hadPending = _APPROVALS.some(a => a.chat === activeChatId);
+    stream.querySelectorAll(".approval-bar").forEach(el => el.remove());   // any reply answers it
     input.style.height = "56px";
     statusEl.textContent = "thinking…";
     sendBtn.disabled = true;
@@ -3776,12 +3892,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     mentions = [];
 
     const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "", wrote = false;
+    const turnMeta = {};
     startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
     let pendingBreak = false;
 
     chatAbort = new AbortController();
     try {
-      const payload = { messages: [{ role: "user", content: text }], context: ctx };
+      const payload = { messages: [{ role: "user", content: text }], context: ctx, ...(extra || {}) };
       if (projectSlug) payload.project_slug = projectSlug;
       if (activeChatId) payload.chat_id = activeChatId;
       payload.room_id = activeRoomId;
@@ -3825,6 +3942,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
             if (obj.bot) botLabel(bubble.parentElement, obj.bot, obj.bot.handoff_from);
+            if (obj.usage) {
+              turnMeta.tokens = obj.usage.tokens; turnMeta.cost = obj.usage.cost;
+              threadUsage.tokens += obj.usage.tokens || 0; threadUsage.cost += obj.usage.cost || 0;
+            }
+            if (obj.approval) {
+              full = obj.clean ?? full; bubble.innerHTML = formatChatText(full);
+              _APPROVALS.unshift(obj.approval); turnMeta.approval = obj.approval;
+            }
             if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
@@ -3855,6 +3980,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
       if (wrote) showCanvas();        // a bot ran osctl: let the canvas show it
+      decorateReply(bubble.parentElement, turnMeta);
+      if (hadPending || turnMeta.approval) renderRail().catch(() => {});   // inbox count
     }
   }
 
