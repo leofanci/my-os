@@ -190,6 +190,7 @@ function navigate(hash, extras){
   else location.hash = hash;
 }
 const ROUTES = [
+  [/^\/content(?:\/(posts|calendar|briefs|voice))?$/, ([t]) => { setState("content",{tab:t||"posts"}); renderContent(t||"posts"); }],
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
   [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
@@ -259,11 +260,14 @@ function parseRoute(hash){
       _NAV_EXTRAS={}; highlight(); return;
     }
   }
-  navigate("#/calendar");
+  navigate(defaultRoute());
 }
+// Where the canvas opens when nothing else is asked for.
+const defaultRoute = () => (wsProject() ? "#/content" : "#/calendar");
 function setState(view, extra={}){
   STATE={view, project:extra.project||null, section:extra.section||null,
-         profile:extra.profile||null, channelGuidelines:extra.channelGuidelines||null};
+         profile:extra.profile||null, channelGuidelines:extra.channelGuidelines||null,
+         day:extra.day||null, tab:extra.tab||null};
 }
 // True only while the URL shows this profile's post list. STATE.view stays
 // "profile" on post/form sub-pages, so redraws must check the route itself.
@@ -362,7 +366,7 @@ function saveOpen(){
 // A node is open if it's in the OPEN set (persisted). Navigate actions below
 // auto-add the parent to OPEN so navigating to a child keeps it visible,
 // but the user can still manually collapse the parent afterwards.
-async function boot(){ await ensureSchemas(); await renderRail(); parseRoute(location.hash||"#/calendar"); }
+async function boot(){ await ensureSchemas(); await renderRail(); parseRoute(location.hash||defaultRoute()); }
 
 async function ensureIdRegistry(force=false){
   if (!force && Object.keys(IdReg.lookup || {}).length) return;
@@ -451,9 +455,9 @@ async function switchWorkspace(ws){
   try { localStorage.setItem("wsId", ws); } catch {}
   await renderRail();
   await window.ChatRooms?.enterWorkspace();
-  if (changed) {   // new company: back to the conversation, canvas closed but ready on its files
+  if (changed) {   // new company: back to the conversation, canvas closed but ready on its content
     window.ChatRooms?.hideCanvas();
-    navigate(ws === "hq" ? "#/calendar" : "#/files");
+    navigate(ws === "hq" ? "#/calendar" : "#/content");
   }
 }
 window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
@@ -462,7 +466,7 @@ window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 const RAIL_COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("railCollapsed")) || []; } catch { return []; } })());
 // Narrow windows: the workspace bar and sidebar live in a drawer.
 const closeNav = () => document.getElementById("app")?.classList.remove("nav-open");
-document.addEventListener("click", () => document.getElementById("brand-menu")?.classList.remove("open"));
+document.addEventListener("click", () => document.querySelectorAll(".menu.open").forEach(m => m.classList.remove("open")));
 
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
@@ -494,7 +498,7 @@ async function renderRail(){
     <div class="rail-head">
       <button class="ws-name" id="brand-btn" aria-haspopup="menu"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>${icon("chevron")}</button>
       <button class="rail-ib" id="rail-compose" title="New thread" aria-label="New thread">${icon("compose")}</button>
-      <div class="brand-menu" id="brand-menu" role="menu"><a id="quit-btn">Quit myOS</a></div>
+      <div class="menu brand-menu" id="brand-menu" role="menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
     <div class="rail-scroll">
       <nav class="nav">
@@ -544,44 +548,68 @@ function canvasProject(viewOnly=false){
   return viewOnly ? null : wsProject();
 }
 
-// Canvas header: like a Slack canvas, one thing at a time. Files is how you
-// browse; the old project sections stay reachable from a small menu.
+// Canvas bar: a breadcrumb of what is open, Files, and a More menu holding the
+// project's sections and profiles.
 const KIND_META = {
   memo: ["doc", "Memos"], experiment: ["flask", "Experiments"], doc: ["book", "Docs"], roadmap: ["map", "Roadmap"],
   plan: ["route", "Go-to-market"], content: ["calendar", "Content"], brief: ["compose", "Post briefs"], voice: ["mic", "Voice"],
 };
+const VIEW_LABEL = { files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
+const profileName = slug => _TREE.flatMap(p => p.profiles).find(x => x.slug === slug)?.name || slug;
+
+// [[label, route or null]] from the workspace down to the open item.
+function canvasCrumbs(){
+  const p = wsProject();
+  const path = (location.hash || "").replace(/^#/, "").replace(/\?.*$/, "");
+  const crumbs = [[p ? p.name : "HQ", defaultRoute()]];
+  const prof = STATE.profile || CURRENT_PROFILE_SLUG;
+  let m;
+  if (/^\/content\b/.test(path)) crumbs.push(["Content", "#/content"]);
+  else if ((m = path.match(/^\/profile\/([^/]+)/))) crumbs.push([profileName(m[1]), `#/profile/${m[1]}`]);
+  else if ((m = path.match(/^\/post\/([^/]+)/))) {
+    if (prof) crumbs.push([profileName(prof), `#/profile/${prof}`]);
+    crumbs.push([(OSID.post(m[1]) || m[1]).split(".").pop(), null]);
+  }
+  else if ((m = path.match(/^\/project\/[^/]+\/([^/]+)$/))) crumbs.push([SECTIONS.find(x => x.key === m[1])?.label || m[1], null]);
+  else if (VIEW_LABEL[path.slice(1)]) crumbs.push([VIEW_LABEL[path.slice(1)], null]);
+  return crumbs;
+}
+
 function renderCanvasNav(){
   const nav = $("#canvas-nav"); if (!nav) return;
   const p = wsProject();
-  const onFiles = STATE.view === "files";
+  const crumbs = canvasCrumbs();
   nav.hidden = false;
   nav.innerHTML = `<div class="cn-row">
-      ${p ? `<button class="btn cn-files${onFiles ? " on" : ""}" data-cn-files>${icon("folder")} Files</button>` : ""}
-      ${p ? `<select class="cn-sections" title="Project sections">
-        <option value="">Sections…</option>
-        ${SECTIONS.map(x => `<option value="${esc(x.key)}">${esc(x.label)}</option>`).join("")}
-        ${(p.profiles || []).map(x => `<option value="profile:${esc(x.slug)}">Profile: ${esc(x.name)}</option>`).join("")}
-        <option value="edit">Project settings</option>
-      </select>` : ""}
-      <span class="cn-title">${esc(p ? p.name : "HQ")}</span>
-      ${FOCUS_ID ? `<button class="btn" data-cn-all title="Show the rest of this section">Show all</button>` : ""}
+      <span class="cn-crumb">${crumbs.map(([label, go], i) => i === crumbs.length - 1 || !go
+        ? `<b>${esc(label)}</b>` : `<a data-go="${esc(go)}">${esc(label)}</a>`).join(icon("chevron-right"))}</span>
+      ${p ? `<button class="btn ghost sm cn-files${STATE.view === "files" ? " on" : ""}" data-cn-files>${icon("folder")} Files</button>
+      <div class="cn-more"><button class="term-btn" data-cn-more aria-haspopup="menu" title="More" aria-label="More">${icon("more")}</button>
+        <div class="menu" role="menu">
+          <div class="menu-h">Sections</div>
+          ${SECTIONS.map(x => `<button data-cn-sec="${esc(x.key)}">${esc(x.label)}</button>`).join("")}
+          ${(p.profiles || []).length ? `<hr><div class="menu-h">Profiles</div>
+          ${p.profiles.map(x => `<button data-cn-prof="${esc(x.slug)}">${esc(x.name)}</button>`).join("")}` : ""}
+          <hr><button data-cn-edit>Project settings</button>
+          ${FOCUS_ID ? `<button data-cn-all>Show all of this section</button>` : ""}
+        </div></div>` : ""}
       <button class="term-btn cn-close" data-cn-close title="Close canvas" aria-label="Close canvas">${icon("x")}</button>
     </div>`;
+  nav.querySelectorAll("[data-go]").forEach(a => a.onclick = () => navigate(a.dataset.go));
   nav.querySelector("[data-cn-files]")?.addEventListener("click", () => navigate("#/files"));
   nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
+  nav.querySelector("[data-cn-more]")?.addEventListener("click", e => {
+    e.stopPropagation(); e.currentTarget.nextElementSibling.classList.toggle("open");
+  });
+  nav.querySelectorAll("[data-cn-sec]").forEach(b => b.onclick = () => selectSection(p.slug, b.dataset.cnSec));
+  nav.querySelectorAll("[data-cn-prof]").forEach(b => b.onclick = () => selectProfile(b.dataset.cnProf, null));
+  nav.querySelector("[data-cn-edit]")?.addEventListener("click", () => openEditProject(p.slug));
   nav.querySelector("[data-cn-all]")?.addEventListener("click", () => { setFocus(null); renderCanvasNav(); });
-  const sel = nav.querySelector(".cn-sections");
-  if (sel) sel.onchange = () => {
-    const v = sel.value; sel.value = "";
-    if (!v) return;
-    if (v === "edit") return openEditProject(p.slug);
-    if (v.startsWith("profile:")) return selectProfile(v.slice(8), null);
-    selectSection(p.slug, v);
-  };
 }
 
-// Open one deliverable in the canvas, showing just that item. Focus is page
-// state (a generated rule keyed on the item's id), so re-renders keep it.
+// Open one deliverable in the canvas, scrolled to its card. On project
+// sections, focus also hides the other groups (a generated rule keyed on the
+// item's id, so re-renders keep it); the Content view highlights the row.
 let FOCUS_ID = null;
 function setFocus(id){
   FOCUS_ID = id || null;
@@ -594,17 +622,161 @@ function setFocus(id){
 function openDeliverable(item){
   if (!item) return;
   window.ChatRooms?.showCanvas();
-  navigate(item.link, { ...(item.profile ? { profileSlug: item.profile } : {}), focus: item.focus || null });
+  const from = item.bot ? { bot: item.bot, at: item.updated } : null;
+  navigate(item.link, { ...(item.profile ? { profileSlug: item.profile } : {}), focus: item.focus || null, from });
   if (!item.focus) return;
   let tries = 0;
   const seek = () => {
-    const chip = $("#main").querySelector(`[data-os-id="${CSS.escape(item.focus)}"]`);
-    if (!chip) { if (++tries < 20) setTimeout(seek, 100); return; }
-    const card = chip.closest(".pcard, .post, .sec-group") || chip;
-    card.scrollIntoView({ block: "start", behavior: "smooth" });
-    card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1800);
+    const el = $("#main").querySelector(`[data-os-id="${CSS.escape(item.focus)}"]`);
+    if (!el) { if (++tries < 20) setTimeout(seek, 100); return; }
+    (el.closest(".post-row, .pf, .pcard, .post, .sec-group") || el).scrollIntoView({ block: "start", behavior: "smooth" });
   };
   setTimeout(seek, 60);
+}
+
+// ── Content (canvas default): every profile's posts, one card per profile ────
+let CONTENT_FILTER = "all";              // all | ideas | drafts | ready | published
+const CONTENT_EXPANDED = new Set();      // profile slugs showing every row
+const CONTENT_TABS = [["posts", "Posts"], ["calendar", "Calendar"], ["briefs", "Briefs"], ["voice", "Voice"]];
+const CONTENT_FILTERS = [["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"], ["ready", "Ready"], ["published", "Published"]];
+const FILTER_EMPTY = { all: "No posts yet", ideas: "No ideas", drafts: "No drafts", ready: "Nothing ready", published: "Nothing published" };
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// The workspace's project, or every project in HQ. Profiles carry their
+// identity hue, by position in the project.
+const contentProjects = () => (wsProject() ? [wsProject()] : _TREE).map(p => ({
+  ...p, profiles: (p.profiles || []).map((pf, i) => ({ ...pf, hue: ID_HUES[i % ID_HUES.length] })),
+}));
+
+const channelChips = channels => channels.map(c =>
+  `<span class="plat">${platIcon(c.platform)}${esc(PLAT_NAME[c.platform] || c.platform || c.slug)}</span>`).join("");
+
+// One post as a row: status, channels, date; title; excerpt; next step.
+function postRowHtml(post, channels, { selectable = false, focused = false, selected = false, note = "" } = {}){
+  const na = nextActionFor(post);
+  const osId = OSID.post(post.id);
+  const platforms = [...new Set((post.channels || []).map(sl => channels.find(c => c.slug === sl)).filter(Boolean))];
+  const excerpt = post.concept
+    ? `<div class="pr-x">${esc(post.concept)}</div>`
+    : post.brief_path ? "" : `<div class="pr-x empty">Not written yet</div>`;
+  return `<div class="post-row${focused ? " focused" : ""}${selected ? " sel" : ""}" data-post="${esc(post.id)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
+    ${selectable ? `<input type="checkbox" class="selbox" data-sel="${esc(post.id)}"${selected ? " checked" : ""} aria-label="Select post">` : ""}
+    <div class="pr-top"><span class="stp ${STATUS_PILL_CLASS[post.status] || "idea"}">${esc(plainStatus(post.status))}</span>${channelChips(platforms)}
+      <span class="when">${icon("clock")}${esc(post.date || "No date")}</span></div>
+    <a class="pr-title" data-view="${esc(post.id)}">${esc(post.working_title || post.pillar || post.id)}</a>
+    ${excerpt}
+    <div class="pr-foot">
+      ${na ? `<button class="btn sm${na.kind === "review" ? " primary" : ""}" data-act="${esc(post.id)}">${esc(na.label)}</button>` : ""}
+      <button class="btn sm ghost" data-edit="${esc(post.id)}">Edit</button>
+      ${note ? `<span class="focus-note">${icon("reply")}${esc(note)}</span>` : ""}
+      <span class="pr-id">${sectionIdChip(osId)}</span>
+    </div></div>`;
+}
+
+// Profile header shared by the Content cards and the profile page.
+function profileHeadHtml(profile, { tag = "div", end = "", sub = "" } = {}){
+  const name = profile.name || profile.slug;
+  return `<${tag} class="pf-head">
+      <span class="av t-${profile.hue || "slate"}" aria-hidden="true">${esc(name[0].toUpperCase())}</span>
+      <div class="pf-id">
+        <div class="pf-name"><a href="#/profile/${esc(profile.slug)}">${esc(name)}</a>${sectionIdChip(OSID.prof(profile.slug))}</div>
+        <div class="pf-sub">${channelChips(profile.channels || [])}${sub}</div>
+      </div>
+      <div class="pf-end">${end}</div>
+    </${tag}>`;
+}
+
+// One collapsible card per profile; the first `limit` rows, then "Show N more".
+function profileCardHtml(group, { limit = ContentView.PAGE_SIZE, filter = "all", focusId = null, note = "" } = {}){
+  const { profile, counts, needsYou } = group;
+  const posts = group.posts.filter(p => filter === "all" || STAGE_GROUP[p.status] === filter);
+  const shown = posts.slice(0, limit);
+  const channels = profile.channels || [];
+  const mix = ["ideas", "drafts", "ready", "published"].filter(b => counts[b])
+    .map(b => `<i class="mix-${b}" style="width:${(counts[b] / counts.all * 100).toFixed(1)}%"></i>`).join("");
+  const rows = shown.map(p => {
+    const focused = !!focusId && OSID.post(p.id) === focusId;
+    return postRowHtml(p, channels, { focused, note: focused ? note : "" });
+  }).join("") || `<div class="empty">${FILTER_EMPTY[group.posts.length ? filter : "all"]}</div>`;
+  const osId = OSID.prof(profile.slug);
+  return `<details class="pf" open data-profile="${esc(profile.slug)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
+    ${profileHeadHtml(profile, { tag: "summary",
+      sub: needsYou ? `<span class="pf-needs">${needsYou} waiting on you</span>` : "",
+      end: `${counts.all ? `<span class="mix" aria-hidden="true">${mix}</span>` : ""}<span class="cnt">${plural(counts.all, "post")}</span>${icon("chevron", "chev")}` })}
+    ${rows}
+    ${posts.length > shown.length ? `<button class="pf-more" data-pf-more="${esc(profile.slug)}">Show ${posts.length - shown.length} more</button>` : ""}
+  </details>`;
+}
+
+const contentHead = (tab, summary) => `<div class="doc-head">
+    <h2 class="doc-title">Content</h2>
+    <p class="doc-lede">${esc(summary)}</p>
+    <nav class="doc-tabs">${CONTENT_TABS.map(([k, label]) => `<a href="#/content${k === "posts" ? "" : "/" + k}"${k === tab ? ' class="on" aria-current="page"' : ""}>${label}</a>`).join("")}</nav>
+  </div>`;
+
+async function renderContent(tab = "posts"){
+  const from = _NAV_EXTRAS.from || null;
+  const projects = contentProjects();
+  const profiles = projects.flatMap(p => p.profiles);
+  const noProfiles = `<div class="empty">No profiles yet. Ask a teammate in chat to set one up.</div>`;
+  if (tab === "calendar") {
+    const scope = wsProject() ? new Set(projects.flatMap(p => [p.slug, ...(p.products || []).map(x => x.slug),
+      ...p.profiles.flatMap(pf => [pf.slug, ...(pf.channels || []).map(c => c.slug)])])) : null;
+    return renderTimeline({ scope, head: contentHead(tab, plural(profiles.length, "profile")) });
+  }
+  if (tab === "briefs" || tab === "voice") {
+    const [seg, key, ic, noun] = tab === "briefs" ? ["brief-specs", "specs", "doc", "brief spec"] : ["voices", "voices", "mic", "voice"];
+    const lists = await Promise.all(profiles.map(pf =>
+      api(`/api/profile/${encodeURIComponent(pf.slug)}/${seg}`).then(d => d[key] || []).catch(() => [])));
+    const cards = profiles.map((pf, i) => `<section class="pf">${profileHeadHtml(pf, { end: `<span class="cnt">${plural(lists[i].length, noun)}</span>` })}
+        ${lists[i].map(x => `<a class="doc-row" href="#/profile/${esc(pf.slug)}/setup">${icon(ic)}<b>${esc(x.id)}</b>
+          <span class="doc-row-x">${esc((x.text || "").split("\n").find(l => l.trim()) || "Empty")}</span>
+          <span class="plat">${esc(x.platforms || "all")}</span></a>`).join("")
+          || `<div class="empty">No ${noun}s yet</div>`}
+      </section>`).join("");
+    $("#main").innerHTML = `<div class="scroll"><div class="doc">${contentHead(tab, plural(profiles.length, "profile"))}${cards || noProfiles}</div></div>`;
+    return;
+  }
+
+  const lists = await Promise.all(profiles.map(pf =>
+    api(`/api/profile/${encodeURIComponent(pf.slug)}/posts`).catch(() => [])));
+  const posts = lists.flat();
+  const byId = new Map(posts.map(p => [p.id, p]));
+  const sections = projects.map(project => ({ project, groups: ContentView.groupByProfile(posts, project.profiles) }))
+    .filter(sec => sec.groups.length);
+  const groups = sections.flatMap(sec => sec.groups);
+  const waiting = groups.reduce((n, g) => n + g.needsYou, 0);
+  const summary = [plural(profiles.length, "profile"), plural(posts.length, "post"), waiting ? `${waiting} waiting on you` : ""]
+    .filter(Boolean).join(" · ");
+  const focusId = FOCUS_ID;
+  if (focusId) CONTENT_FILTER = "all";   // a deliverable's row must be visible
+  const note = from ? `from @${botById(from.bot)?.handle || from.bot}, ${relAge(from.at)} ago` : "";
+  const total = b => groups.reduce((n, g) => n + g.counts[b], 0);
+
+  const card = g => {
+    const opts = { filter: CONTENT_FILTER, focusId, note };
+    const open = CONTENT_EXPANDED.has(g.profile.slug) || g.posts.some(p => focusId && OSID.post(p.id) === focusId);
+    return profileCardHtml(g, open ? { ...opts, limit: Infinity } : opts);
+  };
+  const draw = () => {
+    $("#main").innerHTML = `<div class="scroll"><div class="doc">${contentHead("posts", summary)}
+      ${groups.length ? `<div class="filters">${CONTENT_FILTERS.map(([k, label]) => `<button type="button" class="chip${CONTENT_FILTER === k ? " on" : ""}" data-f="${k}" aria-pressed="${CONTENT_FILTER === k}">${label} <span class="n">${total(k)}</span></button>`).join("")}</div>
+      ${sections.map(sec => `${wsProject() ? "" : `<h3 class="cv-project">${esc(sec.project.name)}</h3>`}${sec.groups.map(card).join("")}`).join("")}` : noProfiles}
+    </div></div>`;
+    const main = $("#main");
+    main.querySelectorAll("[data-f]").forEach(c => c.onclick = () => { CONTENT_FILTER = c.dataset.f; draw(); });
+    main.querySelectorAll("[data-pf-more]").forEach(b => b.onclick = () => { CONTENT_EXPANDED.add(b.dataset.pfMore); draw(); });
+    const open = (id, suffix = "") => navigate(`#/post/${id}${suffix}`, { profileSlug: byId.get(id)?.profile_slug });
+    main.querySelectorAll("[data-view]").forEach(a => a.onclick = () => open(a.dataset.view));
+    main.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => open(b.dataset.edit, "/edit"));
+    main.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+      const post = byId.get(b.dataset.act);
+      b.disabled = true;
+      if (await runNextAction(post, post.profile_slug)) renderContent("posts");
+      else b.disabled = false;
+    });
+  };
+  draw();
 }
 
 // Files: everything this company's team has handed you, newest first.
@@ -734,6 +906,7 @@ function selectChannelGuidelines(slug){
 async function refreshViews(){
   await renderRail();
   const v = STATE.view;
+  if (v === "content") return renderContent(STATE.tab);
   if (v === "calendar") return renderTimeline();
   if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
@@ -1618,8 +1791,8 @@ async function renderProjectSection(slug, section){
 
 let CAL = (function(){ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth(), filter:"all", mode:"month"}; })();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-function calShift(delta){ let m=CAL.m+delta,y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={...CAL,y,m}; renderTimeline(); }
-function calToday(){ const d=new Date(); CAL={...CAL,y:d.getFullYear(),m:d.getMonth()}; renderTimeline(); }
+function calShift(delta){ let m=CAL.m+delta,y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={...CAL,y,m}; }
+function calToday(){ const d=new Date(); CAL={...CAL,y:d.getFullYear(),m:d.getMonth()}; }
 
 function evDone(r){
   return (r.kind==="post"&&r.status==="published")||(r.kind==="activity"&&r.status==="done");
@@ -1682,8 +1855,11 @@ function toggleEvDetail(el, r){
   el.parentNode.insertBefore(evDetail(r), el.nextSibling);
 }
 
-async function renderTimeline(){
-  const all = await api("/api/timeline");
+// The calendar across every workspace, or (Content view's Calendar tab) only
+// the rows of `scope` (entity slugs) under the given `head`.
+async function renderTimeline({ scope = null, head = null } = {}){
+  const again = () => renderTimeline({ scope, head });
+  const all = (await api("/api/timeline")).filter(r => !scope || scope.has(r.entity_slug));
   const kinds=["post","activity","milestone","experiment","feature"];
   const filtered = CAL.filter==="all" ? all : all.filter(r=>r.kind===CAL.filter);
   const byDay={}; filtered.forEach(r=>{ if(r.date){ (byDay[r.date]=byDay[r.date]||[]).push(r); } });
@@ -1726,21 +1902,20 @@ async function renderTimeline(){
   }).join("") || `<div class="sec-empty"><p>Nothing scheduled yet.</p></div>`;
   const isList = CAL.mode==="list";
   const seg = `<div class="seg" style="margin:0"><button type="button" class="${isList?"":"on"}" data-mode="month" aria-pressed="${!isList}">Month</button><button type="button" class="${isList?"on":""}" data-mode="list" aria-pressed="${isList}">List</button></div>`;
-  $("#main").innerHTML=`
-    <div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Calendar</h1></div>
-      <div style="margin-left:auto;display:flex;gap:10px;align-items:center">${seg}
-        <button class="btn" id="newActBtn">＋ Activity</button>
-        <button class="btn" id="newMsBtn">＋ Milestone</button>
-      </div></div>
-    <div class="scroll">
-      <div class="cal-filters">${chips}</div>
+  const tools = `${seg}<button class="btn" id="newActBtn">${icon("plus")} Activity</button><button class="btn" id="newMsBtn">${icon("plus")} Milestone</button>`;
+  const body = `<div class="cal-filters">${chips}</div>
       ${CAL_LEGEND}
       ${isList ? listHtml : `<div class="cal-head"><span class="mlabel">${MONTHS[CAL.m]} ${CAL.y}</span>
-        <div class="cal-nav"><button id="cprev">‹</button><button id="ctoday">Today</button><button id="cnext">›</button></div></div>
-      <div class="cal">${dow}${cells}</div>`}</div>`;
-  $("#main").querySelectorAll("[data-mode]").forEach(s=>s.onclick=()=>{ CAL.mode=s.dataset.mode; renderTimeline(); });
-  if(!isList){ $("#cprev").onclick=()=>calShift(-1); $("#cnext").onclick=()=>calShift(1); $("#ctoday").onclick=calToday; }
-  $("#main").querySelectorAll(".kchip").forEach(c=>c.onclick=()=>{ CAL.filter=c.dataset.kf; renderTimeline(); });
+        <div class="cal-nav"><button id="cprev" aria-label="Previous month">‹</button><button id="ctoday">Today</button><button id="cnext" aria-label="Next month">›</button></div></div>
+      <div class="cal">${dow}${cells}</div>`}`;
+  $("#main").innerHTML = head
+    ? `<div class="scroll"><div class="doc">${head}<div class="cal-tools">${tools}</div>${body}</div></div>`
+    : `<div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Calendar</h1></div>
+      <div class="topbar-end">${tools}</div></div>
+    <div class="scroll">${body}</div>`;
+  $("#main").querySelectorAll("[data-mode]").forEach(s=>s.onclick=()=>{ CAL.mode=s.dataset.mode; again(); });
+  if(!isList){ $("#cprev").onclick=()=>{ calShift(-1); again(); }; $("#cnext").onclick=()=>{ calShift(1); again(); }; $("#ctoday").onclick=()=>{ calToday(); again(); }; }
+  $("#main").querySelectorAll(".kchip").forEach(c=>c.onclick=()=>{ CAL.filter=c.dataset.kf; again(); });
   $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); try{showEventPopup(JSON.parse(el.dataset.ev));}catch(_){} });
   $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); el.click(); } });
   $("#main").querySelectorAll(".day[data-day]").forEach(el=>el.ondblclick=()=>navigate(`#/day/${el.dataset.day}`));
