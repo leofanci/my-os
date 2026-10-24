@@ -10,11 +10,11 @@ class TestCoherence(unittest.TestCase):
     def test_chat_rail_has_write_gate(self):
         from dashboard.ai_rules import CHAT_RAIL
 
-        self.assertIn("Write gate", CHAT_RAIL)
-        self.assertIn("Propose", CHAT_RAIL)
-        self.assertIn("Tab routing", CHAT_RAIL)
-        self.assertIn("sec02", CHAT_RAIL)
-        self.assertIn("save all tabs now", CHAT_RAIL)
+        # Chat bots: propose → approve → write once (teammate wording, no tab table).
+        self.assertIn("Approval before every save", CHAT_RAIL)
+        self.assertIn("APPROVAL:", CHAT_RAIL)
+        self.assertIn("write it ONCE", CHAT_RAIL)
+        self.assertIn("save all", CHAT_RAIL)
         self.assertIn("Do not paste full memo", CHAT_RAIL)
 
     def test_memo_section_tabs_exist_in_layout(self):

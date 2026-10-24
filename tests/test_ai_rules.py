@@ -11,16 +11,23 @@ class TestAiRules(unittest.TestCase):
         self.assertNotIn("set-brief", CHAT_RAIL)
         self.assertNotIn("patch-brief", CHAT_RAIL)
 
-    def test_chat_rail_has_tab_routing(self):
+    def test_chat_rail_is_deliverables_not_tabs(self):
         from dashboard.ai_rules import CHAT_RAIL
-        self.assertIn("Tab routing", CHAT_RAIL)
+        self.assertIn("## Deliverables", CHAT_RAIL)
         self.assertIn("update-intake", CHAT_RAIL)
-        self.assertIn("sec02", CHAT_RAIL)
+        self.assertNotIn("## Tab routing", CHAT_RAIL)
+        self.assertNotIn("| sec02 |", CHAT_RAIL)   # no tab table; ids only as lookup examples
 
-    def test_chat_rail_has_write_gate(self):
+    def test_chat_rail_has_approval_and_teammate_voice(self):
         from dashboard.ai_rules import CHAT_RAIL
-        self.assertIn("Write gate", CHAT_RAIL)
-        self.assertIn("Tab routing", CHAT_RAIL)
+        self.assertIn("## Approval before every save", CHAT_RAIL)
+        self.assertIn("APPROVAL:", CHAT_RAIL)
+        self.assertIn("## How you work and talk", CHAT_RAIL)
+
+    def test_terminal_rules_keep_tab_vocabulary(self):
+        from dashboard.ai_rules import TERMINAL_RULES
+        self.assertIn("Tab routing", TERMINAL_RULES)
+        self.assertIn("Write gate", TERMINAL_RULES)
 
     def test_chat_rail_has_skill_tagging(self):
         from dashboard.ai_rules import CHAT_RAIL

@@ -904,3 +904,20 @@
   .mem-empty{font-size:12px;color:var(--dim)}
   .mem-add{display:flex;gap:6px;margin-top:6px}
   .mem-add input{flex:1;font-size:12px;padding:6px 8px}
+
+  /* ---- deliverable cards (chat) + canvas header + files ---- */
+  .deliv-list{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+  .deliv{display:flex;align-items:center;gap:10px;text-align:left;width:100%;border:1px solid var(--gline);background:#fff;
+    border-radius:var(--r-card);padding:9px 12px;cursor:pointer;font:600 12.5px/1.3 var(--body);color:var(--ink)}
+  .deliv:hover{border-color:var(--navy)}
+  .deliv-ic{font-size:15px;width:20px;text-align:center}
+  .deliv-t{flex:1;min-width:0}
+  .deliv-t small{display:block;font-weight:500;color:var(--dim);margin-top:2px}
+  .deliv-open{color:var(--navy);font-weight:700}
+  .canvas-nav .cn-row{flex-wrap:nowrap}
+  .cn-title{font:700 13px/1 var(--disp);margin-left:6px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .cn-files.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+  .cn-sections{font-size:12px;padding:5px 6px;max-width:150px}
+  .file-row{cursor:pointer}
+  .file-row .t small{display:block;margin-top:3px}
+  .flash{box-shadow:0 0 0 3px var(--sky)!important;transition:box-shadow .3s}

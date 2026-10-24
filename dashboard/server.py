@@ -40,6 +40,7 @@ import fileops           # noqa: E402
 import chat_session      # noqa: E402
 import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
+import deliverables      # noqa: E402
 from core import bots    # noqa: E402
 from core import rooms   # noqa: E402
 from core import approvals  # noqa: E402
@@ -580,9 +581,9 @@ def _tag_gate_message(suggest, team=None):
         if owner:
             who = f"@{owner.handle} ({owner.name}) or "
     return (
-        f"Tag {who}{skill} first (type @ or / in the composer). "
-        "Writes and GTM playbooks run on Sonnet only after you tag. "
-        "Untagged turns stay on Haiku for reads and routing chat only."
+        f"That's a save, so tag who should do it: {who}{skill} (type @ or / in the box). "
+        "Untagged messages are for questions only; tagging puts the right teammate "
+        "and the stronger model on it."
     )
 
 
@@ -615,10 +616,6 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
         scope = f" --project {project_slug}" if project_slug else ""
         lines.append("When the user states a lasting decision or preference, save one line: "
                      f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
-        lines.append("When you propose a write and wait for the user's OK, end with one line "
-                     "`APPROVAL: <what you will save, where>`; the UI turns it into Approve/No buttons.")
-        lines.append("Calendar: one for all workspaces (the user's time). Before a timed "
-                     "`create-activity`, run `get-busy --from <date>`; overlaps are refused.")
     else:
         lines.append(f"(speaking as @{b.handle})")
     if handoff_from and team.get(handoff_from):
@@ -641,9 +638,10 @@ _RESUME_NOTE = (
 # Skills fully covered by CHAT_RAIL — inject stub only (avoids ~1k+ duplicate tok/turn).
 _RAIL_COVERED_SKILL_STUBS: dict[str, str] = {
     "workspace": (
-        "Tab map + write gate are in system prompt. Fill tabs: turn 1 = routing plan "
-        "(sec01–sec06, one-line bullets, no osctl). Turn 2+ = one tab per osctl commit. "
-        "Other intents: route per workspace skill table (venture-intake, product-build, etc.)."
+        "You route for the team (rules in system prompt). Work out what the user needs. "
+        "A teammate owns it → @mention them and say why in one line. Yours → do it. "
+        "\"Set everything up\" → list the deliverables to make (one line each), get approval, "
+        "then save one per turn."
     ),
 }
 
@@ -1120,6 +1118,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         reply, done, meta = [], {}, {"model": model}
+        # What the bot hands over this turn = files of its company that change.
+        files_before = deliverables.snapshot(ROOT, ws) if project_record else None
         try:
             # Tell the client which saved chat this turn belongs to (a scope
             # change or first turn may have started a new one).
@@ -1145,6 +1145,11 @@ class Handler(BaseHTTPRequestHandler):
                     emit({"error": payload})
                 elif kind == "done":
                     done = payload or {}
+            if files_before is not None:
+                handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
+                if handed:
+                    meta["deliverables"] = handed
+                    emit({"deliverables": handed})
             meta.update(tokens=done.get("tokens") or None, cost=done.get("cost"))
             if meta["tokens"] or meta["cost"]:
                 emit({"usage": {"tokens": meta["tokens"], "cost": meta["cost"], "model": model}})
@@ -1346,6 +1351,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, _skills_index())
             if path == "/api/workspaces":
                 return self._send(200, {"workspaces": _workspaces(db.tree())})
+            if path == "/api/files":
+                ws, record = _resolve_workspace(
+                    (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
+                files = deliverables.list_files(ROOT, ws, db.tree(), db.posts()) if record else []
+                return self._send(200, {"ws": ws, "files": files})
             if path in ("/api/approvals", "/api/costs", "/api/memory"):
                 qs = parse_qs(urlparse(self.path).query)
                 ws, record = _resolve_workspace((qs.get("ws") or [None])[0], db.tree())

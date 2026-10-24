@@ -22,7 +22,7 @@ class TestTokenBudget(unittest.TestCase):
     def test_no_duplicate_tab_tables_in_rail(self):
         from dashboard.ai_rules import CHAT_RAIL
 
-        self.assertEqual(CHAT_RAIL.count("## Tab routing"), 1)
+        self.assertEqual(CHAT_RAIL.count("## Deliverables"), 1)
         self.assertNotIn("PROJECT_TABS", CHAT_RAIL)
         self.assertNotIn("Project left panel (six tabs", CHAT_RAIL)
 

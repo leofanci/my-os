@@ -193,6 +193,7 @@ const ROUTES = [
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
   [/^\/approvals$/,                             ()       => { setState("approvals"); renderApprovals(); }],
+  [/^\/files$/,                                 ()       => { setState("files"); renderFiles(); }],
   [/^\/room\/new$/,                              ()       => renderRoomForm(null)],
   [/^\/room\/([a-z0-9-]+)\/edit$/,                ([n])    => renderRoomForm(n)],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
@@ -246,6 +247,7 @@ function parseRoute(hash){
   CURRENT_PROFILE_SLUG = null;
   setState("route");
   const ex = _NAV_EXTRAS; _NAV_EXTRAS = {};
+  setFocus(ex.focus);   // only a deliverable link focuses; any other navigation shows all
   for(const [re, fn] of ROUTES){
     const m = path.match(re);
     if(m){
@@ -436,7 +438,7 @@ async function switchWorkspace(ws){
   await window.ChatRooms?.enterWorkspace();
   if (changed) {   // new company: back to the conversation, canvas closed but ready on its files
     window.ChatRooms?.hideCanvas();
-    navigate(ws === "hq" ? "#/calendar" : `#/project/${ws}/${SECTIONS[0].key}`);
+    navigate(ws === "hq" ? "#/calendar" : "#/files");
   }
 }
 window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
@@ -471,7 +473,7 @@ async function renderRail(){
     </div>
     <nav class="nav">
       <a data-view="approvals"><span class="ico">✔</span> Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : ""}</a>
-      ${w.id !== "hq" ? `<a data-view="project"><span class="ico">▣</span> Project files</a>` : ""}
+      ${w.id !== "hq" ? `<a data-view="files"><span class="ico">☰</span> Files</a>` : ""}
       <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
     <div class="rail-hdr"><span class="label">Channels</span>
@@ -488,7 +490,6 @@ async function renderRail(){
     `;
   $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>{
     window.ChatRooms?.showCanvas();
-    if (a.dataset.view === "project") return navigate(`#/project/${_WS}/${SECTIONS[0].key}`);
     selectGlobal(a.dataset.view);
   });
   $("#rail").querySelectorAll("[data-room]").forEach(a=>a.onclick=()=>window.ChatRooms?.select(a.dataset.room));
@@ -514,41 +515,93 @@ function canvasProject(viewOnly=false){
   return viewOnly ? null : wsProject();
 }
 
-// Canvas nav: the project's tabs + profiles (+ the open profile's social channels).
+// Canvas header: like a Slack canvas, one thing at a time. Files is how you
+// browse; the old project sections stay reachable from a small menu.
+const KIND_META = {
+  memo: ["📄", "Memos"], experiment: ["⚗", "Experiments"], doc: ["📘", "Docs"], roadmap: ["▣", "Roadmap"],
+  plan: ["➤", "Go-to-market"], content: ["🗓", "Content"], brief: ["✎", "Post briefs"], voice: ["◐", "Voice"],
+};
 function renderCanvasNav(){
   const nav = $("#canvas-nav"); if (!nav) return;
-  const p = canvasProject();
-  if (!p) { nav.innerHTML = ""; nav.hidden = true; return; }
+  const p = wsProject();
+  const onFiles = STATE.view === "files";
   nav.hidden = false;
-  const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
-  const openProf = p.profiles.find(x => x.slug === (STATE.profile || CURRENT_PROFILE_SLUG));
-  nav.innerHTML = `
-    <div class="cn-row">
-      <b class="cn-name">${esc(p.name)}</b><span class="project-kind">${esc(p.kind||p.type)}</span>
-      ${p.local_folder?`<button class="rail-folder" data-open-project-folder="${esc(p.slug)}" title="Open linked folder">▣</button>`:""}
-      <button class="rail-edit" data-edit-project="${esc(p.slug)}" data-os-id="${esc(OSID.route(`project/${p.slug}/edit`))}" title="Edit project">✎</button>
-    </div>
-    <div class="cn-row cn-tabs">
-      ${SECTIONS.map(s=>`<a data-project="${esc(p.slug)}" data-section="${s.key}"><span class="ico">${s.ico}</span> ${esc(s.label)}${
-        s.key==="experiments"&&p.experiments?`<span class="c">${p.experiments}</span>`:
-        s.key==="product"&&totalFeatures?`<span class="c">${totalFeatures}</span>`:""}</a>`).join("")}
-      <span class="cn-sep"></span>
-      ${p.profiles.map(prof=>`<a data-profile="${esc(prof.slug)}">${esc(prof.name)}<span class="c">${prof.posts}</span></a>`).join("")}
-      <button class="add-btn" data-new-profile="${esc(p.slug)}" data-os-id="${esc(OSID.btn("proj",p.slug,"new-profile"))}" title="Add profile">＋</button>
-    </div>
-    ${openProf ? `<div class="cn-row cn-tabs">
-      ${openProf.channels.map(ch=>`<a data-profile="${esc(openProf.slug)}" data-chan-filter="${esc(ch.slug)}"><span class="channel-icon">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(PLAT_NAME[ch.platform]||ch.platform)}</a>`).join("")}
-      <a class="new-channel-row" data-new-channel="${esc(openProf.slug)}">＋ Channel</a></div>` : ""}`;
-  nav.querySelectorAll("[data-section]").forEach(a=>a.onclick=()=>selectSection(a.dataset.project,a.dataset.section));
-  nav.querySelectorAll("[data-profile]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectProfile(a.dataset.profile, a.dataset.chanFilter||null); });
-  nav.querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
-  nav.querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
-  nav.querySelectorAll("[data-open-project-folder]").forEach(b=>b.onclick=async e=>{
-    e.stopPropagation();
-    try{ await jpost(`/api/project/${b.dataset.openProjectFolder}/folder/open`,{}); }
-    catch(err){ toast("✗ "+err.message); }
-  });
-  nav.querySelectorAll("[data-edit-project]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openEditProject(b.dataset.editProject); });
+  nav.innerHTML = `<div class="cn-row">
+      ${p ? `<button class="btn cn-files${onFiles ? " on" : ""}" data-cn-files>☰ Files</button>` : ""}
+      ${p ? `<select class="cn-sections" title="Project sections">
+        <option value="">Sections…</option>
+        ${SECTIONS.map(x => `<option value="${esc(x.key)}">${esc(x.label)}</option>`).join("")}
+        ${(p.profiles || []).map(x => `<option value="profile:${esc(x.slug)}">Profile: ${esc(x.name)}</option>`).join("")}
+        <option value="edit">Project settings</option>
+      </select>` : ""}
+      <span class="cn-title">${esc(p ? p.name : "HQ")}</span>
+      ${FOCUS_ID ? `<button class="btn" data-cn-all title="Show the rest of this section">Show all</button>` : ""}
+      <button class="term-btn cn-close" data-cn-close title="Close canvas">✕</button>
+    </div>`;
+  nav.querySelector("[data-cn-files]")?.addEventListener("click", () => navigate("#/files"));
+  nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
+  nav.querySelector("[data-cn-all]")?.addEventListener("click", () => { setFocus(null); renderCanvasNav(); });
+  const sel = nav.querySelector(".cn-sections");
+  if (sel) sel.onchange = () => {
+    const v = sel.value; sel.value = "";
+    if (!v) return;
+    if (v === "edit") return openEditProject(p.slug);
+    if (v.startsWith("profile:")) return selectProfile(v.slice(8), null);
+    selectSection(p.slug, v);
+  };
+}
+
+// Open one deliverable in the canvas, showing just that item. Focus is page
+// state (a generated rule keyed on the item's id), so re-renders keep it.
+let FOCUS_ID = null;
+function setFocus(id){
+  FOCUS_ID = id || null;
+  let tag = document.getElementById("focus-style");
+  if (!tag) { tag = document.createElement("style"); tag.id = "focus-style"; document.head.appendChild(tag); }
+  tag.textContent = FOCUS_ID
+    ? `#main .sec-group:not(:has([data-os-id="${CSS.escape(FOCUS_ID)}"])){display:none}`
+    : "";
+}
+function openDeliverable(item){
+  if (!item) return;
+  window.ChatRooms?.showCanvas();
+  navigate(item.link, { ...(item.profile ? { profileSlug: item.profile } : {}), focus: item.focus || null });
+  if (!item.focus) return;
+  let tries = 0;
+  const seek = () => {
+    const chip = $("#main").querySelector(`[data-os-id="${CSS.escape(item.focus)}"]`);
+    if (!chip) { if (++tries < 20) setTimeout(seek, 100); return; }
+    const card = chip.closest(".pcard, .post, .sec-group") || chip;
+    card.scrollIntoView({ block: "start", behavior: "smooth" });
+    card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1800);
+  };
+  setTimeout(seek, 60);
+}
+
+// Files: everything this company's team has handed you, newest first.
+async function renderFiles(){
+  const p = wsProject();
+  if (!p) { $("#main").innerHTML = `<div class="scroll"><div style="padding:30px;color:var(--dim)">Files live in each company's workspace.</div></div>`; return; }
+  const files = (await api(`/api/files?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).files || [];
+  let filt = "all";
+  const kinds = [...new Set(files.map(f => f.kind))];
+  const draw = () => {
+    const list = filt === "all" ? files : files.filter(f => f.kind === filt);
+    const rows = list.length ? list.map((f, i) => `<div class="post file-row" data-file="${i}">
+        <span class="bot-av">${KIND_META[f.kind]?.[0] || "•"}</span>
+        <div class="t">${esc(f.label)}<small>${esc(KIND_META[f.kind]?.[1] || f.kind)}${f.status ? ` · ${esc(f.status)}` : ""} · ${relAge(f.updated)}</small></div>
+        <button class="go">Open</button></div>`).join("")
+      : `<div style="padding:24px 4px;color:var(--dim)">Nothing here yet. Ask in #general, e.g. "@cmo draft our positioning".</div>`;
+    $("#files-list").innerHTML = `<div class="filters" style="margin-bottom:12px">
+        <button class="chip${filt === "all" ? " on" : ""}" data-kind="all">All <span class="n">${files.length}</span></button>
+        ${kinds.map(k => `<button class="chip${filt === k ? " on" : ""}" data-kind="${esc(k)}">${esc(KIND_META[k]?.[1] || k)}</button>`).join("")}
+      </div><div class="rowc">${rows}</div>`;
+    $("#files-list").querySelectorAll("[data-kind]").forEach(c => c.onclick = () => { filt = c.dataset.kind; draw(); });
+    $("#files-list").querySelectorAll("[data-file]").forEach(r => r.onclick = () => openDeliverable(list[+r.dataset.file]));
+  };
+  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">${esc(p.name)}</div><h1 class="title">Files</h1></div></div>
+    <div class="scroll"><div id="files-list"></div></div>`;
+  draw();
 }
 
 // Topic channel form (canvas): name, project, members, lead.
@@ -632,12 +685,9 @@ function wireLocalFolderControls(root, projectSlug=null){
 function highlight(){
   renderCanvasNav();
   const mark=(a,on)=>{a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");};
-  document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
+  const canvasOpen = !document.getElementById("app")?.classList.contains("canvas-hidden");
+  document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,canvasOpen&&STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
   document.querySelectorAll("#rail [data-room]").forEach(a=>mark(a,a.dataset.room===window.ChatRooms?.current()));
-  document.querySelectorAll("#rail [data-view=project]").forEach(a=>mark(a,canvasProject(true)?.slug===_WS));
-  document.querySelectorAll("#canvas-nav [data-section]").forEach(a=>mark(a,STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
-  document.querySelectorAll("#canvas-nav [data-profile]:not([data-chan-filter])").forEach(a=>mark(a,(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
-  document.querySelectorAll("#canvas-nav [data-chan-guidelines]").forEach(a=>mark(a,STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
   requestAnimationFrame(()=>document.querySelector("#rail [aria-current='page']")?.scrollIntoView({block:"nearest"}));
 }
 function selectGlobal(v){ navigate(`#/${v}`); }
@@ -660,6 +710,7 @@ async function refreshViews(){
   if (v === "operations") return renderOperations();
   if (v === "team") return renderTeam();
   if (v === "approvals") return renderApprovals();
+  if (v === "files") return renderFiles();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -3070,6 +3121,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   }
   function applyCanvas(){
     appEl.classList.toggle("canvas-hidden", canvasHidden);
+    if (typeof highlight === "function") highlight();
     appEl.style.setProperty("--canvas-w", Math.max(CANVAS_W_MIN, Math.min(canvasW, canvasWMax())) + "px");
     document.getElementById("canvas-toggle").classList.toggle("on", !canvasHidden);
     try { localStorage.setItem("canvasW", String(canvasW)); } catch {}
@@ -3564,6 +3616,17 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       meta.className = "msg-meta"; meta.textContent = usage; meta.title = "tokens · estimated cost";
       div.appendChild(meta);
     }
+    div.querySelector(".deliv-list")?.remove();
+    if (m.deliverables?.length) {
+      const box = document.createElement("div");
+      box.className = "deliv-list";
+      box.innerHTML = m.deliverables.map((d, i) => `<button class="deliv" data-deliv="${i}">
+          <span class="deliv-ic">${KIND_META[d.kind]?.[0] || "•"}</span>
+          <span class="deliv-t">${esc(d.label)}${d.status ? `<small>${esc(d.status)}</small>` : ""}</span>
+          <span class="deliv-open">Open</span></button>`).join("");
+      box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () => openDeliverable(m.deliverables[+b.dataset.deliv]));
+      div.appendChild(box);
+    }
     if (m.approval && _APPROVALS.some(a => a.id === (m.approval.id || m.approval))) {
       const a = typeof m.approval === "object" ? m.approval : _APPROVALS.find(x => x.id === m.approval);
       const bar = document.createElement("div");
@@ -3911,7 +3974,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     attachedFiles = []; renderAttachments();
     mentions = [];
 
-    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "", wrote = false;
+    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "";
     const turnMeta = {};
     startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
     let pendingBreak = false;
@@ -3962,6 +4025,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
             if (obj.bot) botLabel(bubble.parentElement, obj.bot, obj.bot.handoff_from);
+            if (obj.deliverables) turnMeta.deliverables = obj.deliverables;
             if (obj.usage) {
               turnMeta.tokens = obj.usage.tokens; turnMeta.cost = obj.usage.cost;
               threadUsage.tokens += obj.usage.tokens || 0; threadUsage.cost += obj.usage.cost || 0;
@@ -3979,7 +4043,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               pendingBreak = false;
               full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*APPROVAL:.*$/gm, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
             }
-            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; if (obj.tool === "Bash") wrote = true; }
+            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
           } catch {}
         }
       }
@@ -4000,8 +4064,9 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       finalizeSteps();                // turn the live steps line into a quiet summary
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
-      if (wrote) showCanvas();        // a bot ran osctl: let the canvas show it
       decorateReply(bubble.parentElement, turnMeta);
+      // You approved and the teammate saved it: show you the result.
+      if (extra?.approval === "approved" && turnMeta.deliverables?.length) openDeliverable(turnMeta.deliverables[0]);
       if (hadPending || turnMeta.approval) renderRail().catch(() => {});   // inbox count
     }
   }
@@ -4024,9 +4089,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const room = roomById(activeRoomId);
     const lead = botById(room?.lead || "cos");
     const wsName = wsById(_WS)?.name || "HQ";
-    const where = room?.kind === "dm" ? `Direct message in ${wsName}` : `#${room?.name || "general"} in ${wsName}`;
-    const scope = _WS === "hq" ? " The holding: sees every company." : " Bots here only know this workspace.";
-    addMsg("assistant", `${where}.${scope} ${room?.kind === "dm" ? "" : `Untagged messages go to ${lead?.name || "the lead"}; @ tags a teammate.`}`.trim(), lead?.id);
+    const hello = room?.kind === "dm"
+      ? `Hey, ${lead?.name || "I"} here. What do you need?`
+      : _WS === "hq"
+        ? `Morning. I keep the view across all your companies. Want the weekly review, or something specific?`
+        : `Hi, ${lead?.name || "Chief of Staff"} for ${wsName}. Tell me what you need, I'll handle it or pull in the right person.`;
+    addMsg("assistant", hello, lead?.id);
     const SUGS = {
       cos: ["Weekly review", "/weekly-review "], product: ["Design a test", "@product /experiment-design "],
       cmo: ["Positioning", "@cmo /positioning "], gtm: ["Launch plan", "@gtm /launch-plan "],

@@ -479,7 +479,7 @@ class SkillRouting(unittest.TestCase):
         with mock.patch.object(server, "get_chat_session", return_value=S()):
             h._handle_ask({"messages": [{"role": "user", "content": "fill all the tabs"}]})
         out = sink.getvalue().decode()
-        self.assertIn("Tag @cos (Chief of Staff) or /workspace", out)
+        self.assertIn("tag who should do it: @cos (Chief of Staff) or /workspace", out)
         self.assertIn("[DONE]", out)
         self.assertNotIn("Active skill", out)
 
