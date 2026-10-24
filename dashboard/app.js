@@ -466,7 +466,11 @@ window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 const RAIL_COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("railCollapsed")) || []; } catch { return []; } })());
 // Narrow windows: the workspace bar and sidebar live in a drawer.
 const closeNav = () => document.getElementById("app")?.classList.remove("nav-open");
-document.addEventListener("click", () => document.querySelectorAll(".menu.open").forEach(m => m.classList.remove("open")));
+const closeMenus = () => document.querySelectorAll(".menu.open").forEach(m => {
+  m.classList.remove("open"); m.previousElementSibling?.setAttribute("aria-expanded", "false");
+});
+document.addEventListener("click", closeMenus);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
 
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
@@ -504,6 +508,7 @@ async function renderRail(){
       <nav class="nav">
         <a data-view="approvals">${icon("inbox")}<span class="rail-name">Approvals</span>${_APPROVALS.length ? `<span class="badge">${_APPROVALS.length}</span>` : ""}</a>
         ${w.id !== "hq" ? `<a data-view="files">${icon("folder")}<span class="rail-name">Files</span></a>` : ""}
+        <a data-view="content">${icon("layers")}<span class="rail-name">Content</span></a>
         <a data-view="team">${icon("users")}<span class="rail-name">Team</span><span class="count">${_BOTS.filter(b => b.active).length}</span></a>
       </nav>
       ${section("channels", "Channels", channels.map(roomRow).join(""),
@@ -556,8 +561,11 @@ const KIND_META = {
   roadmap: ["map", "Roadmap", "Roadmap"], plan: ["route", "Go-to-market", "Go-to-market plan"],
   content: ["calendar", "Content", "Content plan"], brief: ["compose", "Post briefs", "Post brief"], voice: ["mic", "Voice", "Voice"],
 };
-const VIEW_LABEL = { files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
+const VIEW_LABEL = { content: "Content", files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
 const profileName = slug => _TREE.flatMap(p => p.profiles).find(x => x.slug === slug)?.name || slug;
+// "Instagram, TikTok": the channels of a deliverable's profile.
+const delivChannels = d => (_TREE.flatMap(p => p.profiles).find(x => x.slug === d.profile)?.channels || [])
+  .map(c => PLAT_NAME[c.platform] || c.platform || c.slug).join(", ");
 
 // [[label, route or null]] from the workspace down to the open item.
 function canvasCrumbs(){
@@ -586,22 +594,24 @@ function renderCanvasNav(){
       <span class="cn-crumb">${crumbs.map(([label, go], i) => i === crumbs.length - 1 || !go
         ? `<b>${esc(label)}</b>` : `<a data-go="${esc(go)}">${esc(label)}</a>`).join(icon("chevron-right"))}</span>
       ${p ? `<button class="btn ghost sm cn-files${STATE.view === "files" ? " on" : ""}" data-cn-files>${icon("folder")} Files</button>
-      <div class="cn-more"><button class="term-btn" data-cn-more aria-haspopup="menu" title="More" aria-label="More">${icon("more")}</button>
+      <div class="cn-more"><button class="term-btn" data-cn-more aria-haspopup="menu" aria-expanded="false" title="More" aria-label="More">${icon("more")}</button>
         <div class="menu" role="menu">
           <div class="menu-h">Sections</div>
           ${SECTIONS.map(x => `<button data-cn-sec="${esc(x.key)}">${esc(x.label)}</button>`).join("")}
           ${(p.profiles || []).length ? `<hr><div class="menu-h">Profiles</div>
           ${p.profiles.map(x => `<button data-cn-prof="${esc(x.slug)}">${esc(x.name)}</button>`).join("")}` : ""}
           <hr><button data-cn-edit>Project settings</button>
-          ${FOCUS_ID ? `<button data-cn-all>Show all of this section</button>` : ""}
         </div></div>` : ""}
+      ${FOCUS_ID && STATE.view !== "content" ? `<button class="btn ghost sm" data-cn-all title="Show the rest of this section">Show all</button>` : ""}
       <button class="term-btn cn-close" data-cn-close title="Close canvas" aria-label="Close canvas">${icon("x")}</button>
     </div>`;
   nav.querySelectorAll("[data-go]").forEach(a => a.onclick = () => navigate(a.dataset.go));
   nav.querySelector("[data-cn-files]")?.addEventListener("click", () => navigate("#/files"));
   nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
   nav.querySelector("[data-cn-more]")?.addEventListener("click", e => {
-    e.stopPropagation(); e.currentTarget.nextElementSibling.classList.toggle("open");
+    e.stopPropagation();
+    const open = e.currentTarget.nextElementSibling.classList.toggle("open");
+    e.currentTarget.setAttribute("aria-expanded", String(open));
   });
   nav.querySelectorAll("[data-cn-sec]").forEach(b => b.onclick = () => selectSection(p.slug, b.dataset.cnSec));
   nav.querySelectorAll("[data-cn-prof]").forEach(b => b.onclick = () => selectProfile(b.dataset.cnProf, null));
@@ -639,6 +649,7 @@ function openDeliverable(item){
 // ── Content (canvas default): every profile's posts, one card per profile ────
 let CONTENT_FILTER = "all";              // all | ideas | drafts | ready | published
 const CONTENT_EXPANDED = new Set();      // profile slugs showing every row
+const CONTENT_COLLAPSED = new Set();     // profile slugs whose card is folded
 const CONTENT_TABS = [["posts", "Posts"], ["calendar", "Calendar"], ["briefs", "Briefs"], ["voice", "Voice"]];
 const CONTENT_FILTERS = [["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"], ["ready", "Ready"], ["published", "Published"]];
 const FILTER_EMPTY = { all: "No posts yet", ideas: "No ideas", drafts: "No drafts", ready: "Nothing ready", published: "Nothing published" };
@@ -665,7 +676,7 @@ function postRowHtml(post, channels, { selectable = false, focused = false, sele
     ${selectable ? `<input type="checkbox" class="selbox" data-sel="${esc(post.id)}"${selected ? " checked" : ""} aria-label="Select post">` : ""}
     <div class="pr-top"><span class="stp ${STATUS_PILL_CLASS[post.status] || "idea"}">${esc(plainStatus(post.status))}</span>${channelChips(platforms)}
       <span class="when">${icon("clock")}${esc(post.date || "No date")}</span></div>
-    <a class="pr-title" data-view="${esc(post.id)}">${esc(post.working_title || post.pillar || post.id)}</a>
+    <button type="button" class="pr-title" data-view="${esc(post.id)}">${esc(post.working_title || post.pillar || post.id)}</button>
     ${excerpt}
     <div class="pr-foot">
       ${na ? `<button class="btn sm${na.kind === "review" ? " primary" : ""}" data-act="${esc(post.id)}">${esc(na.label)}</button>` : ""}
@@ -689,7 +700,7 @@ function profileHeadHtml(profile, { tag = "div", end = "", sub = "", chips = tru
 }
 
 // One collapsible card per profile; the first `limit` rows, then "Show N more".
-function profileCardHtml(group, { limit = ContentView.PAGE_SIZE, filter = "all", focusId = null, note = "" } = {}){
+function profileCardHtml(group, { limit = ContentView.PAGE_SIZE, filter = "all", focusId = null, note = "", collapsed = false } = {}){
   const { profile, counts, needsYou } = group;
   const posts = group.posts.filter(p => filter === "all" || STAGE_GROUP[p.status] === filter);
   const shown = posts.slice(0, limit);
@@ -701,7 +712,7 @@ function profileCardHtml(group, { limit = ContentView.PAGE_SIZE, filter = "all",
     return postRowHtml(p, channels, { focused, note: focused ? note : "" });
   }).join("") || `<div class="empty">${FILTER_EMPTY[group.posts.length ? filter : "all"]}</div>`;
   const osId = OSID.prof(profile.slug);
-  return `<details class="pf" open data-profile="${esc(profile.slug)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
+  return `<details class="pf${focusId && focusId === osId ? " focused" : ""}"${collapsed ? "" : " open"} data-profile="${esc(profile.slug)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
     ${profileHeadHtml(profile, { tag: "summary",
       sub: needsYou ? `<span class="pf-needs">${needsYou} waiting on you</span>` : "",
       end: `${counts.all ? `<span class="mix" aria-hidden="true">${mix}</span>` : ""}<span class="cnt">${plural(counts.all, "post")}</span>${icon("chevron", "chev")}` })}
@@ -717,7 +728,9 @@ const contentHead = (tab, summary) => `<div class="doc-head">
   </div>`;
 
 async function renderContent(tab = "posts"){
-  const from = _NAV_EXTRAS.from || null;
+  const from = _NAV_EXTRAS.from || null, focusArrived = !!_NAV_EXTRAS.focus;
+  // Fetches take time: only draw if the user is still on this tab.
+  const stillOn = () => STATE.view === "content" && STATE.tab === tab;
   const projects = contentProjects();
   const profiles = projects.flatMap(p => p.profiles);
   const noProfiles = `<div class="empty">No profiles yet. Ask a teammate in chat to set one up.</div>`;
@@ -730,6 +743,7 @@ async function renderContent(tab = "posts"){
     const [seg, key, ic, noun] = tab === "briefs" ? ["brief-specs", "specs", "doc", "brief spec"] : ["voices", "voices", "mic", "voice"];
     const lists = await Promise.all(profiles.map(pf =>
       api(`/api/profile/${encodeURIComponent(pf.slug)}/${seg}`).then(d => d[key] || []).catch(() => [])));
+    if (!stillOn()) return;
     const cards = profiles.map((pf, i) => `<section class="pf">${profileHeadHtml(pf, { end: `<span class="cnt">${plural(lists[i].length, noun)}</span>` })}
         ${lists[i].map(x => `<a class="doc-row" href="#/profile/${esc(pf.slug)}/setup">${icon(ic)}<b>${esc(x.id)}</b>
           <span class="doc-row-x">${esc((x.text || "").split("\n").find(l => l.trim()) || "Empty")}</span>
@@ -742,6 +756,7 @@ async function renderContent(tab = "posts"){
 
   const lists = await Promise.all(profiles.map(pf =>
     api(`/api/profile/${encodeURIComponent(pf.slug)}/posts`).catch(() => [])));
+  if (!stillOn()) return;
   const posts = lists.flat();
   const byId = new Map(posts.map(p => [p.id, p]));
   const sections = projects.map(project => ({ project, groups: ContentView.groupByProfile(posts, project.profiles) }))
@@ -751,14 +766,15 @@ async function renderContent(tab = "posts"){
   const summary = [plural(profiles.length, "profile"), plural(posts.length, "post"), waiting ? `${waiting} waiting on you` : ""]
     .filter(Boolean).join(" · ");
   const focusId = FOCUS_ID;
-  if (focusId) CONTENT_FILTER = "all";   // a deliverable's row must be visible
-  const note = from ? `from @${botById(from.bot)?.handle || from.bot}, ${relAge(from.at)} ago` : "";
+  if (focusArrived) CONTENT_FILTER = "all";   // a deliverable's row must be visible
+  const age = from && relAge(from.at);
+  const note = from ? `from @${botById(from.bot)?.handle || from.bot}, ${age === "now" ? "just now" : `${age} ago`}` : "";
   const total = b => groups.reduce((n, g) => n + g.counts[b], 0);
 
   const card = g => {
-    const opts = { filter: CONTENT_FILTER, focusId, note };
-    const open = CONTENT_EXPANDED.has(g.profile.slug) || g.posts.some(p => focusId && OSID.post(p.id) === focusId);
-    return profileCardHtml(g, open ? { ...opts, limit: Infinity } : opts);
+    const focused = !!focusId && (OSID.prof(g.profile.slug) === focusId || g.posts.some(p => OSID.post(p.id) === focusId));
+    const opts = { filter: CONTENT_FILTER, focusId, note, collapsed: CONTENT_COLLAPSED.has(g.profile.slug) && !focused };
+    return profileCardHtml(g, CONTENT_EXPANDED.has(g.profile.slug) || focused ? { ...opts, limit: Infinity } : opts);
   };
   const draw = () => {
     $("#main").innerHTML = `<div class="scroll"><div class="doc">${contentHead("posts", summary)}
@@ -768,14 +784,18 @@ async function renderContent(tab = "posts"){
     const main = $("#main");
     main.querySelectorAll("[data-f]").forEach(c => c.onclick = () => { CONTENT_FILTER = c.dataset.f; draw(); });
     main.querySelectorAll("[data-pf-more]").forEach(b => b.onclick = () => { CONTENT_EXPANDED.add(b.dataset.pfMore); draw(); });
+    main.querySelectorAll("details.pf").forEach(d => d.addEventListener("toggle", () => {
+      d.open ? CONTENT_COLLAPSED.delete(d.dataset.profile) : CONTENT_COLLAPSED.add(d.dataset.profile);
+    }));
     const open = (id, suffix = "") => navigate(`#/post/${id}${suffix}`, { profileSlug: byId.get(id)?.profile_slug });
     main.querySelectorAll("[data-view]").forEach(a => a.onclick = () => open(a.dataset.view));
     main.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => open(b.dataset.edit, "/edit"));
     main.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
       const post = byId.get(b.dataset.act);
       b.disabled = true;
-      if (await runNextAction(post, post.profile_slug)) renderContent("posts");
-      else b.disabled = false;
+      if (!await runNextAction(post, post.profile_slug)) { b.disabled = false; return; }
+      renderRail();
+      if (stillOn()) renderContent("posts");
     });
   };
   draw();
@@ -985,7 +1005,7 @@ async function renderOperations(){
   }
   $("#main").innerHTML=`
     <div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Operations</h1></div>
-      <div style="margin-left:auto"><button class="btn primary" id="newOpBtn">＋ Activity</button></div></div>
+      <div style="margin-left:auto"><button class="btn primary" id="newOpBtn">${icon("plus")} Activity</button></div></div>
     <div class="scroll"><div id="ops-list"></div></div>`;
   draw();
   $("#newOpBtn").onclick=()=>navigate("#/activity/new");
@@ -1279,7 +1299,7 @@ function renderMdSubsections(projectSlug, p, docKey, text, opts = {}){
     const subId = docSubsectionId(projectSlug, p, docKey, title);
     const titleKey = OSID.slugKey(title);
     const editBtn = opts.editable
-      ? `<button type="button" class="btn" data-edit-doc-sub="${esc(docKey)}" data-sub-title="${esc(title)}" data-sub-key="${esc(titleKey)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>`
+      ? `<button type="button" class="btn sm" data-edit-doc-sub="${esc(docKey)}" data-sub-title="${esc(title)}" data-sub-key="${esc(titleKey)}">${icon("compose")} Edit</button>`
       : "";
     html += renderSecGroup(title, `<div class="pcard"><div class="sec-body memo-body">${inner}</div></div>`, subId, editBtn);
   });
@@ -1668,7 +1688,7 @@ function renderProductSection(slug, p){
   products.forEach(prod => {
     const feats = (p.features || []).filter(f => f.product_slug === prod.slug);
     const prodId = composedIdOnly(OSID.prod(prod.slug));
-    const addBtn = `<button class="btn" type="button" data-add-feat="${esc(prod.slug)}" style="padding:6px 10px;font-size:11px">＋ Feature</button>`;
+    const addBtn = `<button class="btn sm" type="button" data-add-feat="${esc(prod.slug)}">${icon("plus")} Feature</button>`;
     const sectionOrder = roadmapSectionOrder(p);
     const buckets = Object.fromEntries(sectionOrder.map(([k]) => [k, []]));
     buckets.other = [];
@@ -1710,25 +1730,25 @@ function hasProjectTechnical(p){
 function sectionAddButtons(slug, section, p){
   const out = [];
   if (section === "validation") {
-    if (!hasProjectIntake(p)) out.push({ label: "＋ Intake", route: `#/project/${slug}/intake/new` });
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/problem-validation` });
+    if (!hasProjectIntake(p)) out.push({ label: "Intake", route: `#/project/${slug}/intake/new` });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/problem-validation` });
   } else if (section === "experiments") {
-    out.push({ label: "＋ Experiment", route: `#/project/${slug}/experiment/new` });
+    out.push({ label: "Experiment", route: `#/project/${slug}/experiment/new` });
   } else if (section === "pricing") {
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/positioning`, pickType: true });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/positioning`, pickType: true });
   } else if (section === "product") {
-    out.push({ label: "＋ Product", route: `#/project/${slug}/product/new` });
+    out.push({ label: "Product", route: `#/project/${slug}/product/new` });
     if ((p.products || []).length === 1)
-      out.push({ label: "＋ Feature", route: `#/product/${p.products[0].slug}/feature/new`, projectSlug: slug });
+      out.push({ label: "Feature", route: `#/product/${p.products[0].slug}/feature/new`, projectSlug: slug });
     else if ((p.products || []).length > 1)
-      out.push({ label: "＋ Feature", route: `#/project/${slug}/product`, pickProduct: true });
+      out.push({ label: "Feature", route: `#/project/${slug}/product`, pickProduct: true });
   } else if (section === "technical") {
-    if (!hasProjectTechnical(p)) out.push({ label: "＋ Technical", route: `#/project/${slug}/technical/new` });
-    else out.push({ label: "＋ Subsection", route: `#/project/${slug}/technical/subsection/new` });
+    if (!hasProjectTechnical(p)) out.push({ label: "Technical", route: `#/project/${slug}/technical/new` });
+    else out.push({ label: "Subsection", route: `#/project/${slug}/technical/subsection/new` });
   } else if (section === "gtm") {
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/channels`, pickType: true });
-    out.push({ label: "＋ Phase", route: `#/project/${slug}/gtm/phase/new` });
-    out.push({ label: "＋ Strategy", route: `#/project/${slug}/gtm/strategy/new` });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/channels`, pickType: true });
+    out.push({ label: "Phase", route: `#/project/${slug}/gtm/phase/new` });
+    out.push({ label: "Strategy", route: `#/project/${slug}/gtm/strategy/new` });
   }
   return out;
 }
@@ -1750,7 +1770,7 @@ async function renderProjectSection(slug, section){
   const body = (renderers[section] || (() => `<div class="empty">Unknown section.</div>`))();
   const adds = sectionAddButtons(slug, section, p);
   const addHtml = adds.map((a, i) =>
-    `<button class="btn${i === adds.length - 1 ? " primary" : ""}" data-sec-add="${i}">${esc(a.label)}</button>`
+    `<button class="btn${i === adds.length - 1 ? " primary" : ""}" data-sec-add="${i}">${icon("plus")} ${esc(a.label)}</button>`
   ).join("");
   const tabId = composedIdOnly(OSID.tabProj(slug, section));
   $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">${esc(p.entity.name)} · <b>${esc(title)}</b></div>
@@ -2028,7 +2048,7 @@ async function renderDay(dateStr){
   $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" class="text-link">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
       <h1 class="title" style="margin-top:6px">${esc(label)}</h1></div>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="btn" id="dayAct">＋ Activity</button>
+        <button class="btn" id="dayAct">${icon("plus")} Activity</button>
         <button class="btn" id="dayBackBtn">← Calendar</button></div></div>
     <div class="scroll"><p class="lead">${items.length} item${items.length===1?"":"s"} scheduled for this day.</p>${body}</div>`;
   $("#dayBack").onclick=()=>navigate("#/calendar");
@@ -2273,7 +2293,7 @@ async function renderProfileSetup(slug){
 }
 
 async function renderChannelGuidelines(slug){
-  $("#main").innerHTML = `${pageHeader("Channel guidelines", slug, `<button class="btn" id="refineBtn">✨ Refine with AI</button><button class="btn primary" id="saveBtn">Save</button>`, OSID.chan(slug))}
+  $("#main").innerHTML = `${pageHeader("Channel guidelines", slug, `<button class="btn" id="refineBtn">${icon("zap")} Refine with AI</button><button class="btn primary" id="saveBtn">Save</button>`, OSID.chan(slug))}
     <div class="help">Injected into every generation for this channel</div>
     <div class="scroll">
       <p class="help">Use <code>## General</code> + per-platform sections. These guidelines are injected into every generation for this channel.</p>
@@ -2296,7 +2316,7 @@ async function renderChannelGuidelines(slug){
       t.value = d.refined;
       toast("Refined — review and Save when ready");
     }catch(e){ toast("✗ "+e.message); }
-    finally{ btn.textContent = "✨ Refine with AI"; btn.disabled = false; }
+    finally{ btn.innerHTML = `${icon("zap")} Refine with AI`; btn.disabled = false; }
   };
 }
 
@@ -2333,7 +2353,7 @@ function renderSlideOverlayList(items, postId, opts = {}){
       + `</div></div>`;
   }).join("");
   const addBtn = opts.showAdd
-    ? `<button type="button" class="btn" id="pd-add-slide" style="margin-top:8px;font-size:11.5px">＋ Slide</button>`
+    ? `<button type="button" class="btn" id="pd-add-slide">${icon("plus")} Slide</button>`
     : "";
   return `<div style="display:flex;flex-direction:column;gap:8px">${rows}${addBtn}</div>`;
 }
@@ -2638,7 +2658,7 @@ async function renderRevise(id){
   const profileSlug=detail.profile_slug||"";
   CURRENT_PROFILE_SLUG = profileSlug || null;
   CURRENT_POST = { id, slot, brief };
-  $("#main").innerHTML=`${pageHeader("✨ Revise with AI",title,`<button class="btn primary" id="rv-go">Revise</button>`, OSID.post(id))}
+  $("#main").innerHTML=`${pageHeader("Revise with AI",title,`<button class="btn primary" id="rv-go">Revise</button>`, OSID.post(id))}
     <div class="scroll"><div class="fpage">
       <p class="help">
         Describe what should change in this ${kind}. The AI will apply your instruction and preserve everything else.
@@ -2648,7 +2668,7 @@ async function renderRevise(id){
   document.getElementById("rv-go").onclick=async()=>{
     const btn=document.getElementById("rv-go"), instruction=$("#main textarea[name=instruction]").value.trim();
     if(!instruction) return toast("Enter an instruction first");
-    btn.disabled=true; btn.textContent="Revising…"; toast("✨ Revising via claude -p…",true);
+    btn.disabled=true; btn.textContent="Revising…"; toast("Revising via claude -p…",true);
     try{ await jpost(`/api/post/${id}/revise`,{instruction}); toast("Revised ✓");
       history.back(); }
     catch(e){ btn.disabled=false; btn.textContent="Revise"; toast("✗ "+e.message); }
@@ -2721,7 +2741,7 @@ function renderNewTechnical(projectSlug){
   $("#main").innerHTML = `${pageHeader("New technical", projName, `<button class="btn primary" id="nt-save">Create technical</button>`)}
     <div class="scroll"><div class="fpage">
       <p class="help">
-        Creates <code>technical.md</code> with starter sections. Edit each with ✎ on the Technical tab.
+        Creates <code>technical.md</code> with starter sections. Edit each with Edit on the Technical tab.
       </p>
     </div></div>`;
   document.getElementById("nt-save").onclick = async () => {
@@ -3128,7 +3148,7 @@ async function renderGenerateIdeas(slug){
   const crumb=profNode.name||slug;
   const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const start=new Date(), end=new Date(Date.now()+14*864e5);
-  $("#main").innerHTML=`${pageHeader("Generate ideas",crumb,`<button class="btn primary" id="gi-save">Generate ✦</button>`)}
+  $("#main").innerHTML=`${pageHeader("Generate ideas",crumb,`<button class="btn primary" id="gi-save">${icon("zap")} Generate</button>`)}
     <div class="scroll"><div class="fpage">
       <p class="help">
         Claude will generate a batch of content ideas for this profile. Takes ~15–30s.
@@ -3820,7 +3840,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       box.className = "deliv-list";
       box.innerHTML = m.deliverables.map((d, i) => `<div class="deliv-row">
           <span class="deliv-ic">${icon(KIND_META[d.kind]?.[0] || "doc")}</span>
-          <span class="deliv-t"><b>${esc(d.label)}</b><small>${esc([KIND_META[d.kind]?.[2] || d.kind, d.profile && profileName(d.profile)].filter(Boolean).join(" · "))}</small></span>
+          <span class="deliv-t"><b>${esc(d.label)}</b><small>${esc([KIND_META[d.kind]?.[2] || d.kind, d.profile && profileName(d.profile), delivChannels(d)].filter(Boolean).join(" · "))}</small></span>
           ${d.status ? `<span class="tag">${esc(d.status)}</span>` : ""}
           <button class="link-btn" data-deliv="${i}">Open in canvas</button></div>`).join("");
       box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () =>
@@ -4272,7 +4292,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       replies.forEach(r => { const row = r.bubble.closest(".msg"); row.classList.remove("streaming"); decorateReply(row, r.meta); });
       // You approved and the teammate saved it: show you the result.
       const saved = replies.flatMap(r => r.meta.deliverables || []);
-      if (extra?.approval === "approved" && saved.length) openDeliverable(saved[0]);
+      if (extra?.approval === "approved" && saved.length)
+        openDeliverable({ ...saved[0], bot: replies.find(r => r.meta.deliverables?.length)?.meta.bot });
       if (hadPending || replies.some(r => r.meta.approval)) renderRail().catch(() => {});   // inbox count
     }
   }
