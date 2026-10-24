@@ -169,6 +169,30 @@ class Routing(unittest.TestCase):
         r = self.route("yes save it", last_bot="cos", last_skill="launch-plan", explicit=True)
         self.assertEqual(r, ("gtm", None, False, None))
 
+    def dm(self, msg, bot="social", **kw):
+        return server._route_bot(self.team, msg, self._sess(**kw), default_bot=bot, dm=bot)
+
+    def test_dm_foreign_slash_skill_stays_with_dm_bot(self):
+        self.assertEqual(self.dm("/workspace should we add the word drama?"),
+                         ("social", "workspace", True, None))
+
+    def test_dm_untagged_write_is_addressed_to_dm_bot(self):
+        self.assertEqual(self.dm("should we add the word drama?"),
+                         ("social", "content-brief", True, None))
+
+    def test_dm_untagged_chat_stays_unskilled(self):
+        self.assertEqual(self.dm("thoughts on the hook?"), ("social", None, False, None))
+
+    def test_dm_ignores_other_bots_skill_keywords(self):
+        self.assertEqual(self.dm("who are our competitors?"), ("social", None, False, None))
+
+    def test_dm_continuation_stays_with_dm_bot(self):
+        r = self.dm("yes save it", last_bot="cos", last_skill="workspace", explicit=True)
+        self.assertEqual(r[0], "social")
+
+    def test_dm_other_bot_tag_does_not_take_over(self):
+        self.assertEqual(self.dm("@cmo thoughts on the hook?")[0], "social")
+
     def test_handoff_emits_bot_event(self):
         sink = io.BytesIO()
         h = server.Handler.__new__(server.Handler)

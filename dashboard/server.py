@@ -417,16 +417,42 @@ def _suggest_skill(text, among=None):
     return None
 
 
-def _route_bot(team, user_msg, session, default_bot=bots.ROOT_BOT, sticky=True):
+def _route_dm(team, user_msg, session, bot):
+    """A DM always answers as its own bot: every turn is addressed to it, as if
+    @-tagged. An explicit /skill runs here even when another bot owns it; only
+    the DM bot's own skills match by wording, so no keyword or @mention of a
+    teammate can take the conversation over."""
+    bot = team.resolve(bot)
+    tagged_skill = _explicit_skill(user_msg)
+    if tagged_skill:
+        return bot, tagged_skill, True, None
+    if _continuation_allowed(session, user_msg):
+        return bot, None, False, None
+    own = team.skills_of(bot)
+    hit = _suggest_skill(user_msg, among=own)
+    if hit in own:
+        return bot, hit, True, None
+    if len(own) == 1:
+        return bot, own[0], True, None
+    if _WRITE_TURN_RE.search(user_msg or ""):
+        b = team.get(bot)
+        skill = b.default_skill if b.default_skill in own else (own[0] if own else None)
+        return bot, skill, bool(skill), None
+    return bot, None, False, None
+
+
+def _route_bot(team, user_msg, session, default_bot=bots.ROOT_BOT, dm=None):
     """Pick (bot, skill, explicit, handoff_from) for one turn.
 
     explicit /skill → its owner bot. @bot → that bot; the skill its wording
     matches (if another bot owns it, hand off to that owner); a write with no
     match uses the bot's default skill; a single-skill bot always uses it.
-    Untagged → whoever spoke last in this chat (`sticky`), else the room's
+    Untagged → whoever spoke last in this chat, else the room's
     lead (`default_bot`); no skill: the write gate and Haiku policy stay
-    exactly as before. A DM passes sticky=False so it always answers itself.
+    exactly as before. A DM passes `dm` (its bot) and is routed by _route_dm.
     """
+    if dm:
+        return _route_dm(team, user_msg, session, dm)
     tagged_skill = _explicit_skill(user_msg)
     mentioned = team.mentioned(user_msg)
     if tagged_skill:
@@ -448,7 +474,7 @@ def _route_bot(team, user_msg, session, default_bot=bots.ROOT_BOT, sticky=True):
         return mentioned, None, False, None
     if _continuation_allowed(session, user_msg):
         return team.owner(session._last_skill), None, False, None
-    last_bot = team.get(getattr(session, "_last_bot", None) or "") if sticky else None
+    last_bot = team.get(getattr(session, "_last_bot", None) or "")
     if last_bot and last_bot.active:
         return last_bot.id, None, False, None
     return team.resolve(default_bot), None, False, None
@@ -1030,7 +1056,7 @@ class Handler(BaseHTTPRequestHandler):
         bot_id, skill, routed, handoff_from = _route_bot(
             team, user_msg, sess,
             default_bot=(room or {}).get("lead") or bots.ROOT_BOT,
-            sticky=(room or {}).get("kind") != "dm")
+            dm=(room or {}).get("lead") if (room or {}).get("kind") == "dm" else None)
         explicit = skill if routed else None
         suggest = _suggest_skill(user_msg) if not explicit else None
         # Only a turn that may write (tagged skill, or its continuation) can ask for approval.
