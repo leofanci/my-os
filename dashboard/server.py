@@ -729,6 +729,20 @@ def _skills_index():
     return out
 
 
+def _chat_workspace(rec):
+    """Workspace a saved thread belongs to (None: no record yet)."""
+    if not rec:
+        return None
+    ws, _ = rooms.split_id(rec.get("room"))
+    if ws:
+        return ws
+    room = rec.get("room") or ""
+    if room.startswith("p-"):
+        return room[2:]
+    scope = rec.get("scope")
+    return scope[0] if scope else bots.HQ
+
+
 def _resolve_workspace(ws, projects):
     """(workspace id, project record) — HQ when missing or unknown."""
     record = next((p for p in projects if p.get("slug") == ws), None) if ws and ws != bots.HQ else None
@@ -938,6 +952,8 @@ class Handler(BaseHTTPRequestHandler):
             if project_record else None
         )
         chat_id = body.get("chat_id") or None
+        if chat_id and _chat_workspace(chat_store.load(chat_id)) not in (None, ws):
+            chat_id = None  # a thread never leaves its workspace: start a fresh one here
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
         if chat_id:
             answer = body.get("approval")
@@ -950,6 +966,8 @@ class Handler(BaseHTTPRequestHandler):
             sticky=(room or {}).get("kind") != "dm")
         explicit = skill if routed else None
         suggest = _suggest_skill(user_msg) if not explicit else None
+        # Only a turn that may write (tagged skill, or its continuation) can ask for approval.
+        may_write = bool(explicit) or _continuation_allowed(sess, user_msg)
 
         if (_WRITE_TURN_RE.search(user_msg or "")
                 and not explicit
@@ -1131,7 +1149,10 @@ class Handler(BaseHTTPRequestHandler):
             if meta["tokens"] or meta["cost"]:
                 emit({"usage": {"tokens": meta["tokens"], "cost": meta["cost"], "model": model}})
             clean, summary = approvals.extract("".join(reply))
-            if summary and isinstance(getattr(sess, "session_id", None), str):
+            if summary and not may_write:
+                reply = [clean]  # stray marker on a chat-only turn: drop it, no buttons
+                emit({"clean": clean})
+            elif summary and isinstance(getattr(sess, "session_id", None), str):
                 rec = approvals.add(ROOT, ws=ws, room=(room or {}).get("id"), chat=sess.session_id,
                                     bot=bot_id, summary=summary)
                 reply, meta["approval"] = [clean], rec["id"]
@@ -1334,7 +1355,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"ws": ws, **_costs(ws, db.tree())})
                 bot_id = (qs.get("bot") or [""])[0]
                 if bot_id not in bots.load_defs():
-                    raise ValueError(f"unknown bot: {bot_id}")
+                    return self._send(400, {"error": f"unknown bot: {bot_id}"})
                 text = bots.read_memory(bot_id, record and ws, ROOT, tail=0)
                 return self._send(200, {"ws": ws, "bot": bot_id, "lines": text.splitlines() if text else []})
             if path in ("/api/bots", "/api/rooms"):
@@ -1685,8 +1706,14 @@ class Handler(BaseHTTPRequestHandler):
                 members = body.get("members") or []
                 if not isinstance(members, list):
                     raise ValueError("members must be a list")
+                old = body.get("replace") or None
                 room_id = rooms.save_topic(ws, body.get("name"), members, body.get("lead"), ROOT,
-                                           replace=body.get("replace") or None)
+                                           replace=old)
+                if old and room_id != f"{ws}/t-{old}":
+                    for rec in chat_store.records():  # renamed: its threads follow it
+                        if rec.get("room") == f"{ws}/t-{old}":
+                            rec["room"] = room_id
+                            chat_store.save(rec)
                 return self._send(200, {"id": room_id, "rooms": rooms.list_rooms(
                     bots.team(ROOT, ws, record), ws, ROOT)})
             if path.startswith("/api/bots/") and path.endswith("/active"):

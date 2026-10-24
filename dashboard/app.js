@@ -434,7 +434,10 @@ async function switchWorkspace(ws){
   try { localStorage.setItem("wsId", ws); } catch {}
   await renderRail();
   await window.ChatRooms?.enterWorkspace();
-  if (changed) navigate(ws === "hq" ? "#/calendar" : `#/project/${ws}/${SECTIONS[0].key}`);
+  if (changed) {   // new company: back to the conversation, canvas closed but ready on its files
+    window.ChatRooms?.hideCanvas();
+    navigate(ws === "hq" ? "#/calendar" : `#/project/${ws}/${SECTIONS[0].key}`);
+  }
 }
 window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 
@@ -467,10 +470,8 @@ async function renderRail(){
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
     <nav class="nav">
-      <a data-view="approvals"><span class="ico">✔</span> Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : `<span class="c">0</span>`}</a>
-      <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
-      <a data-view="calendar"><span class="ico">▦</span> Calendar <span class="c">shared</span></a>
-      <a data-view="operations"><span class="ico">✓</span> Operations</a>
+      <a data-view="approvals"><span class="ico">✔</span> Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : ""}</a>
+      ${w.id !== "hq" ? `<a data-view="project"><span class="ico">▣</span> Project files</a>` : ""}
       <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
     <div class="rail-hdr"><span class="label">Channels</span>
@@ -478,10 +479,20 @@ async function renderRail(){
     <nav class="nav rooms">${channels.map(roomRow).join("")}</nav>
     <div class="rail-hdr"><span class="label">Direct messages</span></div>
     <nav class="nav rooms">${dms.map(roomRow).join("")}</nav>
+    <div class="rail-hdr"><span class="label">Your time (all workspaces)</span></div>
+    <nav class="nav">
+      <a data-view="needs"><span class="ico">◉</span> Today</a>
+      <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
+      <a data-view="operations"><span class="ico">✓</span> Operations</a>
+    </nav>
     `;
-  $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>selectGlobal(a.dataset.view));
+  $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>{
+    window.ChatRooms?.showCanvas();
+    if (a.dataset.view === "project") return navigate(`#/project/${_WS}/${SECTIONS[0].key}`);
+    selectGlobal(a.dataset.view);
+  });
   $("#rail").querySelectorAll("[data-room]").forEach(a=>a.onclick=()=>window.ChatRooms?.select(a.dataset.room));
-  $("#new-room-btn").onclick=e=>{ e.stopPropagation(); navigate("#/room/new"); };
+  $("#new-room-btn").onclick=e=>{ e.stopPropagation(); window.ChatRooms?.showCanvas(); navigate("#/room/new"); };
   const brandMenu = $("#brand-menu");
   $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
   document.addEventListener("click", () => brandMenu.classList.remove("open"));
@@ -623,6 +634,7 @@ function highlight(){
   const mark=(a,on)=>{a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");};
   document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
   document.querySelectorAll("#rail [data-room]").forEach(a=>mark(a,a.dataset.room===window.ChatRooms?.current()));
+  document.querySelectorAll("#rail [data-view=project]").forEach(a=>mark(a,canvasProject(true)?.slug===_WS));
   document.querySelectorAll("#canvas-nav [data-section]").forEach(a=>mark(a,STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
   document.querySelectorAll("#canvas-nav [data-profile]:not([data-chan-filter])").forEach(a=>mark(a,(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
   document.querySelectorAll("#canvas-nav [data-chan-guidelines]").forEach(a=>mark(a,STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
@@ -2906,7 +2918,8 @@ async function renderGenerateIdeas(slug){
 
 // ── New activity / milestone / edit milestone ────────────────────────────────
 async function renderNewActivity(extras={}){
-  const projectOpts=_TREE.map(p=>`<option value="${esc(p.slug)}"${extras.entity===p.slug?" selected":""}>${esc(p.name)}</option>`).join("");
+  const pick=extras.entity||(_WS!=="hq"?_WS:"");
+  const projectOpts=_TREE.map(p=>`<option value="${esc(p.slug)}"${pick===p.slug?" selected":""}>${esc(p.name)}</option>`).join("");
   const typeOpts=["task","meeting","call","review","launch"].map(t=>`<option>${t}</option>`).join("");
   $("#main").innerHTML=`${pageHeader("New activity","Operations",`<button class="btn primary" id="na-save">Add activity</button>`)}
     <div class="scroll"><div class="fpage">
@@ -3043,11 +3056,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const CANVAS_W_MIN = cssPx("--ui-shell-center-min", 440);
   const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 360);
   const CANVAS_W_DEFAULT = 640;
-  let canvasW = CANVAS_W_DEFAULT, canvasHidden = false;
-  try {
-    canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT;
-    canvasHidden = localStorage.getItem("canvasHidden") === "1";
-  } catch {}
+  // Like a Slack canvas: closed until you need it (▣, a sidebar view, or a bot
+  // saving something). Only its width is remembered.
+  let canvasW = CANVAS_W_DEFAULT, canvasHidden = true;
+  try { canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT; } catch {}
   // Widest the canvas can go right now: keep the chat column >= CHAT_W_MIN.
   function canvasWMax(){
     const dock = document.getElementById("chat-dock");
@@ -3060,12 +3072,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     appEl.classList.toggle("canvas-hidden", canvasHidden);
     appEl.style.setProperty("--canvas-w", Math.max(CANVAS_W_MIN, Math.min(canvasW, canvasWMax())) + "px");
     document.getElementById("canvas-toggle").classList.toggle("on", !canvasHidden);
-    try {
-      localStorage.setItem("canvasW", String(canvasW));
-      localStorage.setItem("canvasHidden", canvasHidden ? "1" : "");
-    } catch {}
+    try { localStorage.setItem("canvasW", String(canvasW)); } catch {}
   }
   function showCanvas(){ if (canvasHidden) { canvasHidden = false; applyCanvas(); } }
+  function hideCanvas(){ if (!canvasHidden) { canvasHidden = true; applyCanvas(); } }
   (function bindCanvasResize(){
     const handle = document.getElementById("canvas-resize");
     let dragging = false, start = 0, startSize = 0;
@@ -3166,6 +3176,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     openThread,
     current: () => activeRoomId,
     busy: () => busy,
+    showCanvas: () => showCanvas(),
+    hideCanvas: () => hideCanvas(),
     // After a workspace switch: reopen that workspace's last room.
     enterWorkspace: () => selectRoom(wsRooms[_WS] || `${_WS}/general`),
     refresh: () => {
@@ -3411,7 +3423,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const ranked = _BOTS.filter(b => b.active).sort((a, b) => members.includes(b.id) === members.includes(a.id) ? 0 : members.includes(a.id) ? -1 : 1);
     for (const b of ranked)
       out.push({ type:"bot", slug:b.handle, name:b.name, meta:"@" + b.handle, icon:b.icon });
-    for (const p of _TREE) {
+    // A company's chat only references that company (HQ sees every one).
+    const tree = _WS === "hq" ? _TREE : _TREE.filter(p => p.slug === _WS);
+    const ownProfiles = new Set(tree.flatMap(p => (p.profiles || []).map(x => x.slug)));
+    for (const p of tree) {
       out.push({ type:"project", slug:p.slug, osId:OSID.proj(p.slug), name:p.name, meta:(p.kind||p.type||"project") });
       for (const s of PROJECT_SECTIONS)
         out.push({
@@ -3427,7 +3442,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
           out.push({ type:"channel", slug:ch.slug, osId:OSID.chan(ch.slug), name:(PLAT_NAME[ch.platform]||ch.platform), meta:(ch.platform||"channel") });
       }
     }
-    for (const post of _POSTS) {
+    for (const post of _POSTS.filter(x => _WS === "hq" || ownProfiles.has(x.profile_slug))) {
       out.push({
         type:"post",
         slug:post.id,
@@ -3560,7 +3575,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       bar.querySelectorAll("[data-ap]").forEach(b => b.onclick = () => {
         if (b.dataset.ap === "edit") { input.value = "Change before saving: "; input.focus(); input.dispatchEvent(new Event("input")); return; }
         bar.remove();
-        send(b.dataset.ap === "approved" ? "Yes, approved." : "No, don't save that.", { approval: b.dataset.ap });
+        send(b.dataset.ap === "approved" ? "Yes, approved." : "No, skip it.", { approval: b.dataset.ap });
       });
       div.appendChild(bar);
     }
@@ -3710,6 +3725,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const crumbs = document.querySelector(".crumbs");
     let ctx = "";
     const refs = mentions.filter(m => text.includes(m.token));
+    const viewProj = canvasProject(true);
+    const foreignView = _WS !== "hq" && viewProj && viewProj.slug !== _WS;
+    if (foreignView) {   // isolation: another company's page stays out of this company's chat
+      return "## Screen (background only)\nUser has a page from another workspace open. Ignore it.\n";
+    }
     const viewPrimary = viewIsPrimary(text, refs);
     if (viewPrimary) {
       if (crumbs) ctx += "Current view: " + crumbs.textContent + "\n";
@@ -3946,6 +3966,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               turnMeta.tokens = obj.usage.tokens; turnMeta.cost = obj.usage.cost;
               threadUsage.tokens += obj.usage.tokens || 0; threadUsage.cost += obj.usage.cost || 0;
             }
+            if (obj.clean !== undefined && !obj.approval) { full = obj.clean; bubble.innerHTML = formatChatText(full); }
             if (obj.approval) {
               full = obj.clean ?? full; bubble.innerHTML = formatChatText(full);
               _APPROVALS.unshift(obj.approval); turnMeta.approval = obj.approval;
@@ -3956,7 +3977,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               // one on a fresh line so thoughts don't run together ("week.14").
               if (pendingBreak && full && !full.endsWith("\n")) full += "\n";
               pendingBreak = false;
-              full += obj.delta; bubble.innerHTML = formatChatText(full); stream.scrollTop = stream.scrollHeight;
+              full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*APPROVAL:.*$/gm, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
             }
             if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; if (obj.tool === "Bash") wrote = true; }
           } catch {}
