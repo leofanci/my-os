@@ -10,12 +10,14 @@ underneath as storage; the user never has to think in them:
 - canvas: the Files list, newest first, filterable by kind
 
 Each item: {key, kind, label, link (canvas route), focus (composed id of the
-card to scroll to, or None), updated, profile (for post links)}.
+card to scroll to, or None), updated, profile (for post links), post (the post
+id, for a single brief)}. Content plans and briefs open the Content view, focused
+on the profile's card or the post's row.
 """
 import json
 from pathlib import Path
 
-from core.ids import build_id_registry, lk_doc, lk_experiment, lk_memo, lk_post
+from core.ids import build_id_registry, lk_doc, lk_experiment, lk_memo, lk_post, lk_prof
 from core.project_schemas import MEMO_SECTION
 
 KINDS = ("memo", "experiment", "doc", "roadmap", "plan", "content", "brief", "voice")
@@ -103,11 +105,11 @@ def describe(root, slug, rel, reg=None, mtime=None, names=None):
             n = len(_read_json(base / rel).get("posts") or [])
             item = {"key": f"content:{prof}", "kind": "content",
                     "label": f"Content plan: {name(prof)} ({n} posts)",
-                    "link": f"#/profile/{prof}", "focus": None, "profile": prof}
+                    "link": "#/content", "focus": get(lk_prof(prof)), "profile": prof}
         elif parts[2] == "content" and len(parts) == 5 and parts[3] == "briefs" and rel.endswith(".json"):
             pid = parts[4][:-5]
             item = {"key": f"brief:{pid}", "kind": "brief", "label": f"Post brief {pid}",
-                    "link": f"#/post/{pid}", "focus": get(lk_post(pid)), "profile": prof}
+                    "link": "#/content", "focus": get(lk_post(pid)), "profile": prof, "post": pid}
         elif parts[2] in ("brief-specs", "voices", "profile.md"):
             item = {"key": f"voice:{prof}", "kind": "voice", "label": f"Voice & brief spec: {name(prof)}",
                     "link": f"#/profile/{prof}/setup", "focus": None, "profile": prof}
@@ -123,7 +125,7 @@ def _registry(projects, posts, root):
         return None
 
 
-def _collapse(items, names=None):
+def _collapse(items, names=None, reg=None):
     """One card per deliverable; many post briefs from one turn become one card."""
     seen, out, briefs = set(), [], {}
     for it in items:
@@ -139,7 +141,8 @@ def _collapse(items, names=None):
             out.append(group[0])
         else:
             out.append({"key": f"briefs:{prof}", "kind": "brief", "label": f"{len(group)} post briefs: {(names or {}).get(prof) or _title(prof or '')}",
-                        "link": f"#/profile/{prof}", "focus": None, "profile": prof,
+                        "link": "#/content", "focus": reg.get(lk_prof(prof)) if reg is not None and prof else None,
+                        "profile": prof,
                         "updated": max(g.get("updated") or 0 for g in group)})
     return out
 
@@ -152,7 +155,7 @@ def changed(root, slug, before, projects, posts):
         return []
     reg, names = _registry(projects, posts, root), _names(projects, slug)
     items = [describe(root, slug, r, reg, after[r], names) for r in sorted(rels)]
-    return _collapse([i for i in items if i], names)
+    return _collapse([i for i in items if i], names, reg)
 
 
 def list_files(root, slug, projects, posts):

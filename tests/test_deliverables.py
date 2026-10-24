@@ -43,6 +43,8 @@ class Describe(unittest.TestCase):
         self.assertEqual(items["doc:intake"]["link"], "#/project/acme/validation")
         self.assertIn("roadmap:acme-app", items)
         self.assertEqual(items["content:profile-a"]["label"], "Content plan: Profile a (2 posts)")
+        self.assertEqual(items["content:profile-a"]["link"], "#/content")
+        self.assertEqual(items["content:profile-a"]["profile"], "profile-a")
         self.assertFalse(any(k.startswith("team") for k in items))
 
     def test_changed_only_reports_this_turn_and_collapses_briefs(self):
@@ -54,6 +56,17 @@ class Describe(unittest.TestCase):
         got = deliverables.changed(self.root, "acme", before, [], [])
         labels = sorted(i["label"] for i in got)
         self.assertEqual(labels, ["3 post briefs: Profile a", "Pricing memo v1"])
+        card = next(i for i in got if i["kind"] == "brief")
+        self.assertEqual(card["link"], "#/content")
+        self.assertEqual(card["profile"], "profile-a")
+
+    def test_single_post_brief_opens_its_row_in_the_content_view(self):
+        before = deliverables.snapshot(self.root, "acme")
+        touch(self.p / "profiles" / "profile-a" / "content" / "briefs" / "p1.json", "{}")
+        (card,) = deliverables.changed(self.root, "acme", before, [], [])
+        self.assertEqual(card["link"], "#/content")
+        self.assertEqual(card["post"], "p1")
+        self.assertEqual(card["profile"], "profile-a")
 
 
 class TurnCards(unittest.TestCase):
