@@ -142,6 +142,7 @@ class ChatSession:
         # MYOS_WORKSPACE; deny_dirs are other workspaces' folders (no Read/Grep).
         self.workspace = None
         self.deny_dirs = ()
+        self.readonly = False  # a consulted teammate: osctl refuses every write
 
     @classmethod
     def restore(cls, repo_dir, rail, rec, **kw):
@@ -231,7 +232,8 @@ class ChatSession:
             self._base_cmd(with_web, model, workspace_dir, file_search_mode,
                            web_domains),
             cwd=self.repo_dir,
-            env={**os.environ, "MYOS_WORKSPACE": self.workspace or "hq"},
+            env={**os.environ, "MYOS_WORKSPACE": self.workspace or "hq",
+                 **({"MYOS_READONLY": "1"} if self.readonly else {})},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
         self._started = True

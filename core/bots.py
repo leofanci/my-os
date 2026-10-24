@@ -197,6 +197,12 @@ class Team:
                 return handles[h]
         return None
 
+    def mentioned_all(self, text):
+        """Every active bot @handle in the message, in order, once each."""
+        handles = {b.handle: b.id for b in self.bots.values() if b.active}
+        return list(dict.fromkeys(handles[h] for h in _MENTION_RE.findall((text or "").lower())
+                                  if h in handles))
+
     def roster_line(self, bot_id):
         b = self.bots[bot_id]
         return f"@{b.handle} {b.name}: {', '.join(self.skills_of(bot_id))}"

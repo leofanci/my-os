@@ -39,6 +39,10 @@ def _workspace():
 
 
 _BLOCKED_IN_WORKSPACE = {"create-project"}
+# A consulted teammate (MYOS_READONLY) may only look things up; the lead saves.
+_READ_ONLY_CMDS = {"tree", "get-project", "get-posts", "read-file", "get-id-catalog",
+                   "resolve-id", "get-memory", "get-busy", "get-subsections",
+                   "get-brief-spec", "get-voice", "research-signal"}
 # Repo areas that hold every workspace's data at once (calendar via get-busy).
 _PRIVATE_PREFIXES = ("chats/", "team/", "portfolio/", "database/", "os.db")
 # Args whose value names an existing entity (create commands mint new slugs,
@@ -836,6 +840,9 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
     try:
+        if os.environ.get("MYOS_READONLY") and args.cmd not in _READ_ONLY_CMDS:
+            raise fileops.ActionError("read-only: you were consulted. Tell your teammate "
+                                      "what to save; they will do it.")
         ws = _workspace()
         if ws:
             _guard(args, ws)

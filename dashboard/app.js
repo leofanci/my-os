@@ -3260,7 +3260,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!msgs || !msgs.length) return showWelcome();
     msgs.forEach(m => {
       history.push(m);
-      const b = addMsg(m.role, m.content, m.bot);
+      const b = addMsg(m.role, m.content, m.bot, m.asked_by);
       if (m.role === "assistant") decorateReply(b.parentElement, m);
     });
     stream.scrollTop = stream.scrollHeight;
@@ -3596,14 +3596,18 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     else el.textContent = text;
   }
 
-  function botLabel(div, bot, handoffFrom){
+  // askedBy: a teammate pulled this bot in ("asked by @cmo"); "user" = co-tagged.
+  function botLabel(div, bot, handoffFrom, askedBy){
     const b = typeof bot === "string" ? botById(bot) : bot;
     if (!b) return;
     let lab = div.querySelector(".bot-label");
     if (!lab) { lab = document.createElement("div"); lab.className = "bot-label"; div.prepend(lab); }
     const from = handoffFrom ? botById(handoffFrom) : null;
+    const asker = askedBy && askedBy !== "user" ? botById(askedBy) : null;
     lab.innerHTML = `<span class="bot-av">${esc(b.icon || "●")}</span><b>${esc(b.name)}</b>`
-      + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "");
+      + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "")
+      + (asker ? `<span class="bot-handoff">asked by @${esc(asker.handle)}</span>` : "");
+    div.classList.toggle("consulted", !!asker);
   }
 
   // Usage line + approval bar under a bot reply.
@@ -3644,12 +3648,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     }
   }
 
-  function addMsg(role, text, bot){
+  function addMsg(role, text, bot, askedBy){
     const div = document.createElement("div");
     const uiRole = role === "user" ? "me" : "ai";
     div.className = "msg " + uiRole;
     div.innerHTML = `<div class="b"></div>`;
-    if (bot) botLabel(div, bot);
+    if (bot) botLabel(div, bot, null, askedBy);
     const bubble = div.querySelector(".b");
     setMsgContent(bubble, role, text);
     stream.appendChild(div);
@@ -3974,9 +3978,22 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     attachedFiles = []; renderAttachments();
     mentions = [];
 
-    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "";
-    const turnMeta = {};
-    startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
+    // One message per bot this turn: the lead, teammates it pulls in, its follow-up.
+    const replies = [];
+    let bubble, full = "", turnMeta;
+    const startReply = info => {
+      if (bubble) {
+        finalizeSteps();
+        if (full) history.push({ role: "assistant", content: full });
+        decorateReply(bubble.parentElement, turnMeta);
+      }
+      bubble = addMsg("assistant", ""); bubble.innerHTML = ""; full = ""; turnMeta = {};
+      replies.push({ bubble, meta: turnMeta });
+      startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
+      if (info) botLabel(bubble.parentElement, info, null, info.asked_by || null);
+    };
+    startReply(null);
+    const replyAt = i => (Number.isInteger(i) && replies[i]) || replies[replies.length - 1];
     let pendingBreak = false;
 
     chatAbort = new AbortController();
@@ -4025,23 +4042,25 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
             if (obj.bot) botLabel(bubble.parentElement, obj.bot, obj.bot.handoff_from);
-            if (obj.deliverables) turnMeta.deliverables = obj.deliverables;
+            if (obj.msg_start) { startReply(obj.msg_start); pendingBreak = false; }
+            if (obj.deliverables) replyAt(obj.msg).meta.deliverables = obj.deliverables;
             if (obj.usage) {
               turnMeta.tokens = obj.usage.tokens; turnMeta.cost = obj.usage.cost;
               threadUsage.tokens += obj.usage.tokens || 0; threadUsage.cost += obj.usage.cost || 0;
             }
-            if (obj.clean !== undefined && !obj.approval) { full = obj.clean; bubble.innerHTML = formatChatText(full); }
-            if (obj.approval) {
-              full = obj.clean ?? full; bubble.innerHTML = formatChatText(full);
-              _APPROVALS.unshift(obj.approval); turnMeta.approval = obj.approval;
+            if (obj.clean !== undefined) {
+              const r = replyAt(obj.msg);
+              r.bubble.innerHTML = formatChatText(obj.clean);
+              if (r.bubble === bubble) full = obj.clean;
             }
+            if (obj.approval) { _APPROVALS.unshift(obj.approval); replyAt(obj.msg).meta.approval = obj.approval; }
             if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
               // one on a fresh line so thoughts don't run together ("week.14").
               if (pendingBreak && full && !full.endsWith("\n")) full += "\n";
               pendingBreak = false;
-              full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*APPROVAL:.*$/gm, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
+              full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*(?:APPROVAL|CONSULT)\b.*$/gim, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
             }
             if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
           } catch {}
@@ -4064,10 +4083,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       finalizeSteps();                // turn the live steps line into a quiet summary
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
-      decorateReply(bubble.parentElement, turnMeta);
+      replies.forEach(r => decorateReply(r.bubble.parentElement, r.meta));
       // You approved and the teammate saved it: show you the result.
-      if (extra?.approval === "approved" && turnMeta.deliverables?.length) openDeliverable(turnMeta.deliverables[0]);
-      if (hadPending || turnMeta.approval) renderRail().catch(() => {});   // inbox count
+      const saved = replies.flatMap(r => r.meta.deliverables || []);
+      if (extra?.approval === "approved" && saved.length) openDeliverable(saved[0]);
+      if (hadPending || replies.some(r => r.meta.approval)) renderRail().catch(() => {});   // inbox count
     }
   }
 

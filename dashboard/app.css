@@ -921,3 +921,5 @@
   .file-row{cursor:pointer}
   .file-row .t small{display:block;margin-top:3px}
   .flash{box-shadow:0 0 0 3px var(--sky)!important;transition:box-shadow .3s}
+  /* a teammate pulled into the thread by another bot */
+  .msg.ai.consulted{border-left:2px solid var(--gline);padding-left:12px;margin-left:14px}

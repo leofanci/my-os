@@ -588,7 +588,7 @@ def _tag_gate_message(suggest, team=None):
 
 
 def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fresh=False,
-               members=None):
+               members=None, readonly=False):
     """Persona for the speaking bot. Full card (job, team, memory) when the
     session is fresh or the speaker changed; a one-line marker otherwise."""
     b = team.get(bot_id) if team else None
@@ -614,8 +614,9 @@ def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fres
         lines.append(f"Your memory ({where}):\n{mem}" if mem
                      else f"Your memory ({where}): empty")
         scope = f" --project {project_slug}" if project_slug else ""
-        lines.append("When the user states a lasting decision or preference, save one line: "
-                     f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
+        if not readonly:
+            lines.append("When the user states a lasting decision or preference, save one line: "
+                         f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
     else:
         lines.append(f"(speaking as @{b.handle})")
     if handoff_from and team.get(handoff_from):
@@ -739,6 +740,74 @@ def _chat_workspace(rec):
         return room[2:]
     scope = rec.get("scope")
     return scope[0] if scope else bots.HQ
+
+
+# --------------------------------------------------------------------------- #
+# Teammates pulling each other in (Slack-style). The lead ends a message with
+# `CONSULT @handle: question`; that teammate answers once in its own fresh,
+# read-only session and the lead continues. Co-tagged bots add their view
+# after the lead. At most MAX_TEAMMATES extra runs per message, no chains.
+# --------------------------------------------------------------------------- #
+MAX_TEAMMATES = 2
+_CONSULT_RE = re.compile(r"^[ \t>*_-]*CONSULT[*_ \t]+@([a-z][a-z0-9-]*)[*_ \t]*:[ \t]*(.+?)[ \t*_]*$",
+                         re.M | re.I)
+_EXTRA = {"sess": None}  # the teammate run in flight (Stop kills it too)
+
+
+def _bot_info(team, bot_id):
+    b = team.get(bot_id)
+    return {"id": b.id, "name": b.name, "handle": b.handle, "icon": b.icon}
+
+
+def _extract_consults(text, team):
+    """(text without CONSULT lines, [(bot_id, question)] for active teammates)."""
+    handles = {b.handle: b.id for b in team.bots.values() if b.active}
+    asks = [(handles[h.lower()], q.strip()) for h, q in _CONSULT_RE.findall(text or "")
+            if h.lower() in handles]
+    return _CONSULT_RE.sub("", text or "").rstrip(), asks
+
+
+def _plan_teammates(team, lead, handoff_from, user_msg, asks):
+    """[(bot_id, question, asked_by)]: the lead's consults, then co-tagged bots."""
+    out, seen = [], {lead}
+    for b2, q in asks:
+        if b2 not in seen:
+            out.append((b2, q, lead))
+            seen.add(b2)
+    for b2 in team.mentioned_all(user_msg):
+        if b2 not in seen and b2 != handoff_from:
+            out.append((b2, user_msg, None))
+            seen.add(b2)
+    return out[:MAX_TEAMMATES]
+
+
+def _teammate_prompt(team, bot_id, asked_by, question, lead_said, projects, project_slug, skill):
+    parts = []
+    try:
+        parts.append(state_snapshot(projects, only=project_slug))
+    except Exception:  # noqa: BLE001
+        pass
+    parts.append(_bot_block(team, bot_id, None, project_slug, fresh=True, readonly=True))
+    if skill:
+        body = _load_skill_body(skill)
+        if body:
+            parts.append(f"## Active skill: {skill}\n{body}")
+    lead = team.get(asked_by) if asked_by else None
+    ask = (f"## You were asked\n@{lead.handle} ({lead.name}) asks you: {question}\n" if lead
+           else f"## You were tagged\nThe user asked the team: {question}\n")
+    if not lead and lead_said:
+        ask += f"Your teammate already answered: {lead_said[:800]}\nAdd only what's new from your side.\n"
+    ask += ("Reply in 1-6 short lines, facts first. You are read-only right now: say what you'd "
+            "save and let them decide. Don't consult anyone.")
+    parts.append(ask)
+    return "\n\n".join(parts)
+
+
+def _followup_prompt(team, answers):
+    lines = [f"@{team.get(b).handle} ({team.get(b).name}): {text.strip() or '(no answer)'}"
+             for b, text in answers]
+    return ("## Your teammates answered\n" + "\n".join(lines)
+            + "\n\nContinue for the user in a few short lines. Don't consult again this turn.")
 
 
 def _resolve_workspace(ws, projects):
@@ -1117,9 +1186,51 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode())
             self.wfile.flush()
 
-        reply, done, meta = [], {}, {"model": model}
-        # What the bot hands over this turn = files of its company that change.
+        # This turn's replies in order: the lead, then any teammates it pulled in
+        # (or that were co-tagged), then the lead's follow-up.
+        msgs = [{"bot": bot_id, "content": ""}]
+        # What the team hands over this turn = files of its company that change.
         files_before = deliverables.snapshot(ROOT, ws) if project_record else None
+        web_domains = chat_session.user_web_domains(user_msg)
+
+        def run(s_, prompt_, model_, web_, msg, **kw):
+            """Stream one bot run into `msg` (content + usage)."""
+            parts, fin = [], {}
+            for kind, payload in s_.ask(prompt_, with_web=web_, model=model_,
+                                        web_domains=web_domains, **kw):
+                if kind == "delta":
+                    parts.append(payload)
+                    msg["content"] = "".join(parts)
+                    emit({"delta": payload})
+                elif kind == "tool":
+                    emit({"tool": payload})
+                elif kind == "error":
+                    emit({"error": payload})
+                elif kind == "done":
+                    fin = payload or {}
+            msg.update(tokens=fin.get("tokens") or None, cost=fin.get("cost"), model=model_)
+            if msg["tokens"] or msg["cost"]:
+                emit({"usage": {"tokens": msg["tokens"], "cost": msg["cost"], "model": model_}})
+            return msg["content"]
+
+        def run_teammate(b2, question, asked_by, msg):
+            """A teammate answers once, read-only, in its own fresh session."""
+            c = chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL)
+            c.workspace, c.deny_dirs, c.readonly = ws, sess.deny_dirs, True
+            own = team.skills_of(b2)
+            c_skill = _suggest_skill(question, among=own)
+            c_skill = c_skill if c_skill in own else None
+            c_web = _needs_web(question, c_skill)
+            c_model = (chat_session.ESCALATED_MODEL if (c_skill or c_web)
+                       else chat_session.CHAT_MODEL)
+            prompt = _teammate_prompt(team, b2, asked_by, question, msgs[0]["content"],
+                                      projects, project_slug or None, c_skill)
+            _EXTRA["sess"] = c
+            try:
+                return run(c, prompt, c_model, c_web, msg)
+            finally:
+                _EXTRA["sess"] = None
+
         try:
             # Tell the client which saved chat this turn belongs to (a scope
             # change or first turn may have started a new one).
@@ -1128,40 +1239,44 @@ class Handler(BaseHTTPRequestHandler):
                 emit({"chat_id": sess.session_id,
                       "title": (saved or {}).get("title") or chat_store.title_from(user_msg),
                       "project": project_scope[0] if project_scope else None})
-            b = team.get(bot_id)
-            emit({"bot": {"id": b.id, "name": b.name, "handle": b.handle, "icon": b.icon,
-                          "skill": skill, "handoff_from": handoff_from}})
-            for kind, payload in sess.ask(
-                    text, with_web=with_web, model=model,
-                    workspace_dir=(workspace_dir if file_search_mode else None),
-                    file_search_mode=file_search_mode,
-                    web_domains=chat_session.user_web_domains(user_msg)):
-                if kind == "delta":
-                    reply.append(payload)
-                    emit({"delta": payload})
-                elif kind == "tool":
-                    emit({"tool": payload})
-                elif kind == "error":
-                    emit({"error": payload})
-                elif kind == "done":
-                    done = payload or {}
+            emit({"bot": {**_bot_info(team, bot_id), "skill": skill, "handoff_from": handoff_from}})
+            lead_text = run(sess, text, model, with_web, msgs[0],
+                            workspace_dir=(workspace_dir if file_search_mode else None),
+                            file_search_mode=file_search_mode)
+            lead_text, asks = _extract_consults(lead_text, team)
+            if asks:
+                msgs[0]["content"] = lead_text
+                emit({"clean": lead_text, "msg": 0})
+            answers = []
+            for b2, question, asked_by in _plan_teammates(team, bot_id, handoff_from, user_msg, asks):
+                emit({"msg_start": {**_bot_info(team, b2), "asked_by": asked_by,
+                                    "question": question if asked_by else None}})
+                m2 = {"bot": b2, "content": "", "asked_by": asked_by or "user"}
+                msgs.append(m2)
+                answers.append((b2, run_teammate(b2, question, asked_by, m2)))
+            if asks and answers:
+                emit({"msg_start": {**_bot_info(team, bot_id), "followup": True}})
+                m3 = {"bot": bot_id, "content": ""}
+                msgs.append(m3)
+                run(sess, _followup_prompt(team, answers), model, with_web, m3)
+            last = len(msgs) - 1
+            lead_i = max(i for i, m in enumerate(msgs) if m["bot"] == bot_id and not m.get("asked_by"))
             if files_before is not None:
                 handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
                 if handed:
-                    meta["deliverables"] = handed
-                    emit({"deliverables": handed})
-            meta.update(tokens=done.get("tokens") or None, cost=done.get("cost"))
-            if meta["tokens"] or meta["cost"]:
-                emit({"usage": {"tokens": meta["tokens"], "cost": meta["cost"], "model": model}})
-            clean, summary = approvals.extract("".join(reply))
+                    msgs[last]["deliverables"] = handed
+                    emit({"deliverables": handed, "msg": last})
+            clean, summary = approvals.extract(msgs[lead_i]["content"])
             if summary and not may_write:
-                reply = [clean]  # stray marker on a chat-only turn: drop it, no buttons
-                emit({"clean": clean})
+                msgs[lead_i]["content"] = clean  # stray marker on a chat-only turn: no buttons
+                emit({"clean": clean, "msg": lead_i})
             elif summary and isinstance(getattr(sess, "session_id", None), str):
                 rec = approvals.add(ROOT, ws=ws, room=(room or {}).get("id"), chat=sess.session_id,
                                     bot=bot_id, summary=summary)
-                reply, meta["approval"] = [clean], rec["id"]
-                emit({"approval": rec, "clean": clean})
+                msgs[lead_i].update(content=clean, approval=rec["id"])
+                emit({"approval": rec, "clean": clean, "msg": lead_i})
+            for m in msgs[1:]:  # a teammate never asks for approval or consults on its own
+                m["content"] = _extract_consults(approvals.extract(m["content"])[0], team)[0]
         except (BrokenPipeError, ConnectionResetError):
             pass  # client stopped/closed; still save what streamed so far
         except Exception:  # noqa: BLE001
@@ -1170,8 +1285,12 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
-                    chat_store.record_turn(sess, project_scope, user_msg, "".join(reply),
-                                           bot=bot_id, room=(room or {}).get("id"), meta=meta)
+                    head = msgs[0]
+                    chat_store.record_turn(
+                        sess, project_scope, user_msg, head["content"], bot=bot_id,
+                        room=(room or {}).get("id"),
+                        meta={k: v for k, v in head.items() if k not in ("bot", "content")},
+                        extra=[m for m in msgs[1:] if m.get("content")])
                 except (OSError, ValueError):
                     traceback.print_exc()
             try:
@@ -1755,6 +1874,8 @@ class Handler(BaseHTTPRequestHandler):
                 # message resumes the same context. Unlike chat-reset.
                 if _CHAT is not None:
                     _CHAT.close()
+                if _EXTRA["sess"] is not None:
+                    _EXTRA["sess"].close()
                 return self._send(200, {"ok": True})
             if path == "/api/chat-reset":
                 # New chat: drop the active session; saved chats are untouched.
