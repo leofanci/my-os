@@ -170,8 +170,9 @@ function renderMemoBody(b,type){
   return html;
 }
 
+// Chat text: paragraphs and lists, with @mentions as accent-colored names.
 function formatChatText(raw){
-  return formatBlocks(raw);
+  return formatBlocks(raw).replace(/(^|[\s>(])@([a-z][a-z0-9-]*)/g, '$1<b class="mention">@$2</b>');
 }
 const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
 function toast(m,sticky){const t=$("#toast");t.textContent=m;t.style.opacity=1;clearTimeout(t._timer);if(!sticky)t._timer=setTimeout(()=>t.style.opacity=0,2400);}
@@ -549,9 +550,11 @@ function canvasProject(viewOnly=false){
 
 // Canvas bar: a breadcrumb of what is open, Files, and a More menu holding the
 // project's sections and profiles.
+// kind: [icon, Files filter label, one item's label]
 const KIND_META = {
-  memo: ["doc", "Memos"], experiment: ["flask", "Experiments"], doc: ["book", "Docs"], roadmap: ["map", "Roadmap"],
-  plan: ["route", "Go-to-market"], content: ["calendar", "Content"], brief: ["compose", "Post briefs"], voice: ["mic", "Voice"],
+  memo: ["doc", "Memos", "Memo"], experiment: ["flask", "Experiments", "Experiment"], doc: ["book", "Docs", "Doc"],
+  roadmap: ["map", "Roadmap", "Roadmap"], plan: ["route", "Go-to-market", "Go-to-market plan"],
+  content: ["calendar", "Content", "Content plan"], brief: ["compose", "Post briefs", "Post brief"], voice: ["mic", "Voice", "Voice"],
 };
 const VIEW_LABEL = { files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
 const profileName = slug => _TREE.flatMap(p => p.profiles).find(x => x.slug === slug)?.name || slug;
@@ -3374,7 +3377,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   } catch {}
   activeRoomId = wsRooms[_WS] || `${_WS}/general`;
   const roomTitleEl = document.getElementById("room-title");
-  const roomMembersEl = document.getElementById("room-members");
   const roomEditBtn = document.getElementById("room-edit");
 
   function paintRoomHeader(){
@@ -3382,10 +3384,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!room) { roomTitleEl.textContent = "# general"; return; }
     const lead = botById(room.lead);
     roomTitleEl.textContent = room.kind === "dm" ? room.name : `# ${room.name}`;
-    roomMembersEl.innerHTML = room.kind === "dm" ? "" : room.members.map(id => {
-      const b = botById(id);
-      return b ? `<span title="${esc(b.name)}${id === room.lead ? " (lead)" : ""}">${botAvatar(b, id === room.lead ? "lead" : "")}</span>` : "";
-    }).join("");
     roomEditBtn.hidden = room.kind !== "topic";
     input.placeholder = room.kind === "dm"
       ? `Message ${room.name}…`
@@ -3457,8 +3455,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!msgs || !msgs.length) return showWelcome();
     msgs.forEach(m => {
       history.push(m);
-      const b = addMsg(m.role, m.content, m.bot, m.asked_by);
-      if (m.role === "assistant") decorateReply(b.parentElement, m);
+      const b = addMsg(m.role, m.content, m.bot, m.asked_by, m.ts);
+      if (m.role === "assistant") decorateReply(b.closest(".msg"), m);
     });
     stream.scrollTop = stream.scrollHeight;
   }
@@ -3793,64 +3791,72 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     else el.textContent = text;
   }
 
+  // Sender line of a message row: avatar, bold name, a muted note, the time.
+  function paintSender(div, { avatar, name, note = "" }){
+    div.querySelector(":scope > .av").outerHTML = avatar;
+    div.querySelector(".mh-name").textContent = name;
+    div.querySelector(".mh-note").textContent = note;
+  }
+  function clock(ts){ return ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""; }
+
   // askedBy: a teammate pulled this bot in ("asked by @cmo"); "user" = co-tagged.
   function botLabel(div, bot, handoffFrom, askedBy){
     const b = typeof bot === "string" ? botById(bot) : bot;
     if (!b) return;
-    let lab = div.querySelector(".bot-label");
-    if (!lab) { lab = document.createElement("div"); lab.className = "bot-label"; div.prepend(lab); }
     const from = handoffFrom ? botById(handoffFrom) : null;
     const asker = askedBy && askedBy !== "user" ? botById(askedBy) : null;
-    lab.innerHTML = `${botAvatar(b)}<b>${esc(b.name)}</b>`
-      + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "")
-      + (asker ? `<span class="bot-handoff">asked by @${esc(asker.handle)}</span>` : "");
+    paintSender(div, { avatar: botAvatar(b), name: b.name,
+      note: asker ? `asked by @${asker.handle}` : from ? `from @${from.handle}` : "" });
     div.classList.toggle("consulted", !!asker);
   }
 
-  // Usage line + approval bar under a bot reply.
+  // Under a bot reply: what it saved (one slim row each) and the approval it
+  // asks for. Token use sits in the time's tooltip.
   function decorateReply(div, m){
-    div.querySelector(".msg-meta")?.remove();
-    div.querySelector(".approval-bar")?.remove();
+    const main = div.querySelector(".msg-main");
+    main.querySelector(".deliv-list")?.remove();
+    main.querySelector(".approval-bar")?.remove();
     const usage = fmtUsage(m.tokens, m.cost);
-    if (usage) {
-      const meta = document.createElement("div");
-      meta.className = "msg-meta"; meta.textContent = usage; meta.title = "tokens · estimated cost";
-      div.appendChild(meta);
-    }
-    div.querySelector(".deliv-list")?.remove();
+    div.querySelector(".mh time").title = usage ? `${usage} (tokens · estimated cost)` : "";
+    const botId = typeof m.bot === "object" ? m.bot?.id : m.bot;
     if (m.deliverables?.length) {
       const box = document.createElement("div");
       box.className = "deliv-list";
-      box.innerHTML = m.deliverables.map((d, i) => `<button class="deliv" data-deliv="${i}">
+      box.innerHTML = m.deliverables.map((d, i) => `<div class="deliv-row">
           <span class="deliv-ic">${icon(KIND_META[d.kind]?.[0] || "doc")}</span>
-          <span class="deliv-t">${esc(d.label)}${d.status ? `<small>${esc(d.status)}</small>` : ""}</span>
-          <span class="deliv-open">Open</span></button>`).join("");
-      box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () => openDeliverable(m.deliverables[+b.dataset.deliv]));
-      div.appendChild(box);
+          <span class="deliv-t"><b>${esc(d.label)}</b><small>${esc([KIND_META[d.kind]?.[2] || d.kind, d.profile && profileName(d.profile)].filter(Boolean).join(" · "))}</small></span>
+          ${d.status ? `<span class="tag">${esc(d.status)}</span>` : ""}
+          <button class="link-btn" data-deliv="${i}">Open in canvas</button></div>`).join("");
+      box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () =>
+        openDeliverable({ ...m.deliverables[+b.dataset.deliv], bot: botId }));
+      main.appendChild(box);
     }
     if (m.approval && _APPROVALS.some(a => a.id === (m.approval.id || m.approval))) {
       const a = typeof m.approval === "object" ? m.approval : _APPROVALS.find(x => x.id === m.approval);
       const bar = document.createElement("div");
       bar.className = "approval-bar";
-      bar.innerHTML = `<span class="ap-sum">${icon("check")} ${esc(a.summary)}</span>
-        <button class="btn primary" data-ap="approved">Approve</button>
-        <button class="btn" data-ap="edit">Edit</button>
-        <button class="btn" data-ap="rejected">No</button>`;
+      bar.innerHTML = `<span class="ap-sum">${esc(a.summary)}</span>
+        <button class="btn sm primary" data-ap="approved">Approve</button>
+        <button class="btn sm" data-ap="edit">Edit first</button>
+        <button class="btn sm ghost" data-ap="rejected">Skip</button>`;
       bar.querySelectorAll("[data-ap]").forEach(b => b.onclick = () => {
         if (b.dataset.ap === "edit") { input.value = "Change before saving: "; input.focus(); input.dispatchEvent(new Event("input")); return; }
         bar.remove();
         send(b.dataset.ap === "approved" ? "Yes, approved." : "No, skip it.", { approval: b.dataset.ap });
       });
-      div.appendChild(bar);
+      main.appendChild(bar);
     }
   }
 
-  function addMsg(role, text, bot, askedBy){
+  // One left-aligned row per message. Returns the body element (.b), which
+  // streaming fills; the row is its closest(".msg").
+  function addMsg(role, text, bot, askedBy, ts){
     const div = document.createElement("div");
-    const uiRole = role === "user" ? "me" : "ai";
-    div.className = "msg " + uiRole;
-    div.innerHTML = `<div class="b"></div>`;
-    if (bot) botLabel(div, bot, null, askedBy);
+    div.className = "msg " + (role === "user" ? "me" : "ai");
+    div.innerHTML = `<span class="av"></span><div class="msg-main"><div class="mh"><b class="mh-name"></b><span class="mh-note"></span><time></time></div><div class="b"></div></div>`;
+    div.querySelector("time").textContent = clock(ts);
+    if (role === "user") paintSender(div, { avatar: `<span class="av">Y</span>`, name: "You" });
+    else botLabel(div, bot || roomById(activeRoomId)?.lead || "cos", null, askedBy);
     const bubble = div.querySelector(".b");
     setMsgContent(bubble, role, text);
     stream.appendChild(div);
@@ -3858,9 +3864,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return bubble;
   }
 
-  // Tool activity for the in-flight turn collapses into ONE quiet line that
-  // sits ABOVE the answer (never a trailing stack of Bash/Read cards). It ticks
-  // live while working, then becomes a click-to-expand "N steps" summary.
+  // While a reply streams, one quiet "working… N steps" line sits under the
+  // bot's name; it goes away when the reply is complete.
   let stepLabels = [], stepEl = null, stepAnchor = null;
 
   function startTurnSteps(anchor){ stepLabels = []; stepEl = null; stepAnchor = anchor; }
@@ -3870,31 +3875,17 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!stepEl){
       stepEl = document.createElement("div");
       stepEl.className = "tool-chip tool-summary";
-      stream.insertBefore(stepEl, stepAnchor);   // keep it above the free-text answer
+      stepAnchor.before(stepEl);   // above the answer text, inside its row
     }
     const n = stepLabels.length;
     stepEl.textContent = `working… ${n} step${n > 1 ? "s" : ""}`;
+    stepEl.title = stepLabels.join("  ·  ");
     stream.scrollTop = stream.scrollHeight;
   }
 
   function finalizeSteps(){
-    if (!stepEl) return;
-    const labels = stepLabels.slice();
-    let detail = null;
-    const paint = () => stepEl.textContent = detail
-      ? "hide steps"
-      : `${labels.length} step${labels.length > 1 ? "s" : ""}`;
-    stepEl.onclick = () => {
-      if (detail) { detail.remove(); detail = null; }
-      else {
-        detail = document.createElement("div");
-        detail.className = "tool-detail";
-        detail.textContent = labels.join("  ·  ");
-        stepEl.after(detail);
-      }
-      paint();
-    };
-    paint();
+    if (stepEl) stepEl.remove();
+    stepEl = null; stepLabels = [];
   }
 
   // Token-lean context: inject heavy profile/post bodies only when the turn
@@ -4162,13 +4153,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (typeof override !== "string") input.value = "";
     const hadPending = _APPROVALS.some(a => a.chat === activeChatId);
     stream.querySelectorAll(".approval-bar").forEach(el => el.remove());   // any reply answers it
-    input.style.height = "56px";
+    input.style.height = "";
     statusEl.textContent = "thinking…";
     sendBtn.disabled = true;
 
     const fileNote = attachedFiles.length ? ` [+${attachedFiles.length} file${attachedFiles.length>1?"s":""}]` : "";
     history.push({ role: "user", content: text });
-    const userEl = addMsg("user", text + fileNote).parentElement;
+    const userEl = addMsg("user", text + fileNote, null, null, Date.now() / 1000).closest(".msg");
 
     const projectSlug = projectForTurn(text);
     const ctx = await buildContext(text);
@@ -4182,12 +4173,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       if (bubble) {
         finalizeSteps();
         if (full) history.push({ role: "assistant", content: full });
-        decorateReply(bubble.parentElement, turnMeta);
+        decorateReply(bubble.closest(".msg"), turnMeta);
+        bubble.closest(".msg").classList.remove("streaming");
       }
-      bubble = addMsg("assistant", ""); bubble.innerHTML = ""; full = ""; turnMeta = {};
+      bubble = addMsg("assistant", "", null, null, Date.now() / 1000); bubble.innerHTML = ""; full = ""; turnMeta = {};
+      bubble.closest(".msg").classList.add("streaming");   // typing dots until text arrives
       replies.push({ bubble, meta: turnMeta });
-      startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
-      if (info) botLabel(bubble.parentElement, info, null, info.asked_by || null);
+      startTurnSteps(bubble);
+      if (info) { botLabel(bubble.closest(".msg"), info, null, info.asked_by || null); turnMeta.bot = info.id; }
     };
     startReply(null);
     const replyAt = i => (Number.isInteger(i) && replies[i]) || replies[replies.length - 1];
@@ -4238,7 +4231,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               }
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
-            if (obj.bot) botLabel(bubble.parentElement, obj.bot, obj.bot.handoff_from);
+            if (obj.bot) { botLabel(bubble.closest(".msg"), obj.bot, obj.bot.handoff_from); turnMeta.bot = obj.bot.id; }
             if (obj.msg_start) { startReply(obj.msg_start); pendingBreak = false; }
             if (obj.deliverables) replyAt(obj.msg).meta.deliverables = obj.deliverables;
             if (obj.usage) {
@@ -4277,10 +4270,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       }
     } finally {
       chatAbort = null;
-      finalizeSteps();                // turn the live steps line into a quiet summary
+      finalizeSteps();                // the reply is complete: the steps line goes
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
-      replies.forEach(r => decorateReply(r.bubble.parentElement, r.meta));
+      replies.forEach(r => { const row = r.bubble.closest(".msg"); row.classList.remove("streaming"); decorateReply(row, r.meta); });
       // You approved and the teammate saved it: show you the result.
       const saved = replies.flatMap(r => r.meta.deliverables || []);
       if (extra?.approval === "approved" && saved.length) openDeliverable(saved[0]);
