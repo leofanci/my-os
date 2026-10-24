@@ -89,10 +89,6 @@
   --ui-id-slate-fg: #3A4654;
   --ui-id-rose-bg: #F6E0E7;
   --ui-id-rose-fg: #8E2A4B;
-  --ui-project-color-1: var(--ui-id-ocean-fg);
-  --ui-project-color-2: var(--ui-id-clay-fg);
-  --ui-project-color-3: var(--ui-id-plum-fg);
-  --ui-project-color-4: var(--ui-id-ochre-fg);
 
   /* Typography (compact). Newsreader is for canvas document titles only. */
   --ui-font-sans: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -144,7 +140,6 @@
   --ui-radius-panel: 10px;
   --ui-radius-pill: 999px;
   --ui-radius-avatar-bot: 7px;
-  --ui-shadow-flat: none;
   --ui-shadow-raise: 0 1px 2px rgba(20, 22, 28, .05);
   --ui-shadow-sticky: 0 1px 2px rgba(20, 22, 28, .08);
   --ui-shadow-menu: 0 10px 28px -6px rgba(20, 22, 28, .22), 0 0 0 1px rgba(20, 22, 28, .06);
@@ -155,32 +150,26 @@
   --ui-control-dense: 24px;
   --ui-control-default: 28px;
   --ui-control-input: 32px;
-  --ui-control-prominent: 36px;
   --ui-control-touch: 44px;
   --ui-icon: 16px;
   --ui-avatar: 24px;
   --ui-scrollbar-size: 8px;
   --ui-rail-row: 26px;
-  --ui-project-dot: 7px;
 
   /* Shell and reading geometry. */
   --ws-bar-w: 56px;
   --canvas-w: 540px;
   --ui-titlebar-height: 28px;
   --ui-shell-nav: 232px;
-  --ui-shell-nav-compact: 216px;
   --ui-shell-nav-wide: 248px;
   --ui-shell-assistant-min: 320px;
   /* The canvas may widen until the chat would drop below this. */
   --ui-shell-center-min: 440px;
-  /* Panes run edge to edge with 1px dividers. */
-  --ui-shell-gap: 0px;
   --ui-page-padding: 20px;
   --ui-page-padding-wide: 24px;
   --ui-reading-width: 760px;
   --ui-doc-width: 680px;
   --ui-form-width: 640px;
-  --ui-profile-width: 780px;
   --ui-header-height: 52px;
   --ui-terminal-collapsed: 32px;
   --ui-terminal-open: 360px;
@@ -195,50 +184,6 @@
   --ui-motion-fast: 120ms;
   --ui-motion-standard: 160ms;
   --ui-ease-standard: cubic-bezier(.2, 0, 0, 1);
-
-  /* Compatibility aliases for existing component code. */
-  --canvas: var(--ui-color-canvas);
-  --ink: var(--ui-color-text);
-  --ink2: var(--ui-color-text-secondary);
-  --dim: var(--ui-color-text-muted);
-  --navy: var(--ui-color-accent);
-  --navy-soft: var(--ui-color-accent-soft);
-  --graphite: var(--ui-color-text-secondary);
-  --graphite-soft: var(--ui-color-neutral-soft);
-  --sky: var(--ui-color-accent);
-  --sky-soft: var(--ui-color-accent-soft);
-  --teal: var(--ui-color-success);
-  --teal-soft: var(--ui-color-success-soft);
-  --amber: var(--ui-color-warning);
-  --amber-soft: var(--ui-color-warning-soft);
-  --ok: var(--ui-color-success);
-  --ok-soft: var(--ui-color-success-soft);
-  --glass: var(--ui-color-surface);
-  --glass2: var(--ui-color-surface);
-  --panel-chat: var(--ui-color-surface);
-  --gline: var(--ui-color-border-subtle);
-  --hair: var(--ui-color-border);
-  --shadow: var(--ui-shadow-menu);
-  --r-panel: var(--ui-radius-panel);
-  --r-card: var(--ui-radius-card);
-  --r-sm: var(--ui-radius-control);
-  --r-pill: var(--ui-radius-pill);
-  --disp: var(--ui-font-sans);
-  --body: var(--ui-font-sans);
-  --s-idea: var(--ui-status-idea);
-  --s-draft: var(--ui-status-draft);
-  --s-ready: var(--ui-status-ready);
-  --s-published: var(--ui-status-published);
-  --s-archived: var(--ui-status-archived);
-  --k-post: var(--ui-kind-post);
-  --k-activity: var(--ui-kind-activity);
-  --k-activity-soft: var(--ui-kind-activity-soft);
-  --k-experiment: var(--ui-kind-experiment);
-  --k-experiment-soft: var(--ui-kind-experiment-soft);
-  --k-milestone: var(--ui-kind-milestone);
-  --k-milestone-soft: var(--ui-kind-milestone-soft);
-  --k-feature: var(--ui-kind-feature);
-  --k-feature-soft: var(--ui-kind-feature-soft);
 }
 
 /* Dark theme: OS setting unless forced light; the same values again when forced dark. */

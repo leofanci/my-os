@@ -218,3 +218,10 @@ def test_sprite_and_no_glyph_icons_in_shell():
     assert '<symbol id="i-inbox"' in html
     for glyph in ("✔", "☰", "◆", "▦", "▣", "⊕", "📄", "⚗", "📘", "🗓"):
         assert glyph not in html and glyph not in js, glyph
+
+
+def test_no_hardcoded_colors_in_rendered_markup():
+    js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
+    styles = re.findall(r'style="([^"]*)"', js)
+    colored = [s for s in styles if re.search(r"#[0-9A-Fa-f]{3,6}\b|rgba?\(", s)]
+    assert colored == [], colored[:5]

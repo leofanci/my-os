@@ -202,7 +202,7 @@ body.chat-resizing{user-select:none;cursor:ew-resize}
 .cn-more .menu{right:0;top:calc(100% + var(--ui-space-1))}
 .main{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0;background:var(--ui-color-canvas)}
 .topbar{display:flex;align-items:center;gap:var(--ui-space-2-5);min-height:var(--ui-header-height);padding:var(--ui-space-3-5) var(--ui-page-padding);border-bottom:1px solid var(--ui-color-border-subtle)}
-.topbar>div:last-child,.topbar-end{margin-left:auto;display:flex;align-items:center;gap:var(--ui-space-2);flex-wrap:wrap;justify-content:flex-end}
+.topbar>div+div,.topbar-end{margin-left:auto;display:flex;align-items:center;gap:var(--ui-space-2);flex-wrap:wrap;justify-content:flex-end}
 .crumbs{font-size:var(--ui-type-caption);line-height:var(--ui-line-control);color:var(--ui-color-text-muted)}
 .crumbs b{color:var(--ui-color-text-secondary)}
 .crumbs .bk{color:var(--ui-color-accent);cursor:pointer}
@@ -599,6 +599,38 @@ summary.pf-head::-webkit-details-marker{display:none}
 .setup-platform{width:auto;min-height:var(--ui-control-default)}
 .setup-text{min-height:var(--ui-editor-min-height)}
 .form-view #delProfBtn{margin-right:var(--ui-space-2)}
+
+/* ---------- shared text and tones (forms, setup, briefs, calendar) ---------- */
+.eyebrow{margin:0 0 var(--ui-space-2-5);font:var(--ui-weight-semibold) var(--ui-type-label)/1.3 var(--ui-font-sans);color:var(--ui-color-text-muted)}
+.help{margin:0 0 var(--ui-space-3);color:var(--ui-color-text-muted);font-size:var(--ui-type-label);line-height:1.5}
+.text-link{color:var(--ui-color-accent);cursor:pointer}
+.error-text{color:var(--ui-color-danger);font-size:var(--ui-type-control)}
+.accent-text{color:var(--ui-color-accent);font-size:var(--ui-type-control);line-height:1.6}
+.section-split{margin-top:var(--ui-space-6);padding-top:var(--ui-space-5);border-top:1px solid var(--ui-color-border)}
+.pre-box{padding:var(--ui-space-2) var(--ui-space-3);border:1px solid var(--ui-color-border-subtle);border-radius:var(--ui-radius-card);background:var(--ui-color-surface-subtle);
+  font-size:var(--ui-type-control);line-height:1.55;white-space:pre-wrap}
+.slide-n{flex:none;min-width:20px;padding-top:var(--ui-space-2);text-align:right;color:var(--ui-color-text-muted);font:var(--ui-weight-semibold) var(--ui-type-label)/1.5 var(--ui-font-sans)}
+.code-editor,.doc-editor{width:100%;min-height:320px;padding:var(--ui-space-3) var(--ui-space-3-5);border:1px solid var(--ui-color-border-strong);border-radius:var(--ui-radius-card);
+  background:var(--ui-color-surface);color:var(--ui-color-text);resize:vertical}
+.code-editor{font:var(--ui-type-label)/1.6 var(--ui-font-mono)}
+.doc-editor{font:var(--ui-type-body)/1.65 var(--ui-font-sans)}
+.code-editor:focus,.doc-editor:focus{outline:none;border-color:var(--ui-color-accent);box-shadow:0 0 0 3px var(--ui-color-accent-soft)}
+.postcard .pc-top .when{margin-left:auto}
+/* tone: one kind or status color for stripes, icon tiles, tags and legend dots */
+.tone-post{--tone:var(--ui-kind-post);--tone-soft:var(--ui-color-accent-soft)}
+.tone-activity{--tone:var(--ui-kind-activity);--tone-soft:var(--ui-kind-activity-soft)}
+.tone-experiment{--tone:var(--ui-kind-experiment);--tone-soft:var(--ui-kind-experiment-soft)}
+.tone-milestone{--tone:var(--ui-kind-milestone);--tone-soft:var(--ui-kind-milestone-soft)}
+.tone-feature{--tone:var(--ui-kind-feature);--tone-soft:var(--ui-kind-feature-soft)}
+.tone-idea{--tone:var(--ui-status-idea);--tone-soft:var(--ui-status-idea-soft)}
+.tone-draft{--tone:var(--ui-status-draft);--tone-soft:var(--ui-status-draft-soft)}
+.tone-ready{--tone:var(--ui-status-ready);--tone-soft:var(--ui-status-ready-soft)}
+.tone-published{--tone:var(--ui-status-published);--tone-soft:var(--ui-status-published-soft)}
+.tone-archived{--tone:var(--ui-status-archived);--tone-soft:var(--ui-status-archived-soft)}
+.plat[class*="tone-"]{background:var(--tone-soft);color:var(--tone)}
+.arow .stripe{background:var(--tone,var(--ui-color-text-muted))}
+.arow .ig{background:var(--tone-soft,var(--ui-color-neutral-soft));color:var(--tone,var(--ui-color-text-muted))}
+.cal-legend .lg i{background:var(--tone)}
 
 /* ---------- terminal ---------- */
 .term-panel{display:flex;flex-direction:column;flex:none;height:var(--ui-terminal-collapsed);overflow:hidden;border-top:1px solid var(--ui-color-border);background:var(--ui-color-surface);

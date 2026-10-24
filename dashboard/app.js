@@ -300,7 +300,7 @@ const fta = (name,val='',rows=5,extra='',osId=null) => `<textarea name="${name}"
 // channel picker: checkboxes from the profile's channels (no manual slug typing)
 const fchannels = (channels, selected=[]) => (channels && channels.length)
   ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${platIcon(c.platform)}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
-  : `<div style="font-size:12.5px;color:var(--dim)">No channels yet — add one in Setup first.</div>`;
+  : `<div class="help">No channels yet — add one in Setup first.</div>`;
 const checkedChannels = root => [...root.querySelectorAll(".chanbox:checked")].map(b=>b.value).join(",");
 const mentionBare = c => {
   if (c.osId && c.osId.includes(".")) return c.osId.split(".").pop();
@@ -310,7 +310,7 @@ const mentionBare = c => {
 function formVals(root){ const d={}; root.querySelectorAll("[name]").forEach(i=>d[i.name]=i.value); return d; }
 function pageHeader(title, crumb, btns='', pageId=null){
   const idBar = pageId ? `<div class="sec-meta" style="margin-top:5px">${sectionIdChip(pageId, {dropTabSuffix:true})}</div>` : "";
-  return `<div class="topbar"><div><div class="crumbs"><a class="bk" style="cursor:pointer;color:var(--navy)">← ${esc(crumb)}</a></div><h1 class="title">${esc(title)}</h1>${idBar}</div><div style="margin-left:auto;display:flex;gap:8px">${btns}</div></div>`;
+  return `<div class="topbar"><div><div class="crumbs"><a class="bk text-link">← ${esc(crumb)}</a></div><h1 class="title">${esc(title)}</h1>${idBar}</div><div style="margin-left:auto;display:flex;gap:8px">${btns}</div></div>`;
 }
 document.addEventListener("click", e=>{ if(e.target.classList.contains("bk")) history.back(); });
 
@@ -784,7 +784,7 @@ async function renderContent(tab = "posts"){
 // Files: everything this company's team has handed you, newest first.
 async function renderFiles(){
   const p = wsProject();
-  if (!p) { $("#main").innerHTML = `<div class="scroll"><div style="padding:30px;color:var(--dim)">Files live in each company's workspace.</div></div>`; return; }
+  if (!p) { $("#main").innerHTML = `<div class="scroll"><div class="empty">Files live in each company's workspace.</div></div>`; return; }
   const files = (await api(`/api/files?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).files || [];
   let filt = "all";
   const kinds = [...new Set(files.map(f => f.kind))];
@@ -794,7 +794,7 @@ async function renderFiles(){
         <span class="kind-ic">${icon(KIND_META[f.kind]?.[0] || "doc")}</span>
         <div class="t">${esc(f.label)}<small>${esc(KIND_META[f.kind]?.[1] || f.kind)}${f.status ? ` · ${esc(f.status)}` : ""} · ${relAge(f.updated)}</small></div>
         <button class="go">Open</button></div>`).join("")
-      : `<div style="padding:24px 4px;color:var(--dim)">Nothing here yet. Ask in #general, e.g. "@cmo draft our positioning".</div>`;
+      : `<div class="empty">Nothing here yet. Ask in #general, e.g. "@cmo draft our positioning".</div>`;
     $("#files-list").innerHTML = `<div class="filters" style="margin-bottom:12px">
         <button class="chip${filt === "all" ? " on" : ""}" data-kind="all">All <span class="n">${files.length}</span></button>
         ${kinds.map(k => `<button class="chip${filt === k ? " on" : ""}" data-kind="${esc(k)}">${esc(KIND_META[k]?.[1] || k)}</button>`).join("")}
@@ -810,7 +810,7 @@ async function renderFiles(){
 // Topic channel form (canvas): name, project, members, lead.
 function renderRoomForm(name){
   const existing = name ? roomById(`${_WS}/t-${name}`) : null;
-  if (name && !existing) { $("#main").innerHTML = `<div class="scroll"><div style="padding:30px;color:var(--dim)">Channel not found.</div></div>`; return; }
+  if (name && !existing) { $("#main").innerHTML = `<div class="scroll"><div class="empty">Channel not found.</div></div>`; return; }
   const active = _BOTS.filter(b => b.active);
   const members = new Set(existing ? existing.members : []);
   const lead = existing ? existing.lead : "cos";
@@ -927,9 +927,9 @@ async function renderNeeds(){
   const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today=iso(new Date());
   const rows=[];
-  const push=(prio,r,meta,go)=>{ const col=KIND_COLOR[r.kind]||"var(--dim)", ic=kindIcon(r.kind);
+  const push=(prio,r,meta,go)=>{
     const act = r.kind==="activity"&&r.status!=="done" ? "Mark done" : r.kind==="post" ? "Open post" : "Open";
-    rows.push({prio,stripe:col,icbg:`background:var(--panel-chat);color:${col}`,ic,t:r.title||r.kind,m:meta,act,go}); };
+    rows.push({prio,kind:r.kind,ic:kindIcon(r.kind),t:r.title||r.kind,m:meta,act,go}); };
   const goFor = r => r.kind==="post"&&r.ref_id ? ()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug})
     : r.kind==="activity" ? ()=>navigate("#/operations")
     : r.kind==="experiment" ? ()=>navigate(`#/project/${r.entity_slug}/experiments`)
@@ -941,8 +941,8 @@ async function renderNeeds(){
   rows.sort((a,b)=>a.prio-b.prio);
   const dateLabel=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
   const body = rows.length ? `<div class="list">${rows.map((r,i)=>`
-    <div class="arow" data-need="${i}"><span class="stripe" style="background:${r.stripe}"></span>
-      <span class="ig" style="${r.icbg}">${r.ic}</span>
+    <div class="arow tone-${esc(r.kind)}" data-need="${i}"><span class="stripe"></span>
+      <span class="ig">${r.ic}</span>
       <span class="body"><span class="t">${esc(r.t)}</span><span class="m">${esc(r.m)}</span></span>
       <span class="act">${esc(r.act)}</span></div>`).join("")}</div>`
     : `<div class="sec-empty"><p>Nothing planned for today.</p><p class="sec-hint">Posts, activities, and milestones scheduled for today show up here.</p></div>`;
@@ -967,7 +967,7 @@ async function renderOperations(){
         ${!done?`<button class="go" data-done-title="${esc(r.title)}" data-done-entity="${esc(r.entity_slug||"")}">Mark done</button>`:""}
         <button class="more" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>Edit</button>
       </div>`;
-    }).join("") : `<div style="padding:24px 4px;color:var(--dim)">Nothing here.</div>`;
+    }).join("") : `<div class="empty">Nothing here.</div>`;
     const active=items.filter(r=>r.status!=="done").length;
     $("#ops-list").innerHTML=`
       <div class="filters" style="margin-bottom:14px">
@@ -1029,7 +1029,7 @@ async function renderTeam(){
   };
   $("#main").innerHTML = `
     <div class="topbar"><div><div class="crumbs">${esc(wsById(_WS)?.name || "HQ")} · ${esc(_WS === "hq" ? "holding" : wsById(_WS)?.kind || "")}</div><h1 class="title">Team</h1></div></div>
-    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
+    <div class="scroll"><div class="help">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
   if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
   costs = await api(`/api/costs?ws=${encodeURIComponent(_WS)}`).catch(() => costs);
   draw();
@@ -1053,10 +1053,10 @@ async function renderApprovals(){
       <button class="go primary-go" data-ap-ok="${esc(a.id)}">Approve</button>
       <button class="more" data-ap-no="${esc(a.id)}">Dismiss</button>
     </div>`;
-  }).join("") : `<div style="padding:24px 4px;color:var(--dim)">Nothing waiting on you.</div>`;
+  }).join("") : `<div class="empty">Nothing waiting on you.</div>`;
   $("#main").innerHTML = `
     <div class="topbar"><div><div class="crumbs">${esc(_WS === "hq" ? "Every workspace" : wsById(_WS)?.name || "")}</div><h1 class="title">Approvals</h1></div></div>
-    <div class="scroll"><div style="padding:0 0 14px;color:var(--dim);font-size:12.5px">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it.</div><div class="rowc">${rows}</div></div>`;
+    <div class="scroll"><div class="help">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it.</div><div class="rowc">${rows}</div></div>`;
   const find = id => items.find(a => a.id === id);
   $("#main").querySelectorAll("[data-ap-go]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apGo)));
   $("#main").querySelectorAll("[data-ap-ok]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apOk), "approved"));
@@ -1514,7 +1514,7 @@ function strategyCard(slug, st){
   const id = composedIdOnly(st.id);
   const star = st.primary ? `<span class="gtm-star" title="Primary channel-motion">★</span>` : "";
   const chan = st.channel_slug
-    ? `<span class="meta-plain"><b style="color:var(--ink2)">channel:</b> ${esc(st.channel_slug)}</span>` : "";
+    ? `<span class="meta-plain"><b>channel:</b> ${esc(st.channel_slug)}</span>` : "";
   const exps = (st.experiments || []).map(x =>
     `<button class="gtm-exp" data-gtm-exp="${esc(slug)}" title="${esc(x.assumption || x.stem)}">${icon("flask")} ${esc(x.stem)}${
       x.status ? ` · ${esc(x.status)}` : ""}</button>`).join("");
@@ -1676,7 +1676,7 @@ function renderProductSection(slug, p){
       const k = roadmapSectionKey(f.roadmap_section);
       (buckets[k] || buckets.other).push(f);
     });
-    let inner = `<p style="font-size:12px;color:var(--dim);margin:0 0 12px">${feats.length} feature${feats.length !== 1 ? "s" : ""} in roadmap</p>`;
+    let inner = `<p class="help">${feats.length} feature${feats.length !== 1 ? "s" : ""} in roadmap</p>`;
     sectionOrder.forEach(([key, label]) => {
       const group = buckets[key] || [];
       if (!group.length) return;
@@ -1747,7 +1747,7 @@ async function renderProjectSection(slug, section){
     technical: () => renderTechnicalSection(slug, p, sec),
     gtm: () => renderGtmSection(slug, p),
   };
-  const body = (renderers[section] || (() => `<div style="padding:24px 4px;color:var(--dim)">Unknown section.</div>`))();
+  const body = (renderers[section] || (() => `<div class="empty">Unknown section.</div>`))();
   const adds = sectionAddButtons(slug, section, p);
   const addHtml = adds.map((a, i) =>
     `<button class="btn${i === adds.length - 1 ? " primary" : ""}" data-sec-add="${i}">${esc(a.label)}</button>`
@@ -1894,9 +1894,8 @@ async function renderTimeline({ scope = null, head = null } = {}){
   const grp={}; dated.forEach(r=>{ (grp[r.date]=grp[r.date]||[]).push(r); });
   const listHtml = Object.keys(grp).sort().map(dk=>{
     const rws = grp[dk].map(r=>{
-      const col=KIND_COLOR[r.kind]||"var(--dim)";
       return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
-        <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when" style="margin-left:auto">${esc(r.status)}</span>`:""}</div>
+        <div class="pc-top"><span class="plat tone-${esc(r.kind)}">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when">${esc(r.status)}</span>`:""}</div>
         <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
         <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
     }).join("");
@@ -1953,33 +1952,31 @@ async function runNextAction(post, profileSlug){
 const PLATFORM_ICON = {instagram:"instagram",tiktok:"tiktok",x:"x-brand",linkedin:"linkedin",youtube:"youtube",facebook:"facebook"};
 const platIcon = platform => icon(PLATFORM_ICON[platform] || "hash");
 const PLAT_NAME = {instagram:"Instagram",tiktok:"TikTok",x:"X",linkedin:"LinkedIn",youtube:"YouTube",facebook:"Facebook"};
-const KIND_COLOR = {post:"var(--k-post)",activity:"var(--k-activity)",experiment:"var(--k-experiment)",milestone:"var(--k-milestone)",feature:"var(--k-feature)"};
 const KIND_NAME = {post:"Post",experiment:"Experiment",milestone:"Milestone",activity:"Activity",feature:"Feature"};
 const KIND_ICON = {post:"doc",experiment:"flask",milestone:"flag",activity:"clock",feature:"layers"};
 const kindIcon = kind => icon(KIND_ICON[kind] || "doc");
 // one calendar/day card, shared by the List view and the per-day view
 function calCard(r){
   const isPost = r.kind==="post";
-  const skey = STATUS_PILL_CLASS[r.status]||"idea";
-  const col = isPost ? `var(--s-${skey})` : (KIND_COLOR[r.kind]||"var(--dim)");
+  const tone = isPost ? STATUS_PILL_CLASS[r.status]||"idea" : r.kind;
   const label = isPost ? plainStatus(r.status) : (KIND_NAME[r.kind]||r.kind);
   return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
-    <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(label)}</span></div>
+    <div class="pc-top"><span class="plat tone-${esc(tone)}">${esc(label)}</span></div>
     <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
     <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
 }
 const CAL_LEGEND = `<div class="cal-legend">
   <span class="lg-grp">Posts</span>
-  <span class="lg"><i style="background:var(--s-idea)"></i>Idea</span>
-  <span class="lg"><i style="background:var(--s-draft)"></i>Draft</span>
-  <span class="lg"><i style="background:var(--s-ready)"></i>Ready</span>
-  <span class="lg"><i style="background:var(--s-published)"></i>Published</span>
+  <span class="lg"><i class="tone-idea"></i>Idea</span>
+  <span class="lg"><i class="tone-draft"></i>Draft</span>
+  <span class="lg"><i class="tone-ready"></i>Ready</span>
+  <span class="lg"><i class="tone-published"></i>Published</span>
   <span class="lg-sep"></span>
   <span class="lg-grp">Type</span>
-  <span class="lg"><i style="background:var(--k-experiment)"></i>Experiment</span>
-  <span class="lg"><i style="background:var(--k-milestone)"></i>Milestone</span>
-  <span class="lg"><i style="background:var(--k-activity)"></i>Activity</span>
-  <span class="lg"><i style="background:var(--k-feature)"></i>Feature</span>
+  <span class="lg"><i class="tone-experiment"></i>Experiment</span>
+  <span class="lg"><i class="tone-milestone"></i>Milestone</span>
+  <span class="lg"><i class="tone-activity"></i>Activity</span>
+  <span class="lg"><i class="tone-feature"></i>Feature</span>
 </div>`;
 // full-screen list of a single day's scheduled items (double-click a calendar day).
 // Rows navigate straight to the item — no intermediate detail card.
@@ -2022,14 +2019,13 @@ async function renderDay(dateStr){
   const label = new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const body = items.length
     ? `<div class="list">${items.map((r,i)=>{
-        const col=KIND_COLOR[r.kind]||"var(--dim)";
-        return `<div class="arow" data-day-row="${i}"><span class="stripe" style="background:${col}"></span>
-          <span class="ig" style="background:var(--panel-chat);color:${col}">${kindIcon(r.kind)}</span>
+        return `<div class="arow tone-${esc(r.kind)}" data-day-row="${i}"><span class="stripe"></span>
+          <span class="ig">${kindIcon(r.kind)}</span>
           <span class="body"><span class="t">${esc(r.title||r.kind)}</span><span class="m">${esc(KIND_NAME[r.kind]||r.kind)}${r.entity_name?` · ${esc(r.entity_name)}`:""}${r.status?` · ${esc(r.status)}`:""}</span></span>
           <span class="act">${r.kind==="post"?"Open post":"Open"}</span></div>`;
       }).join("")}</div>`
     : `<div class="sec-empty"><p>Nothing scheduled for this day.</p></div>`;
-  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" style="cursor:pointer;color:var(--navy)">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
+  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" class="text-link">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
       <h1 class="title" style="margin-top:6px">${esc(label)}</h1></div>
       <div style="margin-left:auto;display:flex;gap:8px">
         <button class="btn" id="dayAct">＋ Activity</button>
@@ -2278,10 +2274,10 @@ async function renderProfileSetup(slug){
 
 async function renderChannelGuidelines(slug){
   $("#main").innerHTML = `${pageHeader("Channel guidelines", slug, `<button class="btn" id="refineBtn">✨ Refine with AI</button><button class="btn primary" id="saveBtn">Save</button>`, OSID.chan(slug))}
-    <div style="padding:0 24px 8px;font-size:12px;color:var(--dim)">Injected into every generation for this channel</div>
+    <div class="help">Injected into every generation for this channel</div>
     <div class="scroll">
-      <p style="color:var(--dim);font-size:12px;margin:0 0 12px">Use <code>## General</code> + per-platform sections. These guidelines are injected into every generation for this channel.</p>
-      <textarea id="glText" rows="22" style="width:100%;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;font:12px/1.6 ui-monospace,Menlo,monospace;background:rgba(255,255,255,.82);resize:vertical" placeholder="Add guidelines here…"></textarea>
+      <p class="help">Use <code>## General</code> + per-platform sections. These guidelines are injected into every generation for this channel.</p>
+      <textarea id="glText" class="code-editor" rows="22" placeholder="Add guidelines here…"></textarea>
     </div>`;
   try{
     const d = await api(`/api/channel/${slug}/guidelines`);
@@ -2330,10 +2326,10 @@ function renderSlideOverlayList(items, postId, opts = {}){
     const text = o.overlay ?? "";
     const fld = OSID.briefFld(postId, `slide-${n}`);
     return `<div style="display:flex;align-items:flex-start;gap:8px">`
-      + `<span style="font:700 12px/1.5 var(--body);color:var(--dim);min-width:16px;text-align:right;padding-top:8px;flex-shrink:0">${esc(String(n))}</span>`
+      + `<span class="slide-n">${esc(String(n))}</span>`
       + `<div style="flex:1">`
       + `<div style="margin-bottom:4px">${sectionIdChip(fld)}</div>`
-      + `<div style="font-size:12.5px;line-height:1.5;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;white-space:pre-wrap">${esc(text)}</div>`
+      + `<div class="pre-box">${esc(text)}</div>`
       + `</div></div>`;
   }).join("");
   const addBtn = opts.showAdd
@@ -2348,10 +2344,10 @@ function renderGenPromptList(prompts, postId){
     const fld = `gen-prompt-${n}`;
     const chipId = OSID.briefFld(postId, fld);
     return `<div style="display:flex;gap:10px;align-items:flex-start">`
-      + `<span style="font:700 12px/1.5 var(--body);color:var(--dim);min-width:20px;text-align:right;padding-top:8px;flex-shrink:0">${esc(String(n))}</span>`
+      + `<span class="slide-n">${esc(String(n))}</span>`
       + `<div style="flex:1">`
       + `<div style="margin-bottom:4px">${sectionIdChip(chipId)}</div>`
-      + `<div style="font-size:12.5px;line-height:1.55;background:rgba(0,0,0,.04);border-radius:8px;padding:8px 12px;white-space:pre-wrap;border:1px solid var(--hair)">${esc(text)}</div>`
+      + `<div class="pre-box">${esc(text)}</div>`
       + `</div></div>`;
   }).join("") + `</div>`;
 }
@@ -2366,19 +2362,19 @@ function renderBriefValue(v){
     if(typeof v[0]==="object"&&v[0]!==null){
       if(v.every(isSlideOverlayItem)) return renderSlideOverlayList(v);
       return `<div style="display:flex;flex-direction:column;gap:6px">`+v.map(o=>
-        `<div style="font-size:12.5px;line-height:1.5;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;white-space:pre-wrap">`
+        `<div class="pre-box">`
         +Object.entries(o).filter(([,val])=>val!=null&&val!=="")
-          .map(([kk,val])=>`<b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${esc(Array.isArray(val)?val.join(" · "):val)}`).join("&nbsp; · &nbsp;")
+          .map(([kk,val])=>`<b>${esc(humanizeKey(kk))}:</b> ${esc(Array.isArray(val)?val.join(" · "):val)}`).join("&nbsp; · &nbsp;")
         +`</div>`).join("")+`</div>`;
     }
-    return `<div style="font-size:12.5px;line-height:1.6;color:var(--navy)">${v.map(esc).join(" · ")}</div>`;
+    return `<div class="accent-text">${v.map(esc).join(" · ")}</div>`;
   }
   if(typeof v==="object"){                              // nested object, e.g. visual_brief
     return Object.entries(v).filter(([,val])=>val!=null&&val!=="").map(([kk,val])=>
-      `<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${renderBriefValue(val)}</div>`
+      `<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b>${esc(humanizeKey(kk))}:</b> ${renderBriefValue(val)}</div>`
     ).join("");
   }
-  return `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:10px 12px">${esc(v)}</div>`;
+  return `<div class="pre-box">${esc(v)}</div>`;
 }
 
 // Identity fields stored on the brief JSON but shown elsewhere in the post UI.
@@ -2388,7 +2384,7 @@ function briefSect(h, b, fldId){
   const chip = fldId ? sectionIdChip(fldId) : "";
   return `<div style="margin-top:16px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">${esc(h)}</div>${chip}
+      <div class="eyebrow">${esc(h)}</div>${chip}
     </div>${b}</div>`;
 }
 
@@ -2437,9 +2433,9 @@ function renderBriefEditSection(brief, postId){
     .join("");
   if (!fields) return "";
   const brId = sectionIdChip(OSID.brief(postId));
-  return `<div style="margin-top:28px;padding-top:22px;border-top:1px solid var(--hair)">
+  return `<div class="section-split">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">Brief</div>${brId}
+      <div class="eyebrow">Brief</div>${brId}
     </div>${fields}</div>`;
 }
 
@@ -2492,11 +2488,11 @@ function renderBriefBody(slot, brief, n, postId){
   if(slot.concept&&!brief) body+=briefSect("Concept",`<div style="font-size:13px;line-height:1.6">${esc(slot.concept)}</div>`);
   if(slot.notes) body+=briefSect("Notes",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(slot.notes)}</div>`);
   if(slot.working_title&&!brief) body+=briefSect("Working title",`<div style="font-size:13px;line-height:1.6">${esc(slot.working_title)}</div>`);
-  if(brief&&brief._error) body+=briefSect("Brief",`<div style="color:var(--ui-color-danger);font-size:13px">${esc(brief._error)}</div>`);
+  if(brief&&brief._error) body+=briefSect("Brief",`<div class="error-text">${esc(brief._error)}</div>`);
   else if(brief){
     const brId = postId ? OSID.brief(postId) : null;
     if(brId) body+=`<div style="display:flex;align-items:center;gap:8px;margin-top:16px;margin-bottom:8px;flex-wrap:wrap">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">Brief</div>${sectionIdChip(brId)}</div>`;
+      <div class="eyebrow">Brief</div>${sectionIdChip(brId)}</div>`;
     for(const [k,v] of Object.entries(brief)){
       if(k.startsWith("_")||BRIEF_UI_SKIP.has(k)) continue;
       const shown=k==="cover_overlay"?sentenceCase(v):v;
@@ -2510,7 +2506,7 @@ function renderBriefBody(slot, brief, n, postId){
       if(html) body+=briefSect(humanizeKey(k), html, fldId);
     }
   } else {
-    body+=`<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.kind==="brief"?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
+    body+=`<div class="empty">Not written yet${n&&n.kind==="brief"?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
   }
   return body;
 }
@@ -2610,7 +2606,7 @@ async function renderEditPost(id, profileSlug){
       ${briefSection}`;
   $("#main").innerHTML=`${pageHeader("Edit post",crumb,`<button class="btn danger-btn" id="ep-del">Delete</button><button class="btn primary" id="ep-save">Save</button>`, OSID.post(id))}
     <div class="scroll"><div class="fpage">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:14px">${isLogged?"Logged post":"Slot"}</div>
+      <div class="eyebrow">${isLogged?"Logged post":"Slot"}</div>
       ${slotFields}
     </div></div>`;
   wireIdChips($("#main"));
@@ -2644,7 +2640,7 @@ async function renderRevise(id){
   CURRENT_POST = { id, slot, brief };
   $("#main").innerHTML=`${pageHeader("✨ Revise with AI",title,`<button class="btn primary" id="rv-go">Revise</button>`, OSID.post(id))}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Describe what should change in this ${kind}. The AI will apply your instruction and preserve everything else.
       </p>
       ${flabel("Instruction")}${fta("instruction","",4,'placeholder="e.g. punchier hook, caption under 200 chars, focus on 90s thrillers" required')}
@@ -2691,7 +2687,7 @@ async function renderEditProject(slug){
       ${flabel("Status")}${fsel("status",[["idea","Idea"],["prototype","Prototype"],["live","Live"],["revenue","Revenue"]],e.status||"idea")}
       ${flabel("Hours / week")}${finput("hours_per_week",String(e.hours_per_week??0),'type="number" min="0"')}
       ${localFolderField(e.local_folder||"",Boolean(e.local_folder))}
-      <p style="margin-top:12px;font-size:11.5px;color:var(--dim)">Slug <b>${esc(slug)}</b> is fixed — it's the identity used across files.</p>
+      <p class="help">Slug <b>${esc(slug)}</b> is fixed — it's the identity used across files.</p>
     </div></div>`;
   wireLocalFolderControls($("#main"),slug);
   document.getElementById("ep2-save").onclick=async()=>{
@@ -2707,7 +2703,7 @@ function renderNewIntake(projectSlug){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
   $("#main").innerHTML = `${pageHeader("New intake", projName, `<button class="btn primary" id="ni-save">Create intake</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 12px;line-height:1.55">
+      <p class="help">
         Creates <code>strategy/intake.md</code> with starter headings. Edit in chat or your editor; IDs update on save via reindex.
       </p>
     </div></div>`;
@@ -2724,7 +2720,7 @@ function renderNewTechnical(projectSlug){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
   $("#main").innerHTML = `${pageHeader("New technical", projName, `<button class="btn primary" id="nt-save">Create technical</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 12px;line-height:1.55">
+      <p class="help">
         Creates <code>technical.md</code> with starter sections. Edit each with ✎ on the Technical tab.
       </p>
     </div></div>`;
@@ -2743,7 +2739,7 @@ async function renderNewDocSubsection(projectSlug, docKey){
   $("#main").innerHTML = `${pageHeader("New subsection", projName, `<button class="btn primary" id="ns-save">Add subsection</button>`)}
     <div class="scroll"><div class="fpage">
       ${flabel("Section title")}${finput("title", "", 'placeholder="e.g. Security" required')}
-      <p style="font-size:12px;color:var(--dim);margin:12px 0 0">Adds a heading to this project&apos;s ${esc(docKey)} list and <code>${esc(docKey)}.md</code>.</p>
+      <p class="help">Adds a heading to this project&apos;s ${esc(docKey)} list and <code>${esc(docKey)}.md</code>.</p>
     </div></div>`;
   document.getElementById("ns-save").onclick = async () => {
     const title = ($("#main input[name=title]").value || "").trim();
@@ -2780,8 +2776,8 @@ async function renderEditDocSubsection(projectSlug, docKey, titleKey, extras = {
   const subId = docSubsectionId(projectSlug, p, docKey, title);
   $("#main").innerHTML = `${pageHeader(`Edit · ${title}`, projName, `<button class="btn primary" id="es-save">Save</button>`, subId)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 10px">Markdown for <b>${esc(title)}</b> only.</p>
-      <textarea id="es-body" style="width:100%;min-height:320px;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;font:13.5px/1.65 var(--body);resize:vertical">${esc(body)}</textarea>
+      <p class="help">Markdown for <b>${esc(title)}</b> only.</p>
+      <textarea id="es-body" class="doc-editor">${esc(body)}</textarea>
     </div></div>`;
   document.getElementById("es-save").onclick = async () => {
     try {
@@ -2800,7 +2796,7 @@ async function renderNewMemo(projectSlug, memoType){
   const formHtml = fields.map(renderSchemaField).join("");
   $("#main").innerHTML = `${pageHeader("New memo", `${projName} · ${label}`, `<button class="btn primary" id="nm-save">Create memo</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Next version: <code>${esc(memoType)}-vN.json</code> — same schema as chat/osctl writes.</p>
+      <p class="help">Next version: <code>${esc(memoType)}-vN.json</code> — same schema as chat/osctl writes.</p>
       ${formHtml}
     </div></div>`;
   document.getElementById("nm-save").onclick = async () => {
@@ -2841,7 +2837,7 @@ const STRAT_STATUS_OPTS = [["proposed","proposed"],["active","active"],["paused"
 function renderNewPhase(projectSlug){
   $("#main").innerHTML = `${pageHeader("New GTM phase", _projName(projectSlug), `<button class="btn primary" id="np-save">Create phase</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">A time-boxed bet (e.g. "First 10 customers"). Strategies sit under it.</p>
+      <p class="help">A time-boxed bet (e.g. "First 10 customers"). Strategies sit under it.</p>
       ${flabel("Name")}${finput("name","",'placeholder="First 10 customers" required')}
       ${flabel("Goal")}${finput("goal","",'placeholder="10 paying users"')}
       ${flabel("Timebox")}${finput("timebox","",'placeholder="Q3 2026 / 6 weeks"')}
@@ -2900,7 +2896,7 @@ async function renderNewStrategy(projectSlug){
   const p = await api(`/api/project/${projectSlug}`);
   $("#main").innerHTML = `${pageHeader("New GTM strategy", _projName(projectSlug), `<button class="btn primary" id="ns-save">Create strategy</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">A channel-motion (e.g. "LinkedIn founder-led outbound"). Tag experiments to it to build the lens.</p>
+      <p class="help">A channel-motion (e.g. "LinkedIn founder-led outbound"). Tag experiments to it to build the lens.</p>
       ${flabel("Name")}${finput("name","",'placeholder="LinkedIn founder-led outbound" required')}
       ${flabel("Phase")}${fsel("phase",_phaseOpts(p),"")}
       ${flabel("Channel")}${fsel("channel",_channelOpts(projectSlug),"")}
@@ -3058,7 +3054,7 @@ async function renderChannelSetup(channelSlug, profileSlug){
       ${flabel("Platform")}${fsel("platform",platOpts,ch.platform||"instagram")}
       ${flabel("Handle (optional)")}${finput("handle",ch.handle||"",'placeholder="@handle"')}
       ${flabel("Voice & guidelines")}
-      <p style="font-size:12px;color:var(--dim);margin:0 0 8px;line-height:1.5">Injected into every generation for this channel.</p>
+      <p class="help">Injected into every generation for this channel.</p>
       ${fta("text",gl.text||"",10,'style="font-family:ui-monospace,Menlo,monospace;font-size:12px"')}
     </div></div>`;
   document.getElementById("cs-save").onclick=async()=>{
@@ -3105,7 +3101,7 @@ async function renderLogPosted(slug){
   const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   $("#main").innerHTML=`${pageHeader("Log posted",crumb,`<button class="btn primary" id="lp-save">Log posted</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Record something you already posted (not on the calendar). It lands as
         Published on the date below.</p>
       ${flabel("Title")}${finput("working_title","",'placeholder="short internal label"')}
@@ -3134,14 +3130,14 @@ async function renderGenerateIdeas(slug){
   const start=new Date(), end=new Date(Date.now()+14*864e5);
   $("#main").innerHTML=`${pageHeader("Generate ideas",crumb,`<button class="btn primary" id="gi-save">Generate ✦</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Claude will generate a batch of content ideas for this profile. Takes ~15–30s.
       </p>
       ${flabel("Period start")}${finput("period_start",isoDay(start),'type="date" required')}
       ${flabel("Period end")}${finput("period_end",isoDay(end),'type="date" required')}
       <div style="display:flex;align-items:center;gap:8px;margin:2px 0 16px">
         <input type="checkbox" id="gi-dates" style="width:16px;height:16px;cursor:pointer">
-        <label for="gi-dates" style="font-size:13px;color:var(--ink2);cursor:pointer">Assign dates to posts (spread across the period above)</label>
+        <label for="gi-dates" class="chan-check">Assign dates to posts (spread across the period above)</label>
       </div>
       ${flabel("Platforms")}${finput("platforms",channels.map(c=>c.platform).join(","),'placeholder="tiktok,instagram"')}
       ${flabel("Cadence (posts per platform / week)")}${finput("cadence","",'placeholder="3"')}
@@ -3223,7 +3219,7 @@ function confirmPage(title, msg, deleteFn){
   bg.innerHTML=`<div class="popup" id="cd-popup">
     <button class="popup-close" data-x>×</button>
     <h3>${esc(title)}</h3>
-    <p style="font-size:13.5px;color:var(--ink2);line-height:1.55;margin:0 0 18px">${esc(msg)}</p>
+    <p class="lead">${esc(msg)}</p>
     <div class="pacts">
       <button class="btn danger-btn" id="cd-del" style="font-weight:600">Delete</button>
       <button class="btn" id="cd-cancel">Cancel</button>
