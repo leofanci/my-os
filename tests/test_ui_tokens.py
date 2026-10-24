@@ -42,17 +42,29 @@ def test_all_css_custom_properties_resolve():
     assert uses <= definitions
 
 
-def test_layout_javascript_reads_css_tokens():
-    app_js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
-    for token in (
-        "--ui-shell-assistant-min",
-        "--ui-shell-assistant-max",
-        "--ui-shell-assistant-default",
-        "--ui-shell-assistant-height-min",
-        "--ui-shell-assistant-height-max",
-        "--ui-shell-assistant-height-default",
-    ):
-        assert token in app_js
+def test_canvas_js_reads_css_tokens():
+    js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
+    assert 'cssPx("--canvas-w"' in js
+    assert 'cssPx("--ui-breakpoint-canvas-overlay", 1280)' in js
+
+
+def test_responsive_breakpoints():
+    css = (DASHBOARD / "app.css").read_text(encoding="utf-8")
+    assert "@media (max-width:1280px)" in css   # canvas becomes overlay
+    assert "@media (max-width:860px)" in css    # sidebar becomes drawer
+
+
+def test_css_debt_removed():
+    css = (DASHBOARD / "app.css").read_text(encoding="utf-8")
+    assert css.count("!important") <= 4
+    assert "#fff" not in css.lower() and "#ffffff" not in css.lower()
+    assert "translateX(2px)" not in css
+    assert "border-radius:999px;padding:" not in css.replace(" ", "")  # no pill buttons
+
+
+def test_sidebar_sections_renamed():
+    js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
+    assert 'section("teammates", "Teammates"' in js and "Direct messages" not in js
 
 
 def test_server_serves_token_asset():
@@ -118,30 +130,12 @@ def test_semantic_colors_meet_wcag_aa_on_tinted_backgrounds():
         assert _contrast_ratio(hex_value(foreground), composited_soft(background)) >= 4.5
 
 
-def test_assistant_becomes_overlay_before_workspace_is_cramped():
-    tokens = (DASHBOARD / "ui-tokens.css").read_text(encoding="utf-8")
-    app_css = (DASHBOARD / "app.css").read_text(encoding="utf-8")
-    app_js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
-    assert "--ui-breakpoint-assistant-overlay: 1440px" in tokens
-    assert "@media (max-width:1440px)" in app_css
-    assert '#chat-dock{position:fixed' in app_css
-    assert 'grid-template-areas:"nav center"' in app_css
-    assert '.app.chat-bl{grid-template-rows:minmax(0,1fr)}' in app_css
-    assert 'cssPx("--ui-breakpoint-assistant-overlay", 1440)' in app_js
-
-
 def test_calendar_events_have_non_color_and_keyboard_cues():
     app_js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
     assert 'role="button" tabindex="0"' in app_js
     assert 'aria-label="${esc(label)}"' in app_js
     assert 'class="ev-mark"' in app_js
     assert 'e.key==="Enter"||e.key===" "' in app_js
-
-
-def test_project_edit_action_reveals_on_actual_row_hover():
-    app_css = (DASHBOARD / "app.css").read_text(encoding="utf-8")
-    assert "[data-toggle-project]:hover .rail-edit" in app_css
-    assert "[data-toggle-project]:focus-within .rail-edit" in app_css
 
 
 def test_terminal_theme_reads_canonical_tokens():
@@ -157,7 +151,7 @@ def test_terminal_theme_reads_canonical_tokens():
 def test_filter_chips_use_pointer_appropriate_targets():
     app_css = (DASHBOARD / "app.css").read_text(encoding="utf-8")
     assert ".chip,.kchip{min-height:var(--ui-control-dense)" in app_css
-    assert ".kid a,.rail-edit,.chip,.kchip{min-width:var(--ui-control-touch);min-height:var(--ui-control-touch)}" in app_css
+    assert ".chip,.kchip{min-width:var(--ui-control-touch);min-height:var(--ui-control-touch)}" in app_css
 
 
 def test_kernel_logo_is_wired_into_dashboard_shell():

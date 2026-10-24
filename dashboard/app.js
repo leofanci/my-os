@@ -438,7 +438,7 @@ function wsBadge(w){
 
 function renderWsBar(){
   const bar = $("#ws-bar"); if (!bar) return;
-  bar.innerHTML = _WORKSPACES.map(w => `<button class="ws-btn${w.id === _WS ? " active" : ""}${w.id === "hq" ? " hq" : ""}" data-ws="${esc(w.id)}" title="${esc(w.name)}${w.id === "hq" ? " · holding" : ` · ${esc(w.kind)}`}">${esc(wsBadge(w))}</button>`).join("")
+  bar.innerHTML = _WORKSPACES.map(w => `<button class="ws-btn${w.id === _WS ? " active" : ""}${w.id === "hq" ? " hq" : ` t-${hueFor(w.id)}`}" data-ws="${esc(w.id)}" title="${esc(w.name)}${w.id === "hq" ? " · holding" : ` · ${esc(w.kind)}`}">${esc(wsBadge(w))}</button>`).join("")
     + `<button class="ws-btn ws-add" id="new-project-btn" data-os-id="btn:global:new-project" title="New project (= new workspace)" aria-label="New project">${icon("plus")}</button>`;
   bar.querySelectorAll("[data-ws]").forEach(b => b.onclick = () => switchWorkspace(b.dataset.ws));
   $("#new-project-btn").onclick = e => { e.stopPropagation(); openNewProject(); };
@@ -458,6 +458,12 @@ async function switchWorkspace(ws){
 }
 window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 
+// Sidebar sections the user folded away (Channels, Teammates, Your time).
+const RAIL_COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("railCollapsed")) || []; } catch { return []; } })());
+// Narrow windows: the workspace bar and sidebar live in a drawer.
+const closeNav = () => document.getElementById("app")?.classList.remove("nav-open");
+document.addEventListener("click", () => document.getElementById("brand-menu")?.classList.remove("open"));
+
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
   const regP = api("/api/id-registry").then(d => { IdReg.load(d); }).catch(() => IdReg.load({}));
@@ -476,42 +482,50 @@ async function renderRail(){
   const w = wsById(_WS) || { id: "hq", name: "HQ", kind: "hq" };
   const roomRow = r => {
     const b = r.kind === "dm" ? botById(r.lead) : null;
-    const ico = b ? botAvatar(b) : icon("hash", "ico");
-    return `<a class="room-row" data-room="${esc(r.id)}">${ico}<span class="rail-name">${esc(r.name)}</span></a>`;
+    return `<a class="room-row" data-room="${esc(r.id)}">${b ? botAvatar(b) : icon("hash")}<span class="rail-name">${esc(r.name)}</span></a>`;
   };
+  const section = (key, title, rows, add = "") => `<section class="rail-sec${RAIL_COLLAPSED.has(key) ? " collapsed" : ""}">
+      <div class="rail-hdr"><button class="rail-tg" data-rail-tg="${key}" aria-expanded="${!RAIL_COLLAPSED.has(key)}">${icon("chevron")}<span>${title}</span></button>${add}</div>
+      <nav class="nav${key === "time" ? "" : " rooms"}">${rows}</nav>
+    </section>`;
   const channels = _ROOMS.filter(r => r.kind !== "dm");
   const dms = _ROOMS.filter(r => r.kind === "dm");
   $("#rail").innerHTML = `
-    <div class="brand" id="brand-btn"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>
-      <span class="project-kind">${esc(w.id === "hq" ? "holding" : w.kind)}</span>
-      <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
+    <div class="rail-head">
+      <button class="ws-name" id="brand-btn" aria-haspopup="menu"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>${icon("chevron")}</button>
+      <button class="rail-ib" id="rail-compose" title="New thread" aria-label="New thread">${icon("compose")}</button>
+      <div class="brand-menu" id="brand-menu" role="menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
-    <nav class="nav">
-      <a data-view="approvals">${icon("inbox", "ico")} Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : ""}</a>
-      ${w.id !== "hq" ? `<a data-view="files">${icon("folder", "ico")} Files</a>` : ""}
-      <a data-view="team">${icon("users", "ico")} Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
-    </nav>
-    <div class="rail-hdr"><span class="label">Channels</span>
-      <button class="add-btn" id="new-room-btn" title="New channel" aria-label="New channel">${icon("plus")}</button></div>
-    <nav class="nav rooms">${channels.map(roomRow).join("")}</nav>
-    <div class="rail-hdr"><span class="label">Direct messages</span></div>
-    <nav class="nav rooms">${dms.map(roomRow).join("")}</nav>
-    <div class="rail-hdr"><span class="label">Your time (all workspaces)</span></div>
-    <nav class="nav">
-      <a data-view="needs">${icon("sun", "ico")} Today</a>
-      <a data-view="calendar">${icon("calendar", "ico")} Calendar</a>
-      <a data-view="operations">${icon("list-check", "ico")} Operations</a>
-    </nav>
-    `;
-  $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>{
+    <div class="rail-scroll">
+      <nav class="nav">
+        <a data-view="approvals">${icon("inbox")}<span class="rail-name">Approvals</span>${_APPROVALS.length ? `<span class="badge">${_APPROVALS.length}</span>` : ""}</a>
+        ${w.id !== "hq" ? `<a data-view="files">${icon("folder")}<span class="rail-name">Files</span></a>` : ""}
+        <a data-view="team">${icon("users")}<span class="rail-name">Team</span><span class="count">${_BOTS.filter(b => b.active).length}</span></a>
+      </nav>
+      ${section("channels", "Channels", channels.map(roomRow).join(""),
+        `<button class="add-btn" id="new-room-btn" title="New channel" aria-label="New channel">${icon("plus")}</button>`)}
+      ${section("teammates", "Teammates", dms.map(roomRow).join(""))}
+      ${section("time", "Your time", `
+        <a data-view="needs">${icon("sun")}<span class="rail-name">Today</span></a>
+        <a data-view="calendar">${icon("calendar")}<span class="rail-name">Calendar</span></a>
+        <a data-view="operations">${icon("list-check")}<span class="rail-name">Operations</span></a>`)}
+    </div>`;
+  $("#rail").querySelectorAll("[data-view]").forEach(a => a.onclick = () => {
+    closeNav();
     window.ChatRooms?.showCanvas();
     selectGlobal(a.dataset.view);
   });
-  $("#rail").querySelectorAll("[data-room]").forEach(a=>a.onclick=()=>window.ChatRooms?.select(a.dataset.room));
-  $("#new-room-btn").onclick=e=>{ e.stopPropagation(); window.ChatRooms?.showCanvas(); navigate("#/room/new"); };
-  const brandMenu = $("#brand-menu");
-  $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
-  document.addEventListener("click", () => brandMenu.classList.remove("open"));
+  $("#rail").querySelectorAll("[data-room]").forEach(a => a.onclick = () => { closeNav(); window.ChatRooms?.select(a.dataset.room); });
+  $("#rail").querySelectorAll("[data-rail-tg]").forEach(b => b.onclick = () => {
+    const key = b.dataset.railTg;
+    RAIL_COLLAPSED.has(key) ? RAIL_COLLAPSED.delete(key) : RAIL_COLLAPSED.add(key);
+    try { localStorage.setItem("railCollapsed", JSON.stringify([...RAIL_COLLAPSED])); } catch {}
+    b.closest(".rail-sec").classList.toggle("collapsed", RAIL_COLLAPSED.has(key));
+    b.setAttribute("aria-expanded", String(!RAIL_COLLAPSED.has(key)));
+  });
+  $("#new-room-btn").onclick = e => { e.stopPropagation(); closeNav(); window.ChatRooms?.showCanvas(); navigate("#/room/new"); };
+  $("#rail-compose").onclick = () => { closeNav(); window.ChatRooms?.newThread(); };
+  $("#brand-btn").onclick = e => { e.stopPropagation(); $("#brand-menu").classList.toggle("open"); };
   $("#quit-btn").onclick = () => { fetch("/api/quit", {method:"POST"}).catch(()=>{}); setTimeout(()=>window.close(), 350); };
   window.ChatRooms?.refresh();
   highlight();
@@ -3117,19 +3131,25 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const fileInput = document.getElementById("file-input");
   const attachEl  = document.getElementById("attachments");
   const appEl     = document.getElementById("app");
+  document.getElementById("nav-toggle").onclick = () => appEl.classList.add("nav-open");
+  document.getElementById("nav-scrim").onclick = closeNav;
 
   // ── canvas pane: right of the chat, resizable, hideable (persisted) ────────
   const cssValue = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   const cssPx = (name, fallback) => parseInt(cssValue(name, ""), 10) || fallback;
   const CANVAS_W_MIN = cssPx("--ui-shell-center-min", 440);
-  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 360);
-  const CANVAS_W_DEFAULT = 640;
+  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 320);
+  const CANVAS_W_DEFAULT = cssPx("--canvas-w", 540);
+  // At or below this width the canvas floats over the chat (see app.css).
+  const CANVAS_OVERLAY_BP = cssPx("--ui-breakpoint-canvas-overlay", 1280);
   // Like a Slack canvas: closed until you need it (the panel button, a sidebar view, or a bot
   // saving something). Only its width is remembered.
   let canvasW = CANVAS_W_DEFAULT, canvasHidden = true;
   try { canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT; } catch {}
-  // Widest the canvas can go right now: keep the chat column >= CHAT_W_MIN.
+  // Widest the canvas can go right now: keep the chat column >= CHAT_W_MIN,
+  // or, as an overlay, leave a strip of chat visible.
   function canvasWMax(){
+    if (window.innerWidth <= CANVAS_OVERLAY_BP) return Math.max(CANVAS_W_MIN, window.innerWidth - 40);
     const dock = document.getElementById("chat-dock");
     const canvas = document.querySelector(".right-col");
     const shared = (dock ? dock.getBoundingClientRect().width : 0)
@@ -3243,6 +3263,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   window.ChatRooms = {
     select: selectRoom,
     openThread,
+    newThread: () => newThread(),
     current: () => activeRoomId,
     busy: () => busy,
     showCanvas: () => showCanvas(),
@@ -3343,7 +3364,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !chatListEl.hidden) chatListEl.hidden = true;
   });
-  document.getElementById("chat-new").onclick = () => { chatListEl.hidden = true; newChat(); };
+  function newThread(){ chatListEl.hidden = true; newChat(); }
+  document.getElementById("chat-new").onclick = newThread;
   // Pre-saved-chats builds kept one transcript in localStorage; drop it.
   try { localStorage.removeItem("chatHistory"); localStorage.removeItem("chatSessionId"); } catch {}
 

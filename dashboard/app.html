@@ -65,6 +65,7 @@
   <aside class="panel side" id="rail" data-os-id="panel:rail"></aside>
   <aside class="panel chat-dock" id="chat-dock" data-os-id="panel:chat">
     <div class="dock-bar">
+      <button class="term-btn" id="nav-toggle" title="Workspaces and channels" aria-label="Open navigation"><svg class="i" aria-hidden="true"><use href="#i-menu"/></svg></button>
       <div class="chat-head"><b id="room-title"># hq</b><span class="sm"><span id="chat-title">New thread</span> · <span id="chat-status">Ready</span></span></div>
       <div class="room-members" id="room-members"></div>
       <div style="margin-left:auto;display:flex;gap:6px">
@@ -86,6 +87,7 @@
       </div>
     </div>
   </aside>
+  <div class="scrim" id="nav-scrim"></div>
   <div class="right-col" data-os-id="panel:main-col">
     <div class="canvas-resize" id="canvas-resize" title="Drag to resize canvas"></div>
     <nav class="panel canvas-nav" id="canvas-nav" hidden></nav>
