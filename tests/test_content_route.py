@@ -49,3 +49,25 @@ def test_profile_cards_are_styled_with_sticky_headers():
     assert ".pf-head{" in css and "position:sticky" in css
     assert ".post-row.focused{" in css
     assert ".flash" not in css
+
+
+def test_post_detail_has_explicit_approve_for_drafts():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert 'id="approvePost"' in js
+    assert 'status:"approved"' in js.replace(" ", "")
+
+
+def test_profile_page_keeps_every_action():
+    js = APP_JS.read_text(encoding="utf-8")
+    for hook in ('id="addIdea"', 'id="genIdeas"', 'id="setupBtn"', 'id="logPosted"',
+                 'id="writeAll"', 'class="chan-gear"', 'data-sel=', 'id="addChanBtn"'):
+        assert hook in js, hook
+
+
+def test_profile_page_uses_the_shared_post_rows():
+    js = APP_JS.read_text(encoding="utf-8")
+    start = js.index("async function renderProfile(")
+    body = js[start:js.index("\n}\n", start)]
+    assert "postRowHtml(" in body and "profileHeadHtml(" in body
+    assert 'class="post postcard' not in body
+    assert "style=" not in body.replace('style="width:', "")   # bulk bar etc. use classes

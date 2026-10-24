@@ -244,7 +244,6 @@ const ROUTES = [
 ];
 function parseRoute(hash){
   const path = (hash||"#/calendar").replace(/^#/,"").replace(/\?.*$/,"");
-  $("#main")?.classList.toggle("profile-view", /^\/profile\/[^/]+$/.test(path));
   $("#main")?.classList.toggle("form-view", /\/(?:new|edit|setup|add|log|generate|revise)$/.test(path));
   CURRENT_POST = null;
   CURRENT_PROFILE_SLUG = null;
@@ -674,13 +673,13 @@ function postRowHtml(post, channels, { selectable = false, focused = false, sele
 }
 
 // Profile header shared by the Content cards and the profile page.
-function profileHeadHtml(profile, { tag = "div", end = "", sub = "" } = {}){
+function profileHeadHtml(profile, { tag = "div", end = "", sub = "", chips = true } = {}){
   const name = profile.name || profile.slug;
   return `<${tag} class="pf-head">
       <span class="av t-${profile.hue || "slate"}" aria-hidden="true">${esc(name[0].toUpperCase())}</span>
       <div class="pf-id">
         <div class="pf-name"><a href="#/profile/${esc(profile.slug)}">${esc(name)}</a>${sectionIdChip(OSID.prof(profile.slug))}</div>
-        <div class="pf-sub">${channelChips(profile.channels || [])}${sub}</div>
+        <div class="pf-sub">${chips ? channelChips(profile.channels || []) : ""}${sub}</div>
       </div>
       <div class="pf-end">${end}</div>
     </${tag}>`;
@@ -1127,7 +1126,7 @@ function renderArtifactHead(title, id, trailing=""){
 
 function metaPlain(label, value){
   if(value==null||value==="") return "";
-  return `<span class="meta-plain" style="font-size:11px;color:var(--dim)"><b style="color:var(--ink2)">${esc(label)}:</b> ${esc(value)}</span>`;
+  return `<span class="meta-plain"><b>${esc(label)}:</b> ${esc(value)}</span>`;
 }
 
 function titledWithId(title, id=null, opts={}){
@@ -2040,6 +2039,17 @@ async function renderDay(dateStr){
 }
 const PROFILE_SCROLL = {};  // slug -> last scrollTop of the post list, so back-navigation restores position
 const PROFILE_FILTER = {};  // slug -> selected post filter, so async refreshes do not reset the active tab
+// Profile filter chips: [key, label]. Scheduled/Unscheduled cut by date; the
+// rest are ContentView buckets.
+const PROFILE_FILTERS = [["scheduled", "Scheduled"], ["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"],
+  ["ready", "Ready"], ["published", "Published"], ["unscheduled", "Unscheduled"]];
+const unscheduled = p => p.status !== "published" && !p.date;
+const inProfileFilter = (p, f) => f === "unscheduled" ? unscheduled(p)
+  : f === "scheduled" ? !!p.date
+  : f === "all" || STAGE_GROUP[p.status] === f;
+
+// The full profile page: one profile card (header with every profile action,
+// channel filters, status filters) over the shared post rows, with bulk select.
 async function renderProfile(slug, initChanFilter){
   CURRENT_PROFILE_SLUG = slug;
   const [posts, profData] = await Promise.all([
@@ -2047,45 +2057,33 @@ async function renderProfile(slug, initChanFilter){
     api(`/api/profile/${slug}`),
     ensureIdRegistry(),
   ]);
-  const profNode = _TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===slug)||{channels:[]};
-  const channels = profNode.channels||[];
-  const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
-  const unsCount = () => posts.filter(p=>p.status!=="published" && !p.date).length;
-  const datedCount = () => posts.filter(p=>p.date).length;
-  let FILTER = PROFILE_FILTER[slug] || "scheduled";
+  const profile = contentProjects().flatMap(p => p.profiles).find(pr => pr.slug === slug)
+    || { slug, name: profData.name, channels: [] };
+  const channels = profile.channels || [];
+  let FILTER = PROFILE_FILTER[slug] || "all";
   let CHAN_FILTER = initChanFilter||null;
-  const stageOf = p => FILTER==="unscheduled" ? (p.status!=="published" && !p.date)
-    : FILTER==="scheduled" ? !!p.date
-    : (FILTER==="all" || STAGE_GROUP[p.status]===FILTER);
-  const matchFilter = p => stageOf(p) && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER)));
-  // newest first: dated posts by date desc, undated (unscheduled) float to top
-  const byRecency = (a,b) => (a.date||"9999").localeCompare(b.date||"9999") * -1;
+  const matchFilter = p => inProfileFilter(p, FILTER) && (!CHAN_FILTER || (p.channels || []).includes(CHAN_FILTER));
   const SELECTED = new Set();  // post ids ticked for bulk actions
-  const chanSection = `<div class="profile-summary">
-    <div class="profile-channels">
-      ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${PLATFORM_ICON[ch.platform]||"⌗"} ${titledWithId(PLAT_NAME[ch.platform]||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
-      <button class="profile-text-btn" id="addChanBtn">＋ Add channel</button>
-    </div>
-    ${profData.topic?`<div class="profile-topic">${esc(profData.topic)}</div>`:""}
-  </div>`;
-  const profBtns = `<div class="profile-actions"><button class="btn" id="addIdea">＋ Add idea</button>`
-    + `<button class="btn primary" id="genIdeas">✦ Generate ideas</button>`
-    + `<details class="profile-more"><summary class="btn" title="More profile actions" aria-label="More profile actions">•••</summary><div class="profile-more-menu">`
-    + `<button id="setupBtn">Setup</button><button id="logPosted">Log posted</button><button id="writeAll">Write all ideas</button>`
-    + `</div></details></div>`;
-  $("#main").innerHTML = `${pageHeader(profData.name||slug, "Profiles", profBtns, OSID.prof(slug))}
-    <div class="scroll">
-      <div class="profile-content">${chanSection}
-      <div class="profile-list-head"><div class="profile-count">${posts.length} posts</div><div class="filters">
-        <button type="button" class="chip${FILTER==="scheduled"?" on":""}" data-f="scheduled" aria-pressed="${FILTER==="scheduled"}">Scheduled <span class="n">${datedCount()}</span></button>
-        <button type="button" class="chip${FILTER==="all"?" on":""}" data-f="all" aria-pressed="${FILTER==="all"}">All <span class="n">${posts.length}</span></button>
-        <button type="button" class="chip${FILTER==="ideas"?" on":""}" data-f="ideas" aria-pressed="${FILTER==="ideas"}">Ideas <span class="n">${count("ideas")}</span></button>
-        <button type="button" class="chip${FILTER==="drafts"?" on":""}" data-f="drafts" aria-pressed="${FILTER==="drafts"}">Drafts <span class="n">${count("drafts")}</span></button>
-        <button type="button" class="chip${FILTER==="published"?" on":""}" data-f="published" aria-pressed="${FILTER==="published"}">Published <span class="n">${count("published")}</span></button>
-        <button type="button" class="chip${FILTER==="unscheduled"?" on":""}" data-f="unscheduled" aria-pressed="${FILTER==="unscheduled"}">Unscheduled <span class="n">${unsCount()}</span></button>
-      </div></div>
-      <div id="selbar"></div>
-      <div class="cards postcards" id="list"></div></div></div>`;
+  const actions = `<button class="btn sm" id="addIdea">${icon("plus")} Add idea</button>
+    <button class="btn sm primary" id="genIdeas">${icon("zap")} Generate ideas</button>
+    <details class="profile-more"><summary class="btn sm ghost" title="More profile actions" aria-label="More profile actions">${icon("more")}</summary>
+      <div class="profile-more-menu"><button id="setupBtn">Setup</button><button id="logPosted">Log posted</button><button id="writeAll">Write all ideas</button></div></details>`;
+  const chanPills = channels.map(ch => `<span class="chan-pill-wrap${CHAN_FILTER === ch.slug ? " on" : ""}">
+      <button class="chan-pill${CHAN_FILTER === ch.slug ? " on" : ""}" data-cf="${esc(ch.slug)}">${platIcon(ch.platform)}${titledWithId(PLAT_NAME[ch.platform] || ch.platform)}${ch.handle ? `<span class="chan-handle">${esc(ch.handle)}</span>` : ""}</button>
+      <button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup" aria-label="Channel setup">${icon("gear")}</button></span>`).join("");
+  const count = f => posts.filter(p => inProfileFilter(p, f)).length;
+  $("#main").innerHTML = `<div class="scroll"><div class="doc">
+    <section class="pf pf-page">
+      ${profileHeadHtml(profile, { chips: false, sub: profData.topic ? `<span class="profile-topic">${esc(profData.topic)}</span>` : "", end: `<div class="profile-actions">${actions}</div>` })}
+      <div class="pf-tools">
+        <div class="profile-channels">${chanPills}<button class="profile-text-btn" id="addChanBtn">${icon("plus")} Add channel</button></div>
+        <div class="profile-list-head"><span class="profile-count">${plural(posts.length, "post")}</span><div class="filters">
+          ${PROFILE_FILTERS.map(([k, label]) => `<button type="button" class="chip${FILTER === k ? " on" : ""}" data-f="${k}" aria-pressed="${FILTER === k}">${label} <span class="n">${count(k)}</span></button>`).join("")}
+        </div></div>
+        <div id="selbar"></div>
+      </div>
+      <div id="list"></div>
+    </section></div></div>`;
 
   function drawSelBar(){
     const bar = $("#selbar"); if(!bar) return;
@@ -2093,49 +2091,26 @@ async function renderProfile(slug, initChanFilter){
     // prune selections no longer visible so the count is honest
     [...SELECTED].forEach(id=>{ if(!visible.some(p=>p.id===id)) SELECTED.delete(id); });
     if(!SELECTED.size){ bar.innerHTML=""; return; }
-    bar.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:9px 13px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.25);border-radius:11px">
-      <b style="font-size:13px">${SELECTED.size} selected</b>
-      <button class="btn" id="selAll" style="font-size:12px;padding:4px 10px">Select all ${visible.length}</button>
-      <button class="btn" id="selClear" style="font-size:12px;padding:4px 10px">Clear</button>
-      <button class="btn danger-btn" id="selDel" style="margin-left:auto">Delete ${SELECTED.size}</button></div>`;
+    bar.innerHTML=`<div class="selbar"><b>${SELECTED.size} selected</b>
+      <button class="btn sm" id="selAll">Select all ${visible.length}</button>
+      <button class="btn sm ghost" id="selClear">Clear</button>
+      <button class="btn sm danger-btn" id="selDel">Delete ${SELECTED.size}</button></div>`;
     $("#selAll").onclick=()=>{ visible.forEach(p=>SELECTED.add(p.id)); drawList(); };
     $("#selClear").onclick=()=>{ SELECTED.clear(); drawList(); };
     $("#selDel").onclick=()=>renderConfirmBulkDelete([...SELECTED],slug);
   }
 
   function drawList(){
-    const list = posts.filter(matchFilter).sort(byRecency);
+    const list = ContentView.sortPosts(posts.filter(matchFilter));
     const el = $("#list");
     drawSelBar();
-    if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
-    el.innerHTML = list.map(p=>{
-      const pk=STATUS_PILL_CLASS[p.status]||"idea";
-      const na=nextActionFor(p);
-      const title = p.working_title || p.pillar || p.id;
-      const isIdea = p.status==="planned"||p.status==="approved_slot";
-      const sub = isIdea ? (p.concept || "Not written yet") : (p.brief_path?"Written":"");
-      const platMap={}; (channels||[]).forEach(c=>platMap[c.slug]=c.platform);
-      const plats=[...new Set((p.channels||[]).map(sl=>platMap[sl]).filter(Boolean))];
-      const platChips = plats.length
-        ? plats.map(pl=>`<span class="plat ${esc(pl)}">${esc(PLAT_NAME[pl]||pl)}</span>`).join("")
-        : `<span class="plat generic">${esc(p.pillar||"post")}</span>`;
-      const postChip = sectionIdChip(OSID.post(p.id));
-      return `<div class="post postcard${SELECTED.has(p.id)?" sel":""}">
-        <input type="checkbox" class="selbox" data-sel="${esc(p.id)}" ${SELECTED.has(p.id)?"checked":""} title="Select">
-        <div class="pc-top">${platChips}<span class="stp ${pk}" style="margin-left:auto">${esc(plainStatus(p.status))}</span></div>
-        <div class="t" data-view="${esc(p.id)}" style="cursor:pointer">${esc(title)}</div>
-        ${sub?`<div class="pc-sub">${esc(sub)}</div>`:""}
-        <div class="pc-foot">
-          ${na?`<button class="go" data-act="${esc(p.id)}">${esc(na.label)}</button>`:""}
-          <button class="more" data-menu="${esc(p.id)}">Edit</button>
-          <span class="pc-end"><span class="pc-id">${postChip}</span>${p.date?`<span class="when">${esc(p.date)}</span>`:""}</span>
-        </div></div>`;
-    }).join("");
+    el.innerHTML = list.map(p => postRowHtml(p, channels, { selectable: true, selected: SELECTED.has(p.id) })).join("")
+      || `<div class="empty">Nothing here. Add an idea or generate a batch.</div>`;
     el.querySelectorAll("[data-sel]").forEach(b=>b.onclick=e=>{ e.stopPropagation();
       b.checked ? SELECTED.add(b.dataset.sel) : SELECTED.delete(b.dataset.sel);
-      b.closest(".post")?.classList.toggle("sel",b.checked); drawSelBar(); });
+      b.closest(".post-row")?.classList.toggle("sel",b.checked); drawSelBar(); });
     el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>doNext(b.dataset.act));
-    el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.menu}/edit`,{profileSlug:slug}));
+    el.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.edit}/edit`,{profileSlug:slug}));
     el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:slug}));
   }
   function byId(id){ return posts.find(p=>p.id===id)||{}; }
@@ -2550,25 +2525,29 @@ async function renderPostDetail(id, profileSlug){
   const title=slot.working_title||slot.pillar||id;
   const canRevise=["planned","approved_slot","briefed","approved"].includes(st);
   const postContent=PostCopy.formatPostContent(slot, brief);
-  const meta=[["Date",slot.date],["Format",slot.format],["Pillar",slot.pillar],
-              ["Objective",slot.objective]]
+  const meta=[["Format",slot.format],["Pillar",slot.pillar],["Objective",slot.objective]]
     .filter(([,v])=>v!=null&&v!=="").map(([k,v])=>metaPlain(k,v)).join("");
-  const chanSlugs=(slot.channels||[]).filter(Boolean);
-  const chanMeta=chanSlugs.length
-    ? `<span class="meta-plain" style="font-size:11px;color:var(--dim)"><b style="color:var(--ink2)">Channels:</b> ${chanSlugs.map(esc).join(", ")}</span>`
-    : "";
-  const crumb=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{}).name||profileSlug||"Back";
+  const channels=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===CURRENT_PROFILE_SLUG)||{}).channels||[];
+  const platforms=[...new Set((slot.channels||[]).map(sl=>channels.find(c=>c.slug===sl)).filter(Boolean))];
+  // A draft is approved only here, explicitly; every other status gets its next step.
   const btns=[
-    na&&na.kind!=="review"?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
+    st==="briefed"?`<button class="btn primary" id="approvePost">${icon("check")} Approve</button>`
+      : na?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
     `<button class="btn" id="pd-edit">Edit</button>`,
-    postContent?`<button class="btn" id="pd-copy">Copy post</button>`:"",
     canRevise?`<button class="btn" id="pd-revise">Revise</button>`:"",
-    `<details class="profile-more"><summary class="btn" title="More post actions" aria-label="More post actions">•••</summary><div class="profile-more-menu"><button class="danger-btn" id="pd-del">Delete</button></div></details>`,
+    postContent?`<button class="btn ghost" id="pd-copy">Copy post</button>`:"",
+    `<details class="profile-more"><summary class="btn ghost" title="More post actions" aria-label="More post actions">${icon("more")}</summary><div class="profile-more-menu"><button class="danger-btn" id="pd-del">Delete</button></div></details>`,
   ].filter(Boolean).join("");
-  $("#main").innerHTML=`${pageHeader(title,crumb,btns, OSID.post(id))}
-    <div class="scroll reading-scroll">
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">${meta}${chanMeta}</div>
-      ${renderBriefBody(slot,brief,na,id)}</div>`;
+  $("#main").innerHTML=`<div class="scroll"><div class="doc post-page">
+      <header class="pp-head">
+        <div class="pr-top"><span class="stp ${STATUS_PILL_CLASS[st]||"idea"}">${esc(plainStatus(st))}</span>${channelChips(platforms)}
+          <span class="when">${icon("clock")}${esc(slot.date||"No date")}</span></div>
+        <h1 class="pp-title">${esc(title)}</h1>
+        <div class="pp-meta">${meta}${sectionIdChip(OSID.post(id))}</div>
+        <div class="pp-actions">${btns}</div>
+      </header>
+      ${renderBriefBody(slot,brief,na,id)}</div></div>`;
+  renderCanvasNav();   // the breadcrumb now knows the post's profile
   wireIdChips($("#main"));
   const addSlide=document.getElementById("pd-add-slide");
   if(addSlide) addSlide.onclick=async()=>{
@@ -2585,6 +2564,12 @@ async function renderPostDetail(id, profileSlug){
   const copyBtn=document.getElementById("pd-copy");
   if(copyBtn) copyBtn.onclick=()=>copyText(postContent,"Post copied ✓");
   const rdBtn=document.getElementById("pd-revise"); if(rdBtn) rdBtn.onclick=()=>navigate(`#/post/${id}/revise`,{profileSlug});
+  const ap=document.getElementById("approvePost"); if(ap) ap.onclick=async()=>{
+    ap.disabled=true;
+    try{ await jpost(postUrl(id,profileSlug,"/status"),{status:"approved"}); toast("✓ Ready");
+      navigate(`#/post/${id}`,{profileSlug}); }
+    catch(e){ ap.disabled=false; toast("✗ "+e.message); }
+  };
   const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
     nb.disabled=true;
     if(await runNextAction({...slot, id, status:st}, profileSlug)) navigate(`#/post/${id}`,{profileSlug});
