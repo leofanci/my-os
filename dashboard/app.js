@@ -911,7 +911,6 @@ async function toggleMemory(row, botId){
   catch (e) { toast("✗ " + e.message); }
 }
 
-function plainStatus(s){ return ({planned:"Idea",approved_slot:"Idea",briefed:"Draft",approved:"Ready",published:"Published",rejected:"Archived"})[s]||s; }
 
 function latestMemo(project, type){
   return (project.memos || []).filter(m => m.type === type).sort((a, b) => b.version - a.version)[0] || null;
@@ -1749,24 +1748,29 @@ async function renderTimeline(){
   $("#newMsBtn").onclick=()=>navigate("#/milestone/new");
 }
 
-const STAGE_GROUP = {planned:"ideas",approved_slot:"ideas",briefed:"drafts",approved:"drafts",published:"published",rejected:"archived"};
-// One distinct color per pipeline stage, shared by the calendar and the profile post list.
-const STATUS_PILL_CLASS = {planned:"idea",approved_slot:"idea",briefed:"draft",approved:"ready",published:"published",rejected:"archived"};
-const NEXT = {
-  planned:{label:"Write it →",brief:1}, approved_slot:{label:"Write it →",brief:1},
-  briefed:{label:"Review →",to:"approved"}, approved:{label:"Publish →",to:"published"},
-  published:null, rejected:{label:"Restore",to:"planned"},
-};
+// Pipeline rules (buckets, pills, labels, next step) live in content-view.js.
+const { STAGE_GROUP, STATUS_PILL: STATUS_PILL_CLASS, statusLabel: plainStatus, nextActionFor } = ContentView;
 
-// Wraps NEXT with the publish-requires-a-date rule: an approved, undated post
-// still shows an action button, but it routes to the edit form instead of
-// firing the publish transition. Shared by every view that renders a post's
-// next-action button (profile list, post detail, Unscheduled bucket).
-function nextActionFor(p){
-  const n = NEXT[p.status];
-  if(!n) return null;
-  if(p.status==="approved" && !p.date) return {label:"Add date to publish", blocked:true};
-  return {label:n.label, blocked:false, to:n.to, brief:n.brief};
+// Carry out a post's next step. Review and Schedule only open the post (or its
+// date editor); the rest change it on the server and resolve true so the
+// caller re-renders.
+async function runNextAction(post, profileSlug){
+  const na = nextActionFor(post); if (!na) return false;
+  const id = post.id;
+  if (na.kind === "review") { navigate(`#/post/${id}`, {profileSlug}); return false; }
+  if (na.kind === "schedule") { navigate(`#/post/${id}/edit`, {profileSlug}); return false; }
+  try {
+    if (na.kind === "brief") {
+      toast("Writing via claude -p… (a few seconds)", true);
+      await api(postUrl(id, profileSlug, "/brief"), {method:"POST"});
+      toast("Draft ready ✓");
+    } else {
+      const status = na.kind === "publish" ? "published" : "planned";
+      await jpost(postUrl(id, profileSlug, "/status"), {status});
+      toast("✓ " + plainStatus(status));
+    }
+    return true;
+  } catch (e) { toast("✗ " + e.message); return false; }
 }
 
 const PLATFORM_ICON = {instagram:"instagram",tiktok:"tiktok",x:"x-brand",linkedin:"linkedin",youtube:"youtube",facebook:"facebook"};
@@ -1960,11 +1964,9 @@ async function renderProfile(slug, initChanFilter){
     el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:slug}));
   }
   function byId(id){ return posts.find(p=>p.id===id)||{}; }
-  async function doNext(id){ const p=byId(id), na=nextActionFor(p); if(!na) return;
-    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
-    try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else { await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
-      if(onProfileList(slug)) renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
+  async function doNext(id){
+    if(!await runNextAction(byId(id), slug)) return;
+    if(onProfileList(slug)) renderProfile(slug); renderRail(); }
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f; PROFILE_FILTER[slug] = FILTER;
     $("#main").querySelectorAll(".chip").forEach(x=>{ const on=x===c; x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); }); drawList(); });
@@ -2355,7 +2357,7 @@ function renderBriefBody(slot, brief, n, postId){
       if(html) body+=briefSect(humanizeKey(k), html, fldId);
     }
   } else {
-    body+=`<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.brief?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
+    body+=`<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.kind==="brief"?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
   }
   return body;
 }
@@ -2382,7 +2384,7 @@ async function renderPostDetail(id, profileSlug){
     : "";
   const crumb=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{}).name||profileSlug||"Back";
   const btns=[
-    na?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
+    na&&na.kind!=="review"?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
     `<button class="btn" id="pd-edit">Edit</button>`,
     postContent?`<button class="btn" id="pd-copy">Copy post</button>`:"",
     canRevise?`<button class="btn" id="pd-revise">Revise</button>`:"",
@@ -2409,12 +2411,9 @@ async function renderPostDetail(id, profileSlug){
   if(copyBtn) copyBtn.onclick=()=>copyText(postContent,"Post copied ✓");
   const rdBtn=document.getElementById("pd-revise"); if(rdBtn) rdBtn.onclick=()=>navigate(`#/post/${id}/revise`,{profileSlug});
   const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
-    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug}); }
     nb.disabled=true;
-    try{ if(na.brief){ toast("Writing via claude -p…",true); await api(postUrl(id,profileSlug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else{ await api(postUrl(id,profileSlug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
-      navigate(`#/post/${id}`,{profileSlug}); }
-    catch(e){ nb.disabled=false; toast("✗ "+e.message); }
+    if(await runNextAction({...slot, id, status:st}, profileSlug)) navigate(`#/post/${id}`,{profileSlug});
+    else nb.disabled=false;
   };
 }
 
