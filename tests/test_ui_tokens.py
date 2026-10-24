@@ -22,7 +22,7 @@ def test_ui_tokens_are_canonical_source():
         "--ui-radius-card:",
         "--ui-control-default:",
         "--ui-shell-nav:",
-        "--ui-shell-assistant-default:",
+        "--canvas-w:",
         "--ui-header-height:",
         "--ui-motion-fast:",
     )
@@ -171,3 +171,36 @@ def test_kernel_logo_is_wired_into_dashboard_shell():
     assert '<img class="mark" src="/logo.svg" alt="">' in app_js
     assert '"/logo.svg"' in server
     assert '"image/svg+xml"' in server
+
+
+def _tokens():
+    return (DASHBOARD / "ui-tokens.css").read_text(encoding="utf-8")
+
+
+def test_graphite_palette_light():
+    t = _tokens()
+    for decl in ("--ui-color-rail: #17181C", "--ui-color-rail-deep: #0F1013",
+                 "--ui-color-accent: #4F46E5", "--ui-color-canvas: #F4F4F6",
+                 "--ui-color-surface: #FFFFFF", "--ui-color-text: #1B1D22"):
+        assert decl.replace(" ", "") in t.replace(" ", "")
+
+
+def test_dark_mode_blocks_exist_and_redefine_accent():
+    t = _tokens()
+    assert '@media (prefers-color-scheme:dark)' in t.replace(": ", ":")
+    assert ':root:not([data-theme="light"])' in t
+    assert ':root[data-theme="dark"]' in t
+    assert t.replace(" ", "").count("--ui-color-accent:#8B8CF8") == 2
+
+
+def test_compact_type_and_radius_scale():
+    t = _tokens().replace(" ", "")
+    for decl in ("--ui-type-body:14px", "--ui-radius-card:8px", "--ui-radius-control:6px",
+                 "--ui-control-default:28px", "--ws-bar-w:56px", "--canvas-w:540px"):
+        assert decl in t
+
+
+def test_no_green_or_rust_left():
+    t = _tokens().upper()
+    for banned in ("#10302A", "#1F6F5C", "#B54A2B", "#F3F2EF"):
+        assert banned not in t
