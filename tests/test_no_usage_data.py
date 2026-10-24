@@ -88,8 +88,9 @@ PUBLIC_NETWORK_HOSTS = {
     b"127.0.0.1", b"localhost", b"attacker.example",
     b"bellard.org", b"cdn.jsdelivr.net", b"github.com",
     b"www.apache.org", b"www.apple.com", b"www.w3.org",
-    # Public hosts quoted verbatim in LICENSE and dashboard/vendor/LICENSE-xterm.
-    b"polyformproject.org", b"example.com", b"www.sourcelair.com",
+    # Public hosts quoted verbatim in LICENSE, dashboard/vendor/LICENSE-xterm and
+    # dashboard/vendor/fonts/OFL.txt.
+    b"polyformproject.org", b"example.com", b"www.sourcelair.com", b"scripts.sil.org",
 }
 
 

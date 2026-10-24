@@ -1,6 +1,8 @@
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// One outline icon set: the sprite in app.html, symbol ids "i-<name>".
+const icon = (name, cls = "") => `<svg class="i${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const EMPTY = "n/a";
 function normalizeDashes(s){ return String(s==null?"":s).replace(/\s*—\s*/g,", "); }
 
@@ -293,7 +295,7 @@ const fsel = (name,opts,val,osId=null) => `<select name="${name}"${osId?` data-o
 const fta = (name,val='',rows=5,extra='',osId=null) => `<textarea name="${name}" rows="${rows}"${osId?` data-os-id="${esc(osId)}"`:""} ${extra}>${esc(val)}</textarea>`;
 // channel picker: checkboxes from the profile's channels (no manual slug typing)
 const fchannels = (channels, selected=[]) => (channels && channels.length)
-  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${PLATFORM_ICON[c.platform]||"⌗"}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
+  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${platIcon(c.platform)}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
   : `<div style="font-size:12.5px;color:var(--dim)">No channels yet — add one in Setup first.</div>`;
 const checkedChannels = root => [...root.querySelectorAll(".chanbox:checked")].map(b=>b.value).join(",");
 const mentionBare = c => {
@@ -321,9 +323,22 @@ const SECTIONS = PROJECT_SECTIONS;
 let STATE = {view:"calendar", project:null, section:null, profile:null, channelGuidelines:null};
 let _TREE = [];
 let _POSTS = [];   // flat post index for @-mentions, refreshed in renderRail
-let _SKILLS = [];  // [{name, description}] for the manual skill picker (/ and ⊕)
+let _SKILLS = [];  // [{name, description}] for the manual skill picker (/ and +)
 let _BOTS = [];    // team roster from /api/bots (@handle teammates that own skills)
 const botById = id => _BOTS.find(b => b.id === id);
+// Identity hues shared by bots, profiles and project tiles (--ui-id-<hue>-*).
+const ID_HUES = ["ocean", "clay", "plum", "ochre", "slate", "rose"];
+const hueFor = key => ID_HUES[[...String(key)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0) % ID_HUES.length];
+// Built-in teammates get a fixed icon and hue; any other bot falls back to its
+// initial on a hue derived from its id.
+const BOT_LOOK = {
+  cmo: ["chart", "clay"], cos: ["compass", "slate"], cto: ["terminal", "plum"], gtm: ["route", "ocean"],
+  product: ["layers", "ochre"], research: ["search", "rose"], social: ["compose", "ocean"],
+};
+function botAvatar(b, cls = ""){
+  const [ic, hue] = BOT_LOOK[b?.id] || [null, hueFor(b?.id || "")];
+  return `<span class="av bot t-${hue}${cls ? " " + cls : ""}" aria-hidden="true">${ic ? icon(ic) : esc((b?.name || "?")[0].toUpperCase())}</span>`;
+}
 // Post open in detail view. Full slot+brief inlined only when the turn needs it
 // (content keywords, @mention) — otherwise a compact pointer saves tokens.
 // Set in renderPostDetail, cleared on every navigation in parseRoute.
@@ -424,7 +439,7 @@ function wsBadge(w){
 function renderWsBar(){
   const bar = $("#ws-bar"); if (!bar) return;
   bar.innerHTML = _WORKSPACES.map(w => `<button class="ws-btn${w.id === _WS ? " active" : ""}${w.id === "hq" ? " hq" : ""}" data-ws="${esc(w.id)}" title="${esc(w.name)}${w.id === "hq" ? " · holding" : ` · ${esc(w.kind)}`}">${esc(wsBadge(w))}</button>`).join("")
-    + `<button class="ws-btn ws-add" id="new-project-btn" data-os-id="btn:global:new-project" title="New project (= new workspace)">＋</button>`;
+    + `<button class="ws-btn ws-add" id="new-project-btn" data-os-id="btn:global:new-project" title="New project (= new workspace)" aria-label="New project">${icon("plus")}</button>`;
   bar.querySelectorAll("[data-ws]").forEach(b => b.onclick = () => switchWorkspace(b.dataset.ws));
   $("#new-project-btn").onclick = e => { e.stopPropagation(); openNewProject(); };
 }
@@ -461,7 +476,7 @@ async function renderRail(){
   const w = wsById(_WS) || { id: "hq", name: "HQ", kind: "hq" };
   const roomRow = r => {
     const b = r.kind === "dm" ? botById(r.lead) : null;
-    const ico = b ? `<span class="bot-av">${esc(b.icon)}</span>` : `<span class="ico">#</span>`;
+    const ico = b ? botAvatar(b) : icon("hash", "ico");
     return `<a class="room-row" data-room="${esc(r.id)}">${ico}<span class="rail-name">${esc(r.name)}</span></a>`;
   };
   const channels = _ROOMS.filter(r => r.kind !== "dm");
@@ -472,20 +487,20 @@ async function renderRail(){
       <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
     <nav class="nav">
-      <a data-view="approvals"><span class="ico">✔</span> Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : ""}</a>
-      ${w.id !== "hq" ? `<a data-view="files"><span class="ico">☰</span> Files</a>` : ""}
-      <a data-view="team"><span class="ico">◆</span> Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
+      <a data-view="approvals">${icon("inbox", "ico")} Approvals ${_APPROVALS.length ? `<span class="c badge">${_APPROVALS.length}</span>` : ""}</a>
+      ${w.id !== "hq" ? `<a data-view="files">${icon("folder", "ico")} Files</a>` : ""}
+      <a data-view="team">${icon("users", "ico")} Team <span class="c">${_BOTS.filter(b=>b.active).length}</span></a>
     </nav>
     <div class="rail-hdr"><span class="label">Channels</span>
-      <button class="add-btn" id="new-room-btn" title="New channel">＋</button></div>
+      <button class="add-btn" id="new-room-btn" title="New channel" aria-label="New channel">${icon("plus")}</button></div>
     <nav class="nav rooms">${channels.map(roomRow).join("")}</nav>
     <div class="rail-hdr"><span class="label">Direct messages</span></div>
     <nav class="nav rooms">${dms.map(roomRow).join("")}</nav>
     <div class="rail-hdr"><span class="label">Your time (all workspaces)</span></div>
     <nav class="nav">
-      <a data-view="needs"><span class="ico">◉</span> Today</a>
-      <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
-      <a data-view="operations"><span class="ico">✓</span> Operations</a>
+      <a data-view="needs">${icon("sun", "ico")} Today</a>
+      <a data-view="calendar">${icon("calendar", "ico")} Calendar</a>
+      <a data-view="operations">${icon("list-check", "ico")} Operations</a>
     </nav>
     `;
   $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>{
@@ -518,8 +533,8 @@ function canvasProject(viewOnly=false){
 // Canvas header: like a Slack canvas, one thing at a time. Files is how you
 // browse; the old project sections stay reachable from a small menu.
 const KIND_META = {
-  memo: ["📄", "Memos"], experiment: ["⚗", "Experiments"], doc: ["📘", "Docs"], roadmap: ["▣", "Roadmap"],
-  plan: ["➤", "Go-to-market"], content: ["🗓", "Content"], brief: ["✎", "Post briefs"], voice: ["◐", "Voice"],
+  memo: ["doc", "Memos"], experiment: ["flask", "Experiments"], doc: ["book", "Docs"], roadmap: ["map", "Roadmap"],
+  plan: ["route", "Go-to-market"], content: ["calendar", "Content"], brief: ["compose", "Post briefs"], voice: ["mic", "Voice"],
 };
 function renderCanvasNav(){
   const nav = $("#canvas-nav"); if (!nav) return;
@@ -527,7 +542,7 @@ function renderCanvasNav(){
   const onFiles = STATE.view === "files";
   nav.hidden = false;
   nav.innerHTML = `<div class="cn-row">
-      ${p ? `<button class="btn cn-files${onFiles ? " on" : ""}" data-cn-files>☰ Files</button>` : ""}
+      ${p ? `<button class="btn cn-files${onFiles ? " on" : ""}" data-cn-files>${icon("folder")} Files</button>` : ""}
       ${p ? `<select class="cn-sections" title="Project sections">
         <option value="">Sections…</option>
         ${SECTIONS.map(x => `<option value="${esc(x.key)}">${esc(x.label)}</option>`).join("")}
@@ -536,7 +551,7 @@ function renderCanvasNav(){
       </select>` : ""}
       <span class="cn-title">${esc(p ? p.name : "HQ")}</span>
       ${FOCUS_ID ? `<button class="btn" data-cn-all title="Show the rest of this section">Show all</button>` : ""}
-      <button class="term-btn cn-close" data-cn-close title="Close canvas">✕</button>
+      <button class="term-btn cn-close" data-cn-close title="Close canvas" aria-label="Close canvas">${icon("x")}</button>
     </div>`;
   nav.querySelector("[data-cn-files]")?.addEventListener("click", () => navigate("#/files"));
   nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
@@ -588,7 +603,7 @@ async function renderFiles(){
   const draw = () => {
     const list = filt === "all" ? files : files.filter(f => f.kind === filt);
     const rows = list.length ? list.map((f, i) => `<div class="post file-row" data-file="${i}">
-        <span class="bot-av">${KIND_META[f.kind]?.[0] || "•"}</span>
+        <span class="kind-ic">${icon(KIND_META[f.kind]?.[0] || "doc")}</span>
         <div class="t">${esc(f.label)}<small>${esc(KIND_META[f.kind]?.[1] || f.kind)}${f.status ? ` · ${esc(f.status)}` : ""} · ${relAge(f.updated)}</small></div>
         <button class="go">Open</button></div>`).join("")
       : `<div style="padding:24px 4px;color:var(--dim)">Nothing here yet. Ask in #general, e.g. "@cmo draft our positioning".</div>`;
@@ -618,7 +633,7 @@ function renderRoomForm(name){
       <p class="field-help">Lowercase, digits, dashes. Shows as #name.</p>
       <p class="field-help">In ${esc(wsById(_WS)?.name || "HQ")}: bots here only see this workspace.</p>
       ${flabel("Members")}
-      <div class="chan-checks">${active.map(b => `<label class="chan-check"><input type="checkbox" class="room-member" value="${esc(b.id)}"${members.has(b.id) ? " checked" : ""}> <span class="bot-av">${esc(b.icon)}</span> ${esc(b.name)}</label>`).join("")}</div>
+      <div class="chan-checks">${active.map(b => `<label class="chan-check"><input type="checkbox" class="room-member" value="${esc(b.id)}"${members.has(b.id) ? " checked" : ""}> ${botAvatar(b)} ${esc(b.name)}</label>`).join("")}</div>
       ${flabel("Lead")}${fsel("lead", active.map(b => [b.id, b.name]), lead)}
       <p class="field-help">Untagged messages go to the lead only. Members answer when you @tag them.</p>
       <div style="margin-top:18px;display:flex;gap:8px"><button class="btn primary" type="submit">${existing ? "Save" : "Create channel"}</button></div>
@@ -723,7 +738,7 @@ async function renderNeeds(){
   const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today=iso(new Date());
   const rows=[];
-  const push=(prio,r,meta,go)=>{ const col=KIND_COLOR[r.kind]||"var(--dim)", ic=KIND_ICON[r.kind]||"•";
+  const push=(prio,r,meta,go)=>{ const col=KIND_COLOR[r.kind]||"var(--dim)", ic=kindIcon(r.kind);
     const act = r.kind==="activity"&&r.status!=="done" ? "Mark done" : r.kind==="post" ? "Open post" : "Open";
     rows.push({prio,stripe:col,icbg:`background:var(--panel-chat);color:${col}`,ic,t:r.title||r.kind,m:meta,act,go}); };
   const goFor = r => r.kind==="post"&&r.ref_id ? ()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug})
@@ -799,7 +814,7 @@ async function renderTeam(){
       const coverNote = b.covering.length ? `<small class="team-cover">covering for ${b.covering.map(c => esc(botById(c)?.name || c)).join(", ")}</small>` : "";
       const offNote = !b.active ? `<small class="team-cover">off · skills handled by ${esc(botById(b.manager)?.name || "Chief of Staff")}</small>` : "";
       return `<div class="post team-row${b.active ? "" : " off"}" style="margin-left:${depth(b) * 22}px">
-        <span class="bot-av">${esc(b.icon)}</span>
+        ${botAvatar(b)}
         <div class="t"><b>${esc(b.name)}</b> <span class="bot-handle">@${esc(b.handle)}</span>
           <small>${esc(b.about)}</small>
           <small>Reports to ${esc(boss)}</small>
@@ -839,11 +854,11 @@ function relAge(ts){
 async function renderApprovals(){
   const items = _APPROVALS;
   const rows = items.length ? items.map(a => {
-    const b = botById(a.bot) || { name: a.bot, icon: "●" };
+    const b = botById(a.bot) || { id: a.bot, name: a.bot };
     const room = (a.room || "").split("/")[1] || "general";
     const where = `${wsById(a.ws)?.name || a.ws} · ${room.startsWith("dm-") ? "DM" : "#" + room.replace(/^t-/, "")}`;
     return `<div class="post approval-row">
-      <span class="bot-av">${esc(b.icon)}</span>
+      ${botAvatar(b)}
       <div class="t">${esc(a.summary)}<small>${esc(b.name)} · ${esc(where)} · ${relAge(a.created)}</small></div>
       <button class="go" data-ap-go="${esc(a.id)}">Open</button>
       <button class="go primary-go" data-ap-ok="${esc(a.id)}">Approve</button>
@@ -1313,7 +1328,7 @@ function strategyCard(slug, st){
   const chan = st.channel_slug
     ? `<span class="meta-plain"><b style="color:var(--ink2)">channel:</b> ${esc(st.channel_slug)}</span>` : "";
   const exps = (st.experiments || []).map(x =>
-    `<button class="gtm-exp" data-gtm-exp="${esc(slug)}" title="${esc(x.assumption || x.stem)}">⚗ ${esc(x.stem)}${
+    `<button class="gtm-exp" data-gtm-exp="${esc(slug)}" title="${esc(x.assumption || x.stem)}">${icon("flask")} ${esc(x.stem)}${
       x.status ? ` · ${esc(x.status)}` : ""}</button>`).join("");
   const lens = exps
     ? `<div class="gtm-lens"><span class="gtm-lens-h">Experiments</span>${exps}</div>`
@@ -1667,7 +1682,7 @@ async function renderTimeline(){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), k=iso(d), out=d.getMonth()!==CAL.m;
     const evs=(byDay[k]||[]).map(r=>{
       const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev k-${esc(r.kind)}`;
-      const title=r.title||r.kind, mark=KIND_ICON[r.kind]||"•", label=`${KIND_NAME[r.kind]||r.kind}: ${r.time?r.time+" ":""}${title}`;
+      const title=r.title||r.kind, mark=kindIcon(r.kind), label=`${KIND_NAME[r.kind]||r.kind}: ${r.time?r.time+" ":""}${title}`;
       return `<div class="${cls}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc((r.time?`${r.time}-${r.time_end||""} `:"")+title)}" data-ev='${esc(JSON.stringify({...r,title:title.slice(0,80)}))}'><span class="ev-mark" aria-hidden="true">${mark}</span><span class="ev-title">${esc(title)}</span></div>`;
     }).join("");
     cells+=`<div class="day${out?" out":""}${k===today?" today":""}" data-day="${k}" title="Double-click to open this day"><div class="n">${d.getDate()}</div>${evs}</div>`;
@@ -1740,11 +1755,13 @@ function nextActionFor(p){
   return {label:n.label, blocked:false, to:n.to, brief:n.brief};
 }
 
-const PLATFORM_ICON = {instagram:"◎",tiktok:"♪",x:"𝕏",linkedin:"in",youtube:"▶",facebook:"f"};
+const PLATFORM_ICON = {instagram:"instagram",tiktok:"tiktok",x:"x-brand",linkedin:"linkedin",youtube:"youtube",facebook:"facebook"};
+const platIcon = platform => icon(PLATFORM_ICON[platform] || "hash");
 const PLAT_NAME = {instagram:"Instagram",tiktok:"TikTok",x:"X",linkedin:"LinkedIn",youtube:"YouTube",facebook:"Facebook"};
 const KIND_COLOR = {post:"var(--k-post)",activity:"var(--k-activity)",experiment:"var(--k-experiment)",milestone:"var(--k-milestone)",feature:"var(--k-feature)"};
 const KIND_NAME = {post:"Post",experiment:"Experiment",milestone:"Milestone",activity:"Activity",feature:"Feature"};
-const KIND_ICON = {post:"▶",experiment:"◐",milestone:"✦",activity:"○",feature:"◆"};
+const KIND_ICON = {post:"doc",experiment:"flask",milestone:"flag",activity:"clock",feature:"layers"};
+const kindIcon = kind => icon(KIND_ICON[kind] || "doc");
 // one calendar/day card, shared by the List view and the per-day view
 function calCard(r){
   const isPost = r.kind==="post";
@@ -1812,7 +1829,7 @@ async function renderDay(dateStr){
     ? `<div class="list">${items.map((r,i)=>{
         const col=KIND_COLOR[r.kind]||"var(--dim)";
         return `<div class="arow" data-day-row="${i}"><span class="stripe" style="background:${col}"></span>
-          <span class="ig" style="background:var(--panel-chat);color:${col}">${KIND_ICON[r.kind]||"•"}</span>
+          <span class="ig" style="background:var(--panel-chat);color:${col}">${kindIcon(r.kind)}</span>
           <span class="body"><span class="t">${esc(r.title||r.kind)}</span><span class="m">${esc(KIND_NAME[r.kind]||r.kind)}${r.entity_name?` · ${esc(r.entity_name)}`:""}${r.status?` · ${esc(r.status)}`:""}</span></span>
           <span class="act">${r.kind==="post"?"Open post":"Open"}</span></div>`;
       }).join("")}</div>`
@@ -2860,7 +2877,7 @@ async function renderChannelSetup(channelSlug, profileSlug){
   try{ gl=await api(`/api/channel/${channelSlug}/guidelines`); }catch(_){}
   const platOpts=[["instagram","Instagram"],["tiktok","TikTok"],["x","X / Twitter"],["linkedin","LinkedIn"],["youtube","YouTube"],["facebook","Facebook"]];
   const crumb=profNode.name||profileSlug||"Back";
-  $("#main").innerHTML=`${pageHeader(`${PLATFORM_ICON[ch.platform]||"⌗"} ${PLAT_NAME[ch.platform]||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
+  $("#main").innerHTML=`${pageHeader(`${PLAT_NAME[ch.platform]||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
     <div class="scroll"><div class="fpage">
       ${flabel("Platform")}${fsel("platform",platOpts,ch.platform||"instagram")}
       ${flabel("Handle (optional)")}${finput("handle",ch.handle||"",'placeholder="@handle"')}
@@ -3107,7 +3124,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const CANVAS_W_MIN = cssPx("--ui-shell-center-min", 440);
   const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 360);
   const CANVAS_W_DEFAULT = 640;
-  // Like a Slack canvas: closed until you need it (▣, a sidebar view, or a bot
+  // Like a Slack canvas: closed until you need it (the panel button, a sidebar view, or a bot
   // saving something). Only its width is remembered.
   let canvasW = CANVAS_W_DEFAULT, canvasHidden = true;
   try { canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT; } catch {}
@@ -3185,10 +3202,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const room = roomById(activeRoomId);
     if (!room) { roomTitleEl.textContent = "# general"; return; }
     const lead = botById(room.lead);
-    roomTitleEl.textContent = room.kind === "dm" ? `${lead?.icon || ""} ${room.name}` : `# ${room.name}`;
+    roomTitleEl.textContent = room.kind === "dm" ? room.name : `# ${room.name}`;
     roomMembersEl.innerHTML = room.kind === "dm" ? "" : room.members.map(id => {
       const b = botById(id);
-      return b ? `<span class="bot-av${id === room.lead ? " lead" : ""}" title="${esc(b.name)}${id === room.lead ? " (lead)" : ""}">${esc(b.icon)}</span>` : "";
+      return b ? `<span title="${esc(b.name)}${id === room.lead ? " (lead)" : ""}">${botAvatar(b, id === room.lead ? "lead" : "")}</span>` : "";
     }).join("");
     roomEditBtn.hidden = room.kind !== "topic";
     input.placeholder = room.kind === "dm"
@@ -3293,7 +3310,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
          <span class="cl-title">${esc(c.title || "New chat")}</span>
          ${c.tokens || c.cost ? `<span class="cl-when">${esc(fmtUsage(c.tokens, c.cost))}</span>` : ""}
          <span class="cl-when">${relTime(c.updated)}</span>
-         <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat">✕</button>
+         <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat" aria-label="Delete chat">${icon("x")}</button>
        </div>`).join("") : `<div class="cl-empty">No threads in this channel yet.</div>`;
   }
   chatListEl.addEventListener("click", async e => {
@@ -3304,7 +3321,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       if (!del.classList.contains("armed")) {
         // Two-step delete: first click arms, second (within 3s) deletes.
         del.classList.add("armed"); del.textContent = "Delete?";
-        setTimeout(() => { del.classList.remove("armed"); del.textContent = "✕"; }, 3000);
+        setTimeout(() => { del.classList.remove("armed"); del.innerHTML = icon("x"); }, 3000);
         return;
       }
       await fetch(`/api/chats/${encodeURIComponent(del.dataset.del)}/delete`, { method: "POST" }).catch(() => {});
@@ -3378,7 +3395,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   function toggleTerminal(){
     const panel = document.getElementById("term-panel");
     const opening = panel.classList.toggle("open");
-    document.getElementById("term-chevron").textContent = opening ? "▾" : "▸";
     document.getElementById("term-close").textContent = opening ? "close" : "open ⌃`";
     if (opening && !term) initTerminal();
     // fit after the height transition settles, else xterm sizes to 0 rows
@@ -3424,7 +3440,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     renderAttachments();
   }
 
-  // ⊕ opens the manual picker (skills · web search · attach file); file attach
+  // The + button opens the manual picker (skills · web search · attach file); file attach
   // is reachable from inside it, plus paste & drag-drop still work directly.
   attachBtn.onclick = () => openPicker();
   fileInput.onchange = async e => { await addFiles(e.target.files); fileInput.value = ""; };
@@ -3474,7 +3490,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const members = roomById(activeRoomId)?.members || [];
     const ranked = _BOTS.filter(b => b.active).sort((a, b) => members.includes(b.id) === members.includes(a.id) ? 0 : members.includes(a.id) ? -1 : 1);
     for (const b of ranked)
-      out.push({ type:"bot", slug:b.handle, name:b.name, meta:"@" + b.handle, icon:b.icon });
+      out.push({ type:"bot", id:b.id, slug:b.handle, name:b.name, meta:"@" + b.handle });
     // A company's chat only references that company (HQ sees every one).
     const tree = _WS === "hq" ? _TREE : _TREE.filter(p => p.slug === _WS);
     const ownProfiles = new Set(tree.flatMap(p => (p.profiles || []).map(x => x.slug)));
@@ -3522,10 +3538,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       .slice(0, 8);
     if (!menuItems.length) return closeMenu();
     menuIdx = Math.min(menuIdx, menuItems.length - 1);
-    const ICON = { project:"▣", profile:"◐", channel:"▶", post:"✎", section:"◎", skill:"✦", tool:"🌐", action:"📎" };
+    const ICON = { project:"folder", profile:"users", channel:"hash", post:"doc", section:"layers", skill:"zap", tool:"globe", action:"clip" };
     menu.innerHTML = menuItems.map((c, i) =>
       `<div class="mi${i===menuIdx?" sel":""}" data-i="${i}">
-         <span class="mi-ic">${esc(c.icon||ICON[c.type]||"·")}</span><b>${esc(c.name)}</b>
+         <span class="mi-ic">${c.type === "bot" ? botAvatar(botById(c.id)) : icon(ICON[c.type] || "hash")}</span><b>${esc(c.name)}</b>
          <span class="mi-meta">${esc(c.type)} · ${esc(c.meta)}</span></div>`
     ).join("");
     menu.querySelectorAll(".mi").forEach(el =>
@@ -3555,7 +3571,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     closeMenu(); input.focus();
     input.dispatchEvent(new Event("input"));   // keep textarea autosize in sync
   }
-  // ⊕ button = manual picker: insert "/" at the caret and open the skill/tool menu.
+  // + button = manual picker: insert "/" at the caret and open the skill/tool menu.
   function openPicker(){
     const pos = input.selectionStart;
     const before = input.value.slice(0, pos);
@@ -3604,7 +3620,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!lab) { lab = document.createElement("div"); lab.className = "bot-label"; div.prepend(lab); }
     const from = handoffFrom ? botById(handoffFrom) : null;
     const asker = askedBy && askedBy !== "user" ? botById(askedBy) : null;
-    lab.innerHTML = `<span class="bot-av">${esc(b.icon || "●")}</span><b>${esc(b.name)}</b>`
+    lab.innerHTML = `${botAvatar(b)}<b>${esc(b.name)}</b>`
       + (from ? `<span class="bot-handoff">from @${esc(from.handle)}</span>` : "")
       + (asker ? `<span class="bot-handoff">asked by @${esc(asker.handle)}</span>` : "");
     div.classList.toggle("consulted", !!asker);
@@ -3625,7 +3641,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const box = document.createElement("div");
       box.className = "deliv-list";
       box.innerHTML = m.deliverables.map((d, i) => `<button class="deliv" data-deliv="${i}">
-          <span class="deliv-ic">${KIND_META[d.kind]?.[0] || "•"}</span>
+          <span class="deliv-ic">${icon(KIND_META[d.kind]?.[0] || "doc")}</span>
           <span class="deliv-t">${esc(d.label)}${d.status ? `<small>${esc(d.status)}</small>` : ""}</span>
           <span class="deliv-open">Open</span></button>`).join("");
       box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () => openDeliverable(m.deliverables[+b.dataset.deliv]));
@@ -3635,7 +3651,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const a = typeof m.approval === "object" ? m.approval : _APPROVALS.find(x => x.id === m.approval);
       const bar = document.createElement("div");
       bar.className = "approval-bar";
-      bar.innerHTML = `<span class="ap-sum">✔ ${esc(a.summary)}</span>
+      bar.innerHTML = `<span class="ap-sum">${icon("check")} ${esc(a.summary)}</span>
         <button class="btn primary" data-ap="approved">Approve</button>
         <button class="btn" data-ap="edit">Edit</button>
         <button class="btn" data-ap="rejected">No</button>`;
@@ -3676,7 +3692,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       stream.insertBefore(stepEl, stepAnchor);   // keep it above the free-text answer
     }
     const n = stepLabels.length;
-    stepEl.textContent = `⚙ working… ${n} step${n > 1 ? "s" : ""}`;
+    stepEl.textContent = `working… ${n} step${n > 1 ? "s" : ""}`;
     stream.scrollTop = stream.scrollHeight;
   }
 
@@ -3685,8 +3701,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const labels = stepLabels.slice();
     let detail = null;
     const paint = () => stepEl.textContent = detail
-      ? "⚙ hide steps"
-      : `⚙ ${labels.length} step${labels.length > 1 ? "s" : ""}`;
+      ? "hide steps"
+      : `${labels.length} step${labels.length > 1 ? "s" : ""}`;
     stepEl.onclick = () => {
       if (detail) { detail.remove(); detail = null; }
       else {
@@ -4031,12 +4047,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
             if (obj.chat_id) {
               // Server started a different chat (project scope changed): old one stays saved.
               if (activeChatId && obj.chat_id !== activeChatId) {
-                // Show only what the new chat holds; the old chat is still in ☰.
+                // Show only what the new chat holds; the old chat is still in Threads.
                 while (stream.firstChild && stream.firstChild !== userEl) stream.removeChild(stream.firstChild);
                 history.splice(0, history.length - 1);
                 const note = document.createElement("div");
                 note.className = "tool-chip";
-                note.textContent = `↺ New chat for ${obj.project || "all projects"}. Previous chat saved in ☰`;
+                note.textContent = `↺ New chat for ${obj.project || "all projects"}. Previous chat saved in Threads`;
                 stream.insertBefore(note, userEl);
               }
               setActiveChat(obj.chat_id, obj.title, obj.project);
@@ -4062,7 +4078,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               pendingBreak = false;
               full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*(?:APPROVAL|CONSULT)\b.*$/gim, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
             }
-            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
+            if (obj.tool)  { addStep(obj.tool); pendingBreak = true; }
           } catch {}
         }
       }

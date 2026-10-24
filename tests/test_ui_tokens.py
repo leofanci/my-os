@@ -204,3 +204,23 @@ def test_no_green_or_rust_left():
     t = _tokens().upper()
     for banned in ("#10302A", "#1F6F5C", "#B54A2B", "#F3F2EF"):
         assert banned not in t
+
+
+def test_vendor_serves_woff2_as_font():
+    server = (DASHBOARD / "server.py").read_text(encoding="utf-8")
+    assert '"font/woff2"' in server
+
+
+def test_fonts_are_vendored():
+    fonts = DASHBOARD / "vendor" / "fonts"
+    for name in ("instrument-sans-400.woff2", "instrument-sans-600.woff2",
+                 "newsreader-600.woff2", "jetbrains-mono-500.woff2", "OFL.txt"):
+        assert (fonts / name).is_file(), name
+
+
+def test_sprite_and_no_glyph_icons_in_shell():
+    html = (DASHBOARD / "app.html").read_text(encoding="utf-8")
+    js = (DASHBOARD / "app.js").read_text(encoding="utf-8")
+    assert '<symbol id="i-inbox"' in html
+    for glyph in ("✔", "☰", "◆", "▦", "▣", "⊕", "📄", "⚗", "📘", "🗓"):
+        assert glyph not in html and glyph not in js, glyph

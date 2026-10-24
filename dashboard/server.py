@@ -69,6 +69,8 @@ MAX_JSON_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_WS_PAYLOAD = 1024 * 1024
 UPLOAD_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp"})
+VENDOR_TYPES = {".css": "text/css", ".js": "application/javascript",
+                ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
 RAIL = CHAT_RAIL
 
@@ -1455,8 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/vendor/"):
             f = (HERE / path.lstrip("/")).resolve()
             if f.is_file() and f.is_relative_to((HERE / "vendor").resolve()):
-                ctype = "text/css" if f.suffix == ".css" else "application/javascript"
-                return self._send(200, f.read_bytes(), ctype)
+                return self._send(200, f.read_bytes(), VENDOR_TYPES.get(f.suffix, "application/javascript"))
             return self._send(404, {"error": "not found"})
 
         if not path.startswith("/api/"):

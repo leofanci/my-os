@@ -244,11 +244,11 @@
   .msg.me{align-self:flex-end}
   /* Team: bot name above its reply, avatars, org chart rows */
   .bot-label{display:flex;align-items:center;gap:6px;font:600 11.5px/1 var(--body);color:var(--ink);margin:0 0 6px 2px}
-  .bot-av{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;
+  .av{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:6px;
     background:var(--sky-soft);color:var(--navy);font-size:11px;flex-shrink:0}
   .bot-handoff{font-weight:500;color:var(--dim)}
   .bot-handle{font:500 11.5px/1 var(--body);color:var(--dim)}
-  .team-row .bot-av{width:30px;height:30px;font-size:14px;border-radius:8px}
+  .team-row .av{width:30px;height:30px;font-size:14px;border-radius:8px}
   .team-row .t small{display:block;margin-top:3px}
   .team-row.off{opacity:.55}
   .team-skills{display:flex;flex-wrap:wrap;gap:4px;margin-top:7px}
@@ -855,12 +855,12 @@
   /* ---- Slack shell: rooms in the sidebar, canvas nav above the canvas ---- */
   .nav.rooms a.room-row{padding:6px 10px;gap:8px}
   .nav.rooms .room-row .ico{font-weight:700}
-  .nav.rooms .room-row .bot-av{width:18px;height:18px;font-size:10px;border-radius:5px}
+  .nav.rooms .room-row .av{width:18px;height:18px;font-size:10px;border-radius:5px}
   .nav.rooms .room-add{color:var(--dim);font-size:12px}
   .nav.rooms .rail-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .room-members{display:flex;gap:3px;margin-left:10px}
-  .room-members .bot-av{width:20px;height:20px;font-size:10px}
-  .room-members .bot-av.lead{box-shadow:0 0 0 2px var(--navy)}
+  .room-members .av{width:20px;height:20px;font-size:10px}
+  .room-members .av.lead{box-shadow:0 0 0 2px var(--navy)}
   #canvas-toggle.on{background:var(--navy);color:#fff;border-color:var(--navy)}
   .canvas-nav{flex-shrink:0;padding:10px 14px;display:flex;flex-direction:column;gap:8px}
   .canvas-nav[hidden]{display:none}
@@ -923,3 +923,14 @@
   .flash{box-shadow:0 0 0 3px var(--sky)!important;transition:box-shadow .3s}
   /* a teammate pulled into the thread by another bot */
   .msg.ai.consulted{border-left:2px solid var(--gline);padding-left:12px;margin-left:14px}
+/* Icons and identity avatars */
+svg.i{width:var(--ui-icon);height:var(--ui-icon);flex:none;stroke:currentColor;fill:none;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round;vertical-align:-3px}
+.t-ocean{background:var(--ui-id-ocean-bg);color:var(--ui-id-ocean-fg)}
+.t-clay{background:var(--ui-id-clay-bg);color:var(--ui-id-clay-fg)}
+.t-plum{background:var(--ui-id-plum-bg);color:var(--ui-id-plum-fg)}
+.t-ochre{background:var(--ui-id-ochre-bg);color:var(--ui-id-ochre-fg)}
+.t-slate{background:var(--ui-id-slate-bg);color:var(--ui-id-slate-fg)}
+.t-rose{background:var(--ui-id-rose-bg);color:var(--ui-id-rose-fg)}
+.av svg.i{width:70%;height:70%}
+.term-chevron{transition:transform var(--ui-motion-fast) var(--ui-ease-standard)}
+.term-panel.open .term-chevron{transform:rotate(90deg)}
