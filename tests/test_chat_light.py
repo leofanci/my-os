@@ -43,3 +43,31 @@ def test_header_has_no_member_stack_and_mentions_are_plain_accent_text():
 def test_message_lookups_use_the_row_not_the_bubble_parent():
     js = APP_JS.read_text(encoding="utf-8")
     assert "bubble.parentElement" not in js and "b.parentElement" not in js
+
+
+def test_live_marker_hiding_matches_the_server_markers_only():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "(?:APPROVAL|CONSULT)\\b" not in js   # hid "Approval of the budget…" prose
+    assert "const APPROVAL_LINE_RE = /^[ \\t>*_-]*APPROVAL:.*$/gm;" in js
+    assert "const CONSULT_LINE_RE = /^[ \\t>*_-]*CONSULT[*_ \\t]+@[a-z][a-z0-9-]*[*_ \\t]*:.*$/gim;" in js
+
+
+def test_client_stops_reading_and_cancels_on_an_error_event():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert 'if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); reader.cancel().catch(() => {}); return; }' in js
+
+
+def test_inbox_approve_only_answers_in_the_approvals_own_thread():
+    js = APP_JS.read_text(encoding="utf-8")
+    start = js.index("async function openThread(")
+    body = js[start:js.index("\n  }\n", start)]
+    assert "activeChatId !== a.chat" in body
+
+
+def test_a_slow_thread_load_never_lands_in_the_room_you_moved_to():
+    js = APP_JS.read_text(encoding="utf-8")
+    start = js.index("async function openChat(")
+    body = js[start:js.index("\n  }\n", start)]
+    assert "const seq = ++chatSeq;" in body and "if (seq !== chatSeq) return;" in body
+    start = js.index("function newChat(")
+    assert "chatSeq++" in js[start:js.index("\n  }\n", start)]

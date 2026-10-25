@@ -248,6 +248,28 @@ class SharedCalendar(unittest.TestCase):
         self.assertNotIn("demo", self.osctl("acme", "tree")["tree"])
         self.assertIn("demo", self.osctl("hq", "tree")["tree"])
 
+    def test_read_file_guard_holds_for_absolute_and_odd_case_paths(self):
+        for path in (str(self.root / "projects" / "demo" / "project.md"),
+                     str(self.root / "portfolio" / "activities.md"),
+                     "Projects/demo/project.md",
+                     "projects/acme/../demo/project.md"):
+            r = self.osctl("acme", "read-file", "--path", path)
+            self.assertFalse(r["ok"], path)
+            self.assertIn("workspace", r["error"], path)
+        r = self.osctl("acme", "read-file", "--path", str(self.root / "projects" / "acme" / "project.md"))
+        self.assertTrue(r["ok"], r)
+
+    def test_get_busy_shows_bookings_on_your_own_profiles(self):
+        self.osctl("demo", "create-activity", "--entity", "profile-b", "--title", "Shoot",
+                   "--date", "2026-11-03", "--time", "10:00")
+        busy = self.osctl("demo", "get-busy", "--from", "2026-11-03")["busy"]
+        self.assertEqual((busy[0]["title"], busy[0]["entity"]), ("Shoot", "profile-b"))
+
+    def test_owner_map_is_built_once_per_call(self):
+        with mock.patch.object(osctl, "build_id_registry", wraps=osctl.build_id_registry) as reg:
+            self.osctl("demo", "get-posts", "--profile", "profile-b")
+        self.assertEqual(reg.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -787,6 +787,11 @@ def _bot_info(team, bot_id):
     return {"id": b.id, "name": b.name, "handle": b.handle, "icon": b.icon}
 
 
+class _RunFailed(Exception):
+    """A bot run already sent its error to the client, which stops reading
+    there: the turn ends, no teammate or follow-up spends more tokens."""
+
+
 def _extract_consults(text, team):
     """(text without CONSULT lines, [(bot_id, question)] for active teammates)."""
     handles = {b.handle: b.id for b in team.bots.values() if b.active}
@@ -1223,7 +1228,7 @@ class Handler(BaseHTTPRequestHandler):
 
         def run(s_, prompt_, model_, web_, msg, **kw):
             """Stream one bot run into `msg` (content + usage)."""
-            parts, fin = [], {}
+            parts, fin, failed = [], {}, False
             for kind, payload in s_.ask(prompt_, with_web=web_, model=model_,
                                         web_domains=web_domains, **kw):
                 if kind == "delta":
@@ -1234,11 +1239,14 @@ class Handler(BaseHTTPRequestHandler):
                     emit({"tool": payload})
                 elif kind == "error":
                     emit({"error": payload})
+                    failed = True
                 elif kind == "done":
                     fin = payload or {}
             msg.update(tokens=fin.get("tokens") or None, cost=fin.get("cost"), model=model_)
             if msg["tokens"] or msg["cost"]:
                 emit({"usage": {"tokens": msg["tokens"], "cost": msg["cost"], "model": model_}})
+            if failed:
+                raise _RunFailed
             return msg["content"]
 
         def run_teammate(b2, question, asked_by, msg):
@@ -1288,25 +1296,35 @@ class Handler(BaseHTTPRequestHandler):
                 msgs.append(m3)
                 run(sess, _followup_prompt(team, answers), model, with_web, m3)
             last = len(msgs) - 1
-            lead_i = max(i for i, m in enumerate(msgs) if m["bot"] == bot_id and not m.get("asked_by"))
             if files_before is not None:
                 handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
                 if handed:
                     msgs[last]["deliverables"] = handed
                     emit({"deliverables": handed, "msg": last})
-            clean, summary = approvals.extract(msgs[lead_i]["content"])
-            if summary and not may_write:
-                msgs[lead_i]["content"] = clean  # stray marker on a chat-only turn: no buttons
-                emit({"clean": clean, "msg": lead_i})
-            elif summary and isinstance(getattr(sess, "session_id", None), str):
+            # The lead may ask for approval in its first reply or its follow-up:
+            # every marker line goes, the last one asked counts.
+            asked = None
+            for i, m in enumerate(msgs):
+                if m["bot"] != bot_id or m.get("asked_by"):
+                    continue
+                clean, summary = approvals.extract(m["content"])
+                if summary:
+                    m["content"] = clean
+                    emit({"clean": clean, "msg": i})
+                    asked = (i, summary)
+            # A chat-only turn's stray marker gets no buttons.
+            if asked and may_write and isinstance(getattr(sess, "session_id", None), str):
+                i, summary = asked
                 rec = approvals.add(ROOT, ws=ws, room=(room or {}).get("id"), chat=sess.session_id,
                                     bot=bot_id, summary=summary)
-                msgs[lead_i].update(content=clean, approval=rec["id"])
-                emit({"approval": rec, "clean": clean, "msg": lead_i})
+                msgs[i]["approval"] = rec["id"]
+                emit({"approval": rec, "msg": i})
             for m in msgs[1:]:  # a teammate never asks for approval or consults on its own
                 m["content"] = _extract_consults(approvals.extract(m["content"])[0], team)[0]
         except (BrokenPipeError, ConnectionResetError):
             pass  # client stopped/closed; still save what streamed so far
+        except _RunFailed:
+            pass  # the error is already on screen; save what streamed so far
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             emit({"error": "internal error"})
@@ -1870,6 +1888,7 @@ class Handler(BaseHTTPRequestHandler):
                         if rec.get("room") == f"{ws}/t-{old}":
                             rec["room"] = room_id
                             chat_store.save(rec)
+                    approvals.move_room(f"{ws}/t-{old}", room_id, ROOT)
                 return self._send(200, {"id": room_id, "rooms": rooms.list_rooms(
                     bots.team(ROOT, ws, record), ws, ROOT)})
             if path.startswith("/api/bots/") and path.endswith("/active"):

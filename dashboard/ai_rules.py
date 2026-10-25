@@ -111,20 +111,6 @@ Per-project subsection lists drive intake.md, technical.md, and product roadmap 
 memos: `create-memo --type <t>`; full fields for problem-validation + assessment; else summary + recommendation; default `proposed`.
 experiments: assumption, success_criteria, kill_criteria."""
 
-TAGGING = """## Skill tags
-Sonnet only on `@bot` or `/skill`. Tagged → `## Active skill:` + osctl writes.
-Untagged write → blocked. Untagged read → Haiku + osctl reads. Continuation ("yes save") ok after tag.
-Posts: `/content-brief` or Write button. Web: `/web`."""
-
-BEHAVIOR = """## Behavior
-- Token lean: routing in chat (short), content once in osctl, review in dashboard. Never echo artifact bodies in chat or confirmations.
-- TAGGING + WRITE GATE + TAB ROUTING mandatory. After commit: one-sentence confirmation with tab id only.
-- Topic = thread + @tags, not open tab.
-- State snapshot is index-only — `get-project` / `read-file` on demand, not speculative bulk reads.
-- Skills: follow injected `## Active skill:` block only; never tell user to run a skill themselves.
-- No em dash (—). Memos/chat: blank lines between paragraphs; `- ` bullets one per line.
-- Before `update-intake` / `update-technical` / `update-roadmap`: read current, minimal diff, full file back."""
-
 # --------------------------------------------------------------------------- #
 # Chat bots = teammates (Slack-style). They think in deliverables, not tabs:
 # the six project tabs are storage the commands file into; terminal rules
@@ -156,6 +142,7 @@ DELIVERABLES = """## Deliverables → command
 | Technical doc | `update-technical` (same rule) |
 | Experiment | `create-experiment --assumption ...` with success + kill criteria |
 | Roadmap feature | `add-feature --product <p> --section Next` |
+| Whole roadmap rewrite | `update-roadmap --product <p>` (same rule: read first, minimal diff) |
 | Go-to-market phase / strategy | `create-phase` / `create-strategy` |
 | Content plan | `generate-plan --profile <p> --period "A to B"` (no `--dates` unless asked) |
 | Post brief / rewrite | `update-brief --id <post> --instruction "..."` · `generate-brief` · `revise-post` |
@@ -166,7 +153,8 @@ TEAM_TAGGING = """## Skill tags
 Sonnet only on `@bot` or `/skill`. Tagged → `## Active skill:` + osctl writes.
 Untagged write → blocked; untagged read → Haiku + osctl reads. Continuation ("yes", "approved") ok after tag.
 Posts: `/content-brief`. Web: `/web`.
-An injected `## Active skill:` is your playbook; its tab/section steps are filing the commands do. Talk per How you work."""
+An injected `## Active skill:` is your playbook; its tab/section steps are filing the commands do. Talk per How you work.
+Run skills yourself; never tell the user to run a skill."""
 
 CHAT_RAIL = f"""You are one of the user's teammates. Your role, team, workspace and memory are in `## Speaking as`.
 

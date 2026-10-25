@@ -77,6 +77,19 @@ def resolve_chat(chat, status, root=bots.ROOT):
     return n
 
 
+def move_room(old, new, root=bots.ROOT):
+    """A renamed channel keeps its approvals: repoint every row at `new`."""
+    rows = load(root)
+    n = 0
+    for r in rows:
+        if r.get("room") == old:
+            r["room"] = new
+            n += 1
+    if n:
+        _save(root, rows)
+    return n
+
+
 def pending(root=bots.ROOT, ws=None):
     """Open approvals, newest first; `ws` other than HQ narrows to one workspace."""
     rows = [r for r in load(root) if r.get("status") == "pending"

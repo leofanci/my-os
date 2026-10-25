@@ -24,6 +24,18 @@ class TestAiRules(unittest.TestCase):
         self.assertIn("APPROVAL:", CHAT_RAIL)
         self.assertIn("## How you work and talk", CHAT_RAIL)
 
+    def test_every_full_replace_doc_is_read_first_in_chat(self):
+        from dashboard.ai_rules import CHAT_RAIL
+        for cmd in ("update-intake", "update-technical", "update-roadmap"):
+            row = next(l for l in CHAT_RAIL.splitlines() if l.startswith("|") and f"`{cmd}" in l)
+            self.assertTrue("read first" in row or "same rule" in row, cmd)
+
+    def test_no_dead_rule_blocks(self):
+        import dashboard.ai_rules as rules
+        self.assertFalse(hasattr(rules, "TAGGING"))    # TEAM_TAGGING is the chat one
+        self.assertFalse(hasattr(rules, "BEHAVIOR"))   # split into TEAMMATE, READS, DELIVERABLES
+        self.assertIn("never tell the user to run a skill", rules.CHAT_RAIL)
+
     def test_terminal_rules_keep_tab_vocabulary(self):
         from dashboard.ai_rules import TERMINAL_RULES
         self.assertIn("Tab routing", TERMINAL_RULES)

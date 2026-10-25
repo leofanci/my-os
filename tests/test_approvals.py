@@ -46,6 +46,12 @@ class Store(unittest.TestCase):
         self.assertEqual(approvals.pending(self.root), [])
         self.assertEqual(approvals.load(self.root)[-1]["status"], "approved")
 
+    def test_renamed_channel_carries_its_approvals(self):
+        approvals.add(self.root, ws="acme", room="acme/t-launch", chat="c1", bot="cmo", summary="x")
+        self.add("acme", "c2")
+        self.assertEqual(approvals.move_room("acme/t-launch", "acme/t-go-live", self.root), 1)
+        self.assertEqual([a["room"] for a in approvals.load(self.root)], ["acme/t-go-live", "acme/general"])
+
 
 class Usage(unittest.TestCase):
     def test_result_event_carries_tokens_and_cost(self):

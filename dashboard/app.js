@@ -185,6 +185,10 @@ function postUrl(id, profileSlug, suffix=""){
 
 // ── router ───────────────────────────────────────────────────────────────────
 let _NAV_EXTRAS = {};
+// Bumped on every navigation. An async view takes a guard before it fetches and
+// checks it before drawing, so a slow load never paints over the next page.
+let ROUTE_SEQ = 0;
+const routeGuard = () => { const seq = ROUTE_SEQ; return () => seq === ROUTE_SEQ; };
 function navigate(hash, extras){
   _NAV_EXTRAS = extras || {};
   if(location.hash===hash) parseRoute(hash);
@@ -245,6 +249,7 @@ const ROUTES = [
 ];
 function parseRoute(hash){
   const path = (hash||"#/calendar").replace(/^#/,"").replace(/\?.*$/,"");
+  ROUTE_SEQ += 1;
   $("#main")?.classList.toggle("form-view", /\/(?:new|edit|setup|add|log|generate|revise)$/.test(path));
   CURRENT_POST = null;
   CURRENT_PROFILE_SLUG = null;
@@ -466,9 +471,16 @@ window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
 const RAIL_COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("railCollapsed")) || []; } catch { return []; } })());
 // Narrow windows: the workspace bar and sidebar live in a drawer.
 const closeNav = () => document.getElementById("app")?.classList.remove("nav-open");
+// One menu open at a time; the button that opened it tracks aria-expanded.
 const closeMenus = () => document.querySelectorAll(".menu.open").forEach(m => {
-  m.classList.remove("open"); m.previousElementSibling?.setAttribute("aria-expanded", "false");
+  m.classList.remove("open"); m._btn?.setAttribute("aria-expanded", "false");
 });
+function toggleMenu(btn, menu){
+  const opening = !menu.classList.contains("open");
+  closeMenus();
+  if (!opening) return;
+  menu.classList.add("open"); menu._btn = btn; btn.setAttribute("aria-expanded", "true");
+}
 document.addEventListener("click", closeMenus);
 document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
 
@@ -485,7 +497,6 @@ async function renderRail(){
     api("/api/rooms" + q).then(d => d.rooms || []).catch(() => []),
     api("/api/approvals" + q).then(d => d.approvals || []).catch(() => []),
   ]);
-  await ensureIdRegistry();
   renderWsBar();
   const w = wsById(_WS) || { id: "hq", name: "HQ", kind: "hq" };
   const roomRow = r => {
@@ -500,7 +511,7 @@ async function renderRail(){
   const dms = _ROOMS.filter(r => r.kind === "dm");
   $("#rail").innerHTML = `
     <div class="rail-head">
-      <button class="ws-name" id="brand-btn" aria-haspopup="menu"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>${icon("chevron")}</button>
+      <button class="ws-name" id="brand-btn" aria-haspopup="menu" aria-expanded="false"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>${icon("chevron")}</button>
       <button class="rail-ib" id="rail-compose" title="New thread" aria-label="New thread">${icon("compose")}</button>
       <div class="menu brand-menu" id="brand-menu" role="menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
@@ -534,7 +545,7 @@ async function renderRail(){
   });
   $("#new-room-btn").onclick = e => { e.stopPropagation(); closeNav(); window.ChatRooms?.showCanvas(); navigate("#/room/new"); };
   $("#rail-compose").onclick = () => { closeNav(); window.ChatRooms?.newThread(); };
-  $("#brand-btn").onclick = e => { e.stopPropagation(); $("#brand-menu").classList.toggle("open"); };
+  $("#brand-btn").onclick = e => { e.stopPropagation(); toggleMenu(e.currentTarget, $("#brand-menu")); };
   $("#quit-btn").onclick = () => { fetch("/api/quit", {method:"POST"}).catch(()=>{}); setTimeout(()=>window.close(), 350); };
   window.ChatRooms?.refresh();
   highlight();
@@ -610,8 +621,7 @@ function renderCanvasNav(){
   nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
   nav.querySelector("[data-cn-more]")?.addEventListener("click", e => {
     e.stopPropagation();
-    const open = e.currentTarget.nextElementSibling.classList.toggle("open");
-    e.currentTarget.setAttribute("aria-expanded", String(open));
+    toggleMenu(e.currentTarget, e.currentTarget.nextElementSibling);
   });
   nav.querySelectorAll("[data-cn-sec]").forEach(b => b.onclick = () => selectSection(p.slug, b.dataset.cnSec));
   nav.querySelectorAll("[data-cn-prof]").forEach(b => b.onclick = () => selectProfile(b.dataset.cnProf, null));
@@ -729,8 +739,7 @@ const contentHead = (tab, summary) => `<div class="doc-head">
 
 async function renderContent(tab = "posts"){
   const from = _NAV_EXTRAS.from || null, focusArrived = !!_NAV_EXTRAS.focus;
-  // Fetches take time: only draw if the user is still on this tab.
-  const stillOn = () => STATE.view === "content" && STATE.tab === tab;
+  const stillOn = routeGuard();
   const projects = contentProjects();
   const profiles = projects.flatMap(p => p.profiles);
   const noProfiles = `<div class="empty">No profiles yet. Ask a teammate in chat to set one up.</div>`;
@@ -805,7 +814,9 @@ async function renderContent(tab = "posts"){
 async function renderFiles(){
   const p = wsProject();
   if (!p) { $("#main").innerHTML = `<div class="scroll"><div class="empty">Files live in each company's workspace.</div></div>`; return; }
+  const stillOn = routeGuard();
   const files = (await api(`/api/files?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).files || [];
+  if (!stillOn()) return;
   let filt = "all";
   const kinds = [...new Set(files.map(f => f.kind))];
   const draw = () => {
@@ -943,7 +954,9 @@ async function refreshViews(){
 }
 
 async function renderNeeds(){
+  const stillOn = routeGuard();
   const [tl] = await Promise.all([api("/api/timeline").catch(()=>[]), ensureIdRegistry()]);
+  if (!stillOn()) return;
   const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today=iso(new Date());
   const rows=[];
@@ -972,7 +985,9 @@ async function renderNeeds(){
 }
 
 async function renderOperations(){
+  const stillOn = routeGuard();
   const all = await api("/api/timeline");
+  if (!stillOn()) return;
   const items = all.filter(r=>r.kind==="activity");
   const statuses=["planned","running","blocked","done"];
   let FILT="active";
@@ -1013,6 +1028,7 @@ async function renderOperations(){
 // ── Team: bots as teammates, org chart + on/off. A switched-off bot's skills
 // roll up to its manager (server decides); Chief of Staff is always on.
 async function renderTeam(){
+  const stillOn = routeGuard();
   let costs = { bots: {}, total: {}, days: 30 };
   const draw = () => {
     const depth = b => { let d = 0, cur = b; while (cur && cur.reports_to !== "ceo" && d < 5) { cur = botById(cur.reports_to); d++; } return d; };
@@ -1052,7 +1068,7 @@ async function renderTeam(){
     <div class="scroll"><div class="help">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
   if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
   costs = await api(`/api/costs?ws=${encodeURIComponent(_WS)}`).catch(() => costs);
-  draw();
+  if (stillOn()) draw();
 }
 
 // ── Approvals inbox: proposals bots are waiting on you for (HQ: every company).
@@ -1754,8 +1770,9 @@ function sectionAddButtons(slug, section, p){
 }
 
 async function renderProjectSection(slug, section){
-  await refreshIdRegistry();
-  const [p] = await Promise.all([api(`/api/project/${slug}`), ensureIdRegistry()]);
+  const stillOn = routeGuard();
+  const [p] = await Promise.all([api(`/api/project/${slug}`), refreshIdRegistry()]);
+  if (!stillOn()) return;
   const title = (SECTIONS.find(s => s.key === section) || {}).label || section;
   const sec = (p.sections || {})[section] || {};
   const renderers = {
@@ -1881,7 +1898,9 @@ function toggleEvDetail(el, r){
 // the rows of `scope` (entity slugs) under the given `head`.
 async function renderTimeline({ scope = null, head = null } = {}){
   const again = () => renderTimeline({ scope, head });
+  const stillOn = routeGuard();
   const all = (await api("/api/timeline")).filter(r => !scope || scope.has(r.entity_slug));
+  if (!stillOn()) return;
   const kinds=["post","activity","milestone","experiment","feature"];
   const filtered = CAL.filter==="all" ? all : all.filter(r=>r.kind===CAL.filter);
   const byDay={}; filtered.forEach(r=>{ if(r.date){ (byDay[r.date]=byDay[r.date]||[]).push(r); } });
@@ -2034,7 +2053,9 @@ function showEventPopup(r){
   document.addEventListener("keydown", function esc(e){ if(e.key==="Escape"){ close(); document.removeEventListener("keydown",esc); } });
 }
 async function renderDay(dateStr){
+  const stillOn = routeGuard();
   const all = await api("/api/timeline").catch(()=>[]);
+  if (!stillOn()) return;
   const items = all.filter(r=>r.date===dateStr).sort((a,b)=>(a.kind||"").localeCompare(b.kind||""));
   const label = new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const body = items.length
@@ -2058,6 +2079,7 @@ async function renderDay(dateStr){
 }
 const PROFILE_SCROLL = {};  // slug -> last scrollTop of the post list, so back-navigation restores position
 const PROFILE_FILTER = {};  // slug -> selected post filter, so async refreshes do not reset the active tab
+const PROFILE_CHAN = {};    // slug -> selected channel filter, same reason
 // Profile filter chips: [key, label]. Scheduled/Unscheduled cut by date; the
 // rest are ContentView buckets.
 const PROFILE_FILTERS = [["scheduled", "Scheduled"], ["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"],
@@ -2071,16 +2093,18 @@ const inProfileFilter = (p, f) => f === "unscheduled" ? unscheduled(p)
 // channel filters, status filters) over the shared post rows, with bulk select.
 async function renderProfile(slug, initChanFilter){
   CURRENT_PROFILE_SLUG = slug;
+  const stillOn = routeGuard();
   const [posts, profData] = await Promise.all([
     api(`/api/profile/${slug}/posts`),
     api(`/api/profile/${slug}`),
     ensureIdRegistry(),
   ]);
+  if (!stillOn()) return;
   const profile = contentProjects().flatMap(p => p.profiles).find(pr => pr.slug === slug)
     || { slug, name: profData.name, channels: [] };
   const channels = profile.channels || [];
   let FILTER = PROFILE_FILTER[slug] || "all";
-  let CHAN_FILTER = initChanFilter||null;
+  let CHAN_FILTER = initChanFilter || PROFILE_CHAN[slug] || null;
   const matchFilter = p => inProfileFilter(p, FILTER) && (!CHAN_FILTER || (p.channels || []).includes(CHAN_FILTER));
   const SELECTED = new Set();  // post ids ticked for bulk actions
   const actions = `<button class="btn sm" id="addIdea">${icon("plus")} Add idea</button>
@@ -2140,7 +2164,7 @@ async function renderProfile(slug, initChanFilter){
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f; PROFILE_FILTER[slug] = FILTER;
     $("#main").querySelectorAll(".chip").forEach(x=>{ const on=x===c; x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); }); drawList(); });
   $("#main").querySelectorAll(".chan-pill").forEach(p=>p.onclick=()=>{
-    CHAN_FILTER = CHAN_FILTER===p.dataset.cf ? null : p.dataset.cf;
+    CHAN_FILTER = PROFILE_CHAN[slug] = CHAN_FILTER===p.dataset.cf ? null : p.dataset.cf;
     $("#main").querySelectorAll(".chan-pill").forEach(x=>x.classList.toggle("on",x.dataset.cf===CHAN_FILTER));
     $("#main").querySelectorAll(".chan-pill-wrap").forEach(x=>x.classList.toggle("on",x.querySelector(".chan-pill")?.dataset.cf===CHAN_FILTER));
     drawList(); });
@@ -2533,10 +2557,12 @@ function renderBriefBody(slot, brief, n, postId){
 
 // ── Post detail (replaces showDetail modal) ──────────────────────────────────
 async function renderPostDetail(id, profileSlug){
+  const stillOn = routeGuard();
   let detail;
   try{
     [detail] = await Promise.all([api(postUrl(id,profileSlug)), ensureIdRegistry()]);
   }catch(e){ return toast("✗ "+e.message); }
+  if (!stillOn()) return;
   const slot=detail.slot||{}, brief=detail.brief||null;
   CURRENT_PROFILE_SLUG = profileSlug || detail.profile_slug || null;
   CURRENT_POST = { id, slot, brief };
@@ -3417,10 +3443,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     paintRoomHeader();
     const thread = roomThreads[id];
     let opened = Promise.resolve();
-    if (!activeChatId || activeChatId !== thread) {
-      if (thread) opened = openChat(thread);
-      else { setActiveChat(null); showChat([]); statusEl.textContent = "Ready"; fetch("/api/chat-reset", { method: "POST" }).catch(() => {}); }
-    }
+    if (!activeChatId || activeChatId !== thread) opened = thread ? openChat(thread) : Promise.resolve(newChat());
     highlight();
     return opened;
   }
@@ -3431,6 +3454,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     wsRooms[a.ws] = a.room;   // so entering the workspace lands on this thread
     if (a.ws !== _WS) await window.Workspaces.switchTo(a.ws);
     else await selectRoom(a.room);
+    // The room may be gone (bot switched off): never answer in another thread.
+    if (activeChatId !== a.chat) { statusEl.textContent = "That thread is no longer open here"; return; }
     if (answer === "approved") send("Yes, approved.", { approval: "approved" });
   }
   window.ChatRooms = {
@@ -3477,9 +3502,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     stream.scrollTop = stream.scrollHeight;
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
+  // Bumped by every thread switch: a slow load drops out once you moved on.
+  let chatSeq = 0;
   async function openChat(id){
     if (busy) return busyNote();
+    const seq = ++chatSeq;
     const rec = await fetch(`/api/chats/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (seq !== chatSeq) return;
     if (!rec) { setActiveChat(null); showChat([]); return; }
     setActiveChat(rec.id, rec.title, rec.scope && rec.scope[0]); showChat(rec.messages);
     threadUsage = { tokens: rec.tokens || 0, cost: rec.cost || 0 };
@@ -3487,6 +3516,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   }
   function newChat(){
     if (busy) return busyNote();
+    chatSeq++;
     setActiveChat(null); showChat([]); statusEl.textContent = "Ready";
     fetch("/api/chat-reset", { method: "POST" }).catch(() => {});
   }
@@ -3910,6 +3940,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const CTX_ATTACH_CAP = 12000;
   const SKILL_TAG_RE = /(?:^|\s)\/([a-z][a-z0-9-]+)/;
   const WRITE_HINT_RE = /\b(save|commit|write|create|update|fill|populate|add|generate|draft|validate|assess|design|plan|build|launch|revise|brief|memo|intake|roadmap|experiment)\b/i;
+  // Marker lines the server strips (core/approvals.py MARKER_RE, server.py
+  // _CONSULT_RE), hidden while a reply streams. Same shapes, so prose that
+  // merely starts with "Approval" or "Consult" stays visible.
+  const APPROVAL_LINE_RE = /^[ \t>*_-]*APPROVAL:.*$/gm;
+  const CONSULT_LINE_RE = /^[ \t>*_-]*CONSULT[*_ \t]+@[a-z][a-z0-9-]*[*_ \t]*:.*$/gim;
+  const hideMarkers = text => text.replace(APPROVAL_LINE_RE, "").replace(CONSULT_LINE_RE, "").trimEnd();
   const CONTINUATION_RE = /\b(yes|yep|yeah|ok|okay|sure|go ahead|save|commit|do it|approved|looks good|next tab|proceed|continue|save all)\b/i;
   const CTX_PORTFOLIO_KW = /\b(all posts|other posts|how many posts|list posts|what posts|calendar|timeline|projects?|profiles?|portfolio)\b/i;
 
@@ -4260,13 +4296,13 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               if (r.bubble === bubble) full = obj.clean;
             }
             if (obj.approval) { _APPROVALS.unshift(obj.approval); replyAt(obj.msg).meta.approval = obj.approval; }
-            if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
+            if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); reader.cancel().catch(() => {}); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
               // one on a fresh line so thoughts don't run together ("week.14").
               if (pendingBreak && full && !full.endsWith("\n")) full += "\n";
               pendingBreak = false;
-              full += obj.delta; bubble.innerHTML = formatChatText(full.replace(/^[ \t>*_-]*(?:APPROVAL|CONSULT)\b.*$/gim, "").trimEnd()); stream.scrollTop = stream.scrollHeight;
+              full += obj.delta; bubble.innerHTML = formatChatText(hideMarkers(full)); stream.scrollTop = stream.scrollHeight;
             }
             if (obj.tool)  { addStep(obj.tool); pendingBreak = true; }
           } catch {}

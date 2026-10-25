@@ -55,7 +55,11 @@ class Flow(unittest.TestCase):
         server.chat_store.CHATS_DIR = self._chats
         self.tmp.cleanup()
 
-    def test_lead_consults_teammate_then_follows_up(self):
+    SID = "44444444-0000-0000-0000-000000000000"
+
+    def turn(self, lead_runs, user_msg="@cmo set our pricing"):
+        """Run one chat turn. lead_runs: the events each lead run yields, in order.
+        Returns (SSE events, teammate sessions, prompts the lead got)."""
         lead_prompts, mates = [], []
 
         class Lead:
@@ -64,7 +68,7 @@ class Flow(unittest.TestCase):
             _last_skill = None
             _skill_explicit = False
             _last_bot = None
-            session_id = "44444444-0000-0000-0000-000000000000"
+            session_id = self.SID
 
             def is_fresh(self):
                 return False
@@ -77,11 +81,7 @@ class Flow(unittest.TestCase):
 
             def ask(self, text, **kw):
                 lead_prompts.append(text)
-                if len(lead_prompts) == 1:
-                    yield ("delta", "Let me check prices.\nCONSULT @research: cheapest 3 rivals?")
-                else:
-                    yield ("delta", "Go with 29/month.\nAPPROVAL: Pricing memo v1 for Acme")
-                yield ("done", {"tokens": 1000, "cost": 0.01})
+                yield from lead_runs[len(lead_prompts) - 1]
 
         class Mate:
             def __init__(self, repo_dir, rail):
@@ -103,10 +103,19 @@ class Flow(unittest.TestCase):
                 mock.patch.object(server, "state_snapshot", side_effect=lambda p, only=None: "SNAP"), \
                 mock.patch.object(server, "get_chat_session", return_value=Lead()), \
                 mock.patch.object(server.chat_session, "ChatSession", Mate):
-            h._handle_ask({"messages": [{"role": "user", "content": "@cmo set our pricing"}],
-                           "room_id": "acme/general", "chat_id": Lead.session_id})
+            h._handle_ask({"messages": [{"role": "user", "content": user_msg}],
+                           "room_id": "acme/general", "chat_id": self.SID})
         events = [json.loads(l[6:]) for l in sink.getvalue().decode().splitlines()
                   if l.startswith("data: {")]
+        return events, mates, lead_prompts
+
+    def test_lead_consults_teammate_then_follows_up(self):
+        events, mates, lead_prompts = self.turn([
+            [("delta", "Let me check prices.\nCONSULT @research: cheapest 3 rivals?"),
+             ("done", {"tokens": 1000, "cost": 0.01})],
+            [("delta", "Go with 29/month.\nAPPROVAL: Pricing memo v1 for Acme"),
+             ("done", {"tokens": 1000, "cost": 0.01})],
+        ])
         starts = [e["msg_start"] for e in events if "msg_start" in e]
         self.assertEqual([(x["id"], x.get("asked_by")) for x in starts], [("research", "cmo"), ("cmo", None)])
         self.assertTrue(mates[0].readonly)
@@ -114,14 +123,35 @@ class Flow(unittest.TestCase):
         self.assertIn("read-only", mates[0].prompt)
         self.assertNotIn("remember --bot", mates[0].prompt)
         self.assertIn("A at 19", lead_prompts[1])
-        msgs = server.chat_store.load(Lead.session_id)["messages"]
+        msgs = server.chat_store.load(self.SID)["messages"]
         self.assertEqual([(m["role"], m.get("bot"), m.get("asked_by")) for m in msgs],
                          [("user", None, None), ("assistant", "cmo", None),
                           ("assistant", "research", "cmo"), ("assistant", "cmo", None)])
         self.assertEqual(msgs[1]["content"], "Let me check prices.")
         self.assertEqual(msgs[3]["content"], "Go with 29/month.")
         self.assertIn("approval", msgs[3])
-        self.assertEqual(server.chat_store.load(Lead.session_id)["tokens"], 2400)
+        self.assertEqual(server.chat_store.load(self.SID)["tokens"], 2400)
+
+    def test_approval_in_the_lead_first_message_is_recorded_even_with_consults(self):
+        events, _, _ = self.turn([
+            [("delta", "Draft ready.\nCONSULT @research: rivals?\nAPPROVAL: Positioning memo"),
+             ("done", {})],
+            [("delta", "Research agrees."), ("done", {})],
+        ])
+        msgs = server.chat_store.load(self.SID)["messages"]
+        self.assertEqual(msgs[1]["content"], "Draft ready.")
+        self.assertIn("approval", msgs[1])
+        ap = [e for e in events if "approval" in e]
+        self.assertEqual((ap[0]["approval"]["summary"], ap[0]["msg"]), ("Positioning memo", 0))
+        self.assertNotIn("APPROVAL", [e for e in events if e.get("msg") == 0 and "clean" in e][-1]["clean"])
+
+    def test_failed_lead_run_stops_the_turn(self):
+        events, mates, lead_prompts = self.turn([
+            [("delta", "CONSULT @research: rivals?"), ("error", "claude exited 1")],
+        ], user_msg="@cmo @gtm set our pricing")
+        self.assertEqual(mates, [])            # no teammate spends tokens after the error
+        self.assertEqual(len(lead_prompts), 1)  # and no follow-up
+        self.assertEqual([e["error"] for e in events if "error" in e], ["claude exited 1"])
 
 
 class ReadOnly(unittest.TestCase):

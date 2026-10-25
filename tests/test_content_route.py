@@ -135,3 +135,38 @@ def test_deliverable_subtitle_lists_channels():
     js = APP_JS.read_text(encoding="utf-8")
     start = js.index("function decorateReply(")
     assert "delivChannels(" in js[start:start + 3000]
+
+
+# ---- efficiency and bug pass ----
+
+def test_menus_share_one_toggle_that_tracks_its_own_button():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "function toggleMenu(btn, menu)" in js
+    assert "previousElementSibling?.setAttribute" not in js   # brand menu's sibling is the compose button
+    assert 'toggleMenu(e.currentTarget, $("#brand-menu"))' in js
+    assert "toggleMenu(e.currentTarget, e.currentTarget.nextElementSibling)" in js
+
+
+def test_async_views_skip_drawing_after_the_route_changed():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "ROUTE_SEQ += 1;" in js[js.index("function parseRoute("):]
+    for fn in ("async function renderContent(", "async function renderProfile(", "async function renderPostDetail(",
+               "async function renderFiles(", "async function renderTimeline(", "async function renderDay(",
+               "async function renderTeam(", "async function renderOperations(", "async function renderNeeds(",
+               "async function renderProjectSection("):
+        start = js.index(fn)
+        body = js[start:js.index("\n}\n", start)]
+        assert "routeGuard()" in body, fn
+
+
+def test_rail_loads_the_id_registry_once():
+    js = APP_JS.read_text(encoding="utf-8")
+    start = js.index("async function renderRail(")
+    body = js[start:js.index("\n}\n", start)]
+    assert "ensureIdRegistry()" not in body
+
+
+def test_profile_redraws_keep_the_channel_filter():
+    js = APP_JS.read_text(encoding="utf-8")
+    assert "let CHAN_FILTER = initChanFilter || PROFILE_CHAN[slug] || null;" in js
+    assert "CHAN_FILTER = PROFILE_CHAN[slug] =" in js

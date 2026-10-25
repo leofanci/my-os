@@ -7,6 +7,7 @@ through this CLI, so the authored-files-are-truth invariant cannot be bypassed.
 """
 import argparse
 import fnmatch
+import functools
 import json
 import os
 import sys
@@ -50,10 +51,13 @@ _PRIVATE_PREFIXES = ("chats/", "team/", "portfolio/", "database/", "os.db")
 _OWNER_ARGS = ("project", "entity", "profile", "product", "slug", "id", "channel")
 
 
+@functools.cache
 def _owners():
-    """slug/id → owning project, for every entity in the index."""
+    """slug/id → owning project, for every entity in the index. Built once per
+    command (main clears it), however many checks ask."""
+    tree, posts = db.tree(), db.posts()
     own = {}
-    for proj in db.tree():
+    for proj in tree:
         own[proj["slug"]] = proj["slug"]
         for prof in proj.get("profiles", []):
             own[prof["slug"]] = proj["slug"]
@@ -61,14 +65,14 @@ def _owners():
                 own[ch["slug"]] = proj["slug"]
         for prod in proj.get("products", []):
             own[prod["slug"]] = proj["slug"]
-    for post in db.posts():
+    for post in posts:
         if post.get("profile_slug") in own:
             own[post["id"]] = own[post["profile_slug"]]
     for ms in db._rows("SELECT id, entity_slug FROM milestones"):
         if ms.get("id") and ms.get("entity_slug") in own:
             own[str(ms["id"]).lower()] = own[ms["entity_slug"]]
     try:
-        reg = build_id_registry(db.tree(), db.posts(), root=fileops.ROOT)
+        reg = build_id_registry(tree, posts, root=fileops.ROOT)
         for entry in reg.entries:
             if entry.get("kind") == "project" and (entry.get("ref") or {}).get("project"):
                 own[entry["id"]] = entry["ref"]["project"]
@@ -95,11 +99,17 @@ def _guard(args, ws):
             raise fileops.ActionError(f"'{value}' belongs to another workspace")
     path = getattr(args, "path", None)
     if isinstance(path, str) and path:
-        rel = os.path.normpath(path).lstrip("./")
+        # Resolve the way read-file does, then compare lowercased: absolute
+        # paths, "..", symlinks and a case-insensitive disk all land here.
+        root = fileops.ROOT.resolve()
+        try:
+            rel = (root / path).resolve().relative_to(root).as_posix().lower()
+        except ValueError:
+            raise fileops.ActionError("that file is outside this workspace") from None
         if rel.startswith(_PRIVATE_PREFIXES):
             raise fileops.ActionError("that file holds every workspace's data; not readable here")
-        parts = rel.split(os.sep)
-        if parts[0] == "projects" and len(parts) > 1 and parts[1] != ws:
+        parts = rel.split("/")
+        if parts[0] == "projects" and len(parts) > 1 and parts[1] != ws.lower():
             raise fileops.ActionError("that file belongs to another workspace")
 
 
@@ -430,11 +440,12 @@ def _build_parser():
     p.add_argument("--to", dest="date_to", help="YYYY-MM-DD (default: same day)")
     def _get_busy(a):
         ws, end = _workspace(), a.date_to or a.date_from
+        own = _owners() if ws else {}
         slots = []
         for act in fileops.timed_activities():
             if not (a.date_from <= act["date"] <= end):
                 continue
-            mine = not ws or act["entity"] == ws
+            mine = not ws or act["entity"] == ws or own.get(str(act["entity"]).lower()) == ws
             slots.append({"date": act["date"], "time": act["time"], "time_end": act["time_end"],
                           "title": act["title"] if mine else "busy (another workspace)",
                           "entity": act["entity"] if mine else None})
@@ -839,6 +850,7 @@ def _brief_field_value(brief: dict, field: str):
 def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
+    _owners.cache_clear()
     try:
         if os.environ.get("MYOS_READONLY") and args.cmd not in _READ_ONLY_CMDS:
             raise fileops.ActionError("read-only: you were consulted. Tell your teammate "
