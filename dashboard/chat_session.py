@@ -15,9 +15,11 @@ stream_event/content_block_start/tool_use, and the turn ends with a top-level
 `result` line. A plain-text stdin turn (no positional prompt) is accepted.
 """
 import json
+import os
 import re
 import subprocess
 import uuid
+from pathlib import Path
 
 
 def parse_event(obj):
@@ -35,7 +37,11 @@ def parse_event(obj):
             if block.get("type") == "tool_use":
                 return ("tool", block.get("name", ""))
     elif t == "result":
-        return ("done", {"result": obj.get("result"), "subtype": obj.get("subtype")})
+        usage = obj.get("usage") or {}
+        tokens = sum(int(usage.get(k) or 0) for k in (
+            "input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
+        return ("done", {"result": obj.get("result"), "subtype": obj.get("subtype"),
+                         "tokens": tokens, "cost": obj.get("total_cost_usd")})
     return (None, None)
 
 
@@ -91,6 +97,13 @@ SECRET_FILE_GLOBS = [
     "credentials*.json", "secrets.*", "id_rsa*", "id_ed25519*",
     ".auth-token",  # dashboard login token (server.TOKEN_FILE)
 ]
+
+
+def private_read_rules(repo_dir):
+    """Read denies for every turn: Claude's config keeps each bot session's
+    transcript (all workspaces), and server.log lists their ids."""
+    return [f"Read(/{Path.home() / '.claude'}/**)",
+            f"Read(/{Path(repo_dir).resolve() / 'dashboard' / 'server.log'})"]
 # Tools loaded EVERY turn. Skills are NOT loaded via the Skill tool — that costs
 # ~4k tok of discovery (35 descriptions, incl. useless built-ins) just to let the
 # model pick one. Instead the server routes to the ONE relevant skill and injects
@@ -131,6 +144,13 @@ class ChatSession:
         self._skill_explicit = False  # True when user tagged @/skill (Sonnet gate)
         self._pending_skill = None
         self._pending_skill_explicit = False
+        self._last_bot = None  # bot that spoke last (server routes untagged turns to it)
+        self._pending_bot = None
+        # Workspace isolation, set by the server before each turn: osctl reads
+        # MYOS_WORKSPACE; deny_dirs are other workspaces' folders (no Read/Grep).
+        self.workspace = None
+        self.deny_dirs = ()
+        self.readonly = False  # a consulted teammate: osctl refuses every write
 
     @classmethod
     def restore(cls, repo_dir, rail, rec, **kw):
@@ -140,6 +160,7 @@ class ChatSession:
         sess._turn_count = int(rec.get("turn_count") or 0)
         sess._last_skill = rec.get("last_skill")
         sess._skill_explicit = bool(rec.get("skill_explicit"))
+        sess._last_bot = rec.get("last_bot")
         return sess
 
     def is_fresh(self):
@@ -179,8 +200,10 @@ class ChatSession:
                          + (WEB_ALLOWED_TOOLS if with_web else [])
                          + (web_fetch_rules(web_domains) if with_web else []))
         denied = [f"Read(**/{g})" for g in SECRET_FILE_GLOBS]
+        denied += private_read_rules(self.repo_dir)
         if workspace_dir and file_search_mode:
             denied += [f"Read(/{workspace_dir}/**/{g})" for g in SECRET_FILE_GLOBS]
+        denied += [f"Read(/{d}/**)" for d in self.deny_dirs]
         cmd = [self.claude_bin, "-p",
                "--output-format", "stream-json",
                "--include-partial-messages",
@@ -218,6 +241,8 @@ class ChatSession:
             self._base_cmd(with_web, model, workspace_dir, file_search_mode,
                            web_domains),
             cwd=self.repo_dir,
+            env={**os.environ, "MYOS_WORKSPACE": self.workspace or "hq",
+                 **({"MYOS_READONLY": "1"} if self.readonly else {})},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
         self._started = True
@@ -246,6 +271,9 @@ class ChatSession:
                     self._skill_explicit = self._pending_skill_explicit
                 self._pending_skill = None
                 self._pending_skill_explicit = False
+                if self._pending_bot:
+                    self._last_bot = self._pending_bot
+                self._pending_bot = None
         finally:
             for stream in (proc.stdout, proc.stderr):
                 try:
@@ -258,6 +286,10 @@ class ChatSession:
         """Record routed skill for this turn (applied after successful completion)."""
         self._pending_skill = skill
         self._pending_skill_explicit = bool(explicit and skill)
+
+    def note_bot(self, bot_id):
+        """Record the speaking bot for this turn (applied after successful completion)."""
+        self._pending_bot = bot_id
 
     def close(self):
         """Terminate any in-flight turn. Safe to call when idle (no-op)."""

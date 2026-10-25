@@ -1,78 +1,114 @@
+/* Self-hosted fonts (SIL OFL 1.1, see /vendor/fonts/OFL.txt). System stacks are the fallback. */
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("/vendor/fonts/instrument-sans-400.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("/vendor/fonts/instrument-sans-500.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("/vendor/fonts/instrument-sans-600.woff2") format("woff2"); }
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("/vendor/fonts/instrument-sans-700.woff2") format("woff2"); }
+@font-face { font-family: "Newsreader"; font-style: normal; font-weight: 500; font-display: swap; src: url("/vendor/fonts/newsreader-500.woff2") format("woff2"); }
+@font-face { font-family: "Newsreader"; font-style: normal; font-weight: 600; font-display: swap; src: url("/vendor/fonts/newsreader-600.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("/vendor/fonts/jetbrains-mono-500.woff2") format("woff2"); }
+
 :root {
-  /* Color system. Text values meet WCAG AA on primary surfaces. */
-  --ui-color-canvas: #F3F2EF;
+  color-scheme: light;
+
+  /* Graphite + indigo. Text values meet WCAG AA on primary surfaces. */
+  --ui-color-canvas: #F4F4F6;
   --ui-color-surface: #FFFFFF;
-  --ui-color-surface-subtle: #F8F7F4;
-  --ui-color-surface-muted: #FAF9F7;
-  --ui-color-rail: #F7F7F5;
-  --ui-color-nav-active: rgba(37, 35, 31, .075);
-  --ui-color-text: #25231F;
-  --ui-color-text-secondary: #625E57;
-  --ui-color-text-muted: #706A62;
-  --ui-color-accent: #B54A2B;
-  --ui-color-accent-hover: #A94328;
-  --ui-color-accent-soft: rgba(181, 74, 43, .10);
-  --ui-color-success: #2F7159;
-  --ui-color-success-soft: rgba(47, 113, 89, .11);
-  --ui-color-warning: #8A5A16;
-  --ui-color-warning-soft: rgba(138, 90, 22, .12);
-  --ui-color-danger: #A13F2A;
-  --ui-color-danger-soft: rgba(161, 63, 42, .10);
-  --ui-color-danger-border: rgba(161, 63, 42, .28);
-  --ui-color-border-subtle: rgba(37, 35, 31, .09);
-  --ui-color-border: rgba(37, 35, 31, .14);
-  --ui-color-neutral-soft: rgba(37, 35, 31, .055);
-  --ui-color-hover: rgba(37, 35, 31, .045);
-  --ui-color-terminal: #20201F;
-  --ui-color-terminal-text: #CFD3DC;
-  --ui-color-terminal-muted: #8A90A0;
+  --ui-color-surface-subtle: #F8F8FA;
+  --ui-color-surface-muted: #EDEDF0;
+  --ui-color-rail: #17181C;
+  --ui-color-rail-deep: #0F1013;
+  --ui-color-rail-text: #B5B9C2;
+  --ui-color-rail-text-strong: #FFFFFF;
+  --ui-color-rail-muted: #7D828C;
+  --ui-color-rail-hover: rgba(255, 255, 255, .06);
+  --ui-color-nav-active: #2C2F38;
+  --ui-color-signal: #A5B4FC;
+  --ui-color-signal-ink: #17181C;
+  --ui-color-text: #1B1D22;
+  --ui-color-text-secondary: #4A4E57;
+  --ui-color-text-muted: #666B75;
+  --ui-color-accent: #4F46E5;
+  --ui-color-accent-hover: #4338CA;
+  --ui-color-accent-soft: rgba(79, 70, 229, .08);
+  --ui-color-accent-line: rgba(79, 70, 229, .35);
+  --ui-color-on-accent: #FFFFFF;
+  --ui-color-success: #2B7549;
+  --ui-color-success-soft: rgba(43, 117, 73, .10);
+  --ui-color-warning: #8A5A00;
+  --ui-color-warning-soft: rgba(148, 98, 0, .10);
+  --ui-color-danger: #B3372D;
+  --ui-color-danger-soft: rgba(179, 55, 45, .09);
+  --ui-color-danger-border: rgba(179, 55, 45, .30);
+  --ui-color-border-subtle: rgba(20, 22, 28, .07);
+  --ui-color-border: rgba(20, 22, 28, .12);
+  --ui-color-border-strong: rgba(20, 22, 28, .22);
+  --ui-color-neutral-soft: rgba(20, 22, 28, .06);
+  --ui-color-hover: rgba(20, 22, 28, .04);
+  --ui-color-scrim: rgba(8, 9, 12, .45);
+  --ui-color-terminal: #141518;
+  --ui-color-terminal-text: #CFD2D8;
+  --ui-color-terminal-muted: #8A8E98;
   --ui-color-terminal-surface: rgba(255, 255, 255, .06);
   --ui-color-terminal-hover: rgba(255, 255, 255, .11);
   --ui-color-terminal-control: rgba(255, 255, 255, .08);
-  --ui-color-toast: rgba(27, 31, 39, .92);
+  --ui-color-toast: rgba(23, 24, 28, .94);
 
-  /* Semantic item and workflow colors. */
-  --ui-status-idea: var(--ui-color-warning);
-  --ui-status-draft: #7655AA;
-  --ui-status-draft-soft: rgba(118, 85, 170, .14);
-  --ui-status-ready: var(--ui-color-accent);
-  --ui-status-published: var(--ui-color-success);
-  --ui-status-archived: var(--ui-color-text-muted);
-  --ui-status-archived-soft: rgba(120, 114, 106, .12);
+  /* Post status: always dot + label, never color alone. */
+  --ui-status-idea: #8A5A00;
+  --ui-status-idea-soft: rgba(148, 98, 0, .10);
+  --ui-status-draft: #3B5FB5;
+  --ui-status-draft-soft: rgba(59, 95, 181, .10);
+  --ui-status-ready: #7445B8;
+  --ui-status-ready-soft: rgba(116, 69, 184, .10);
+  --ui-status-published: #2B7549;
+  --ui-status-published-soft: rgba(43, 117, 73, .10);
+  --ui-status-archived: #666B75;
+  --ui-status-archived-soft: rgba(102, 107, 117, .12);
+
+  /* Calendar item kinds. */
   --ui-kind-post: var(--ui-color-accent);
-  --ui-kind-activity: #456AA5;
-  --ui-kind-activity-soft: rgba(69, 106, 165, .13);
+  --ui-kind-activity: #3F64A0;
+  --ui-kind-activity-soft: rgba(63, 100, 160, .13);
   --ui-kind-experiment: #A04773;
   --ui-kind-experiment-soft: rgba(160, 71, 115, .13);
   --ui-kind-milestone: #596779;
   --ui-kind-milestone-soft: rgba(89, 103, 121, .13);
-  --ui-kind-feature: #1B756D;
-  --ui-kind-feature-soft: rgba(27, 117, 109, .13);
+  --ui-kind-feature: #0E6A82;
+  --ui-kind-feature-soft: rgba(14, 106, 130, .13);
 
-  /* Stable project identity colors used by navigation dots. */
-  --ui-project-color-1: #B54A2B;
-  --ui-project-color-2: #456AA5;
-  --ui-project-color-3: #7655AA;
-  --ui-project-color-4: #2F7159;
+  /* Identity hues for profiles, bots and project tiles. */
+  --ui-id-ocean-bg: #DCE8F7;
+  --ui-id-ocean-fg: #1F4E8C;
+  --ui-id-clay-bg: #F6E1D8;
+  --ui-id-clay-fg: #8E3B1E;
+  --ui-id-plum-bg: #EFE0F0;
+  --ui-id-plum-fg: #6B2F72;
+  --ui-id-ochre-bg: #F4E9C9;
+  --ui-id-ochre-fg: #6E4F00;
+  --ui-id-slate-bg: #E3E7EC;
+  --ui-id-slate-fg: #3A4654;
+  --ui-id-rose-bg: #F6E0E7;
+  --ui-id-rose-fg: #8E2A4B;
 
-  /* Typography. Native SF Pro keeps macOS desktop rendering precise. */
-  --ui-font-sans: "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --ui-font-display: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --ui-font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
-  --ui-type-micro: 10px;
-  --ui-type-caption: 11px;
-  --ui-type-label: 12px;
+  /* Typography (compact). Newsreader is for canvas document titles only. */
+  --ui-font-sans: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --ui-font-display: "Newsreader", Georgia, "Times New Roman", serif;
+  --ui-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ui-type-micro: 10.5px;
+  --ui-type-caption: 11.5px;
+  --ui-type-label: 12.5px;
   --ui-type-control: 13px;
   --ui-type-body: 14px;
-  --ui-type-subtitle: 16px;
-  --ui-type-title: 22px;
+  --ui-type-subtitle: 15.5px;
+  --ui-type-title: 19px;
+  --ui-type-display: 25px;
   --ui-line-tight: 1.15;
   --ui-line-control: 1.3;
   --ui-line-body: 1.5;
   --ui-weight-regular: 400;
   --ui-weight-medium: 500;
   --ui-weight-semibold: 600;
-  --ui-weight-title: 650;
+  --ui-weight-title: 700;
 
   /* 4px spacing scale. */
   --ui-space-0: 0;
@@ -94,113 +130,200 @@
   --ui-space-6-5: 26px;
   --ui-space-8: 32px;
 
-  /* Shape and elevation. Shadows indicate overlap only. */
+  /* Shape and elevation. Pills only for counters, status and filter chips. */
   --ui-radius-inline: 4px;
-  --ui-radius-small: 6px;
-  --ui-radius-control: 7px;
+  --ui-radius-small: 5px;
+  --ui-radius-control: 6px;
   --ui-radius-card: 8px;
-  --ui-radius-calendar: 9px;
-  --ui-radius-menu: 10px;
-  --ui-radius-panel: 12px;
+  --ui-radius-calendar: 8px;
+  --ui-radius-menu: 8px;
+  --ui-radius-panel: 10px;
   --ui-radius-pill: 999px;
-  --ui-shadow-flat: none;
-  --ui-shadow-sticky: 0 1px 2px rgba(37, 35, 31, .08);
-  --ui-shadow-menu: 0 8px 24px rgba(37, 35, 31, .12);
-  --ui-shadow-modal: 0 16px 48px rgba(37, 35, 31, .14);
+  --ui-radius-avatar-bot: 7px;
+  --ui-shadow-raise: 0 1px 2px rgba(20, 22, 28, .05);
+  --ui-shadow-sticky: 0 1px 2px rgba(20, 22, 28, .08);
+  --ui-shadow-menu: 0 10px 28px -6px rgba(20, 22, 28, .22), 0 0 0 1px rgba(20, 22, 28, .06);
+  --ui-shadow-modal: 0 16px 48px rgba(20, 22, 28, .18);
+  --ui-focus: 0 0 0 2px var(--ui-color-surface), 0 0 0 4px var(--ui-color-accent);
 
   /* Control and hit-target dimensions. */
-  --ui-control-dense: 28px;
-  --ui-control-default: 32px;
-  --ui-control-input: 36px;
-  --ui-control-prominent: 40px;
+  --ui-control-dense: 24px;
+  --ui-control-default: 28px;
+  --ui-control-input: 32px;
   --ui-control-touch: 44px;
   --ui-icon: 16px;
+  --ui-avatar: 24px;
   --ui-scrollbar-size: 8px;
-  --ui-rail-row: 30px;
-  --ui-project-dot: 7px;
+  --ui-rail-row: 26px;
 
   /* Shell and reading geometry. */
+  --ws-bar-w: 56px;
+  --canvas-w: 540px;
   --ui-titlebar-height: 28px;
-  --ui-shell-nav: 228px;
-  --ui-shell-nav-compact: 208px;
-  --ui-shell-nav-wide: 240px;
-  --ui-shell-assistant-default: 360px;
-  --ui-shell-assistant-min: 300px;
-  --ui-shell-assistant-max: 1200px;
-  /* Chat may widen until the center workspace would drop below this. */
+  --ui-shell-nav: 232px;
+  --ui-shell-nav-wide: 248px;
+  --ui-shell-assistant-min: 320px;
+  /* The canvas may widen until the chat would drop below this. */
   --ui-shell-center-min: 440px;
-  --ui-shell-assistant-compact: 300px;
-  --ui-shell-assistant-overlay-max: 1200px;
-  --ui-shell-assistant-height-default: 380px;
-  --ui-shell-assistant-height-min: 220px;
-  --ui-shell-assistant-height-max: 720px;
-  --ui-shell-gap: 8px;
   --ui-page-padding: 20px;
   --ui-page-padding-wide: 24px;
-  --ui-reading-width: 760px;
+  --ui-doc-width: 680px;
   --ui-form-width: 640px;
-  --ui-profile-width: 780px;
-  --ui-header-height: 72px;
-  --ui-terminal-collapsed: 34px;
+  --ui-header-height: 52px;
+  --ui-terminal-collapsed: 32px;
   --ui-terminal-open: 360px;
   --ui-terminal-font-size: 12px;
-  --ui-calendar-day-min: 102px;
+  --ui-calendar-day-min: 96px;
   --ui-editor-min-height: 120px;
-  /* CSS media queries mirror these documented breakpoints because custom properties are not valid media-query operands. */
-  --ui-breakpoint-assistant-overlay: 1440px;
-  --ui-breakpoint-header-stack: 1100px;
-  --ui-breakpoint-wide: 1500px;
+  /* CSS media queries mirror these breakpoints because custom properties are not valid media-query operands. */
+  --ui-breakpoint-canvas-overlay: 1280px;
+  --ui-breakpoint-nav-drawer: 860px;
 
   /* Motion. Operational rows never translate on hover. */
   --ui-motion-fast: 120ms;
   --ui-motion-standard: 160ms;
   --ui-ease-standard: cubic-bezier(.2, 0, 0, 1);
+}
 
-  /* Compatibility aliases for existing component code. */
-  --canvas: var(--ui-color-canvas);
-  --ink: var(--ui-color-text);
-  --ink2: var(--ui-color-text-secondary);
-  --dim: var(--ui-color-text-muted);
-  --navy: var(--ui-color-accent);
-  --navy-soft: var(--ui-color-accent-soft);
-  --graphite: var(--ui-color-text-secondary);
-  --graphite-soft: var(--ui-color-neutral-soft);
-  --sky: var(--ui-color-accent);
-  --sky-soft: var(--ui-color-accent-soft);
-  --teal: var(--ui-color-success);
-  --teal-soft: var(--ui-color-success-soft);
-  --amber: var(--ui-color-warning);
-  --amber-soft: var(--ui-color-warning-soft);
-  --ok: var(--ui-color-success);
-  --ok-soft: var(--ui-color-success-soft);
-  --glass: var(--ui-color-surface);
-  --glass2: var(--ui-color-surface);
-  --panel-chat: var(--ui-color-surface-subtle);
-  --gline: var(--ui-color-border-subtle);
-  --hair: var(--ui-color-border);
-  --shadow: var(--ui-shadow-menu);
-  --r-panel: var(--ui-radius-panel);
-  --r-card: var(--ui-radius-card);
-  --r-sm: var(--ui-radius-control);
-  --r-pill: var(--ui-radius-pill);
-  --disp: var(--ui-font-display);
-  --body: var(--ui-font-sans);
-  --s-idea: var(--ui-status-idea);
-  --s-draft: var(--ui-status-draft);
-  --s-ready: var(--ui-status-ready);
-  --s-published: var(--ui-status-published);
-  --s-archived: var(--ui-status-archived);
-  --k-post: var(--ui-kind-post);
-  --k-activity: var(--ui-kind-activity);
-  --k-activity-soft: var(--ui-kind-activity-soft);
-  --k-experiment: var(--ui-kind-experiment);
-  --k-experiment-soft: var(--ui-kind-experiment-soft);
-  --k-milestone: var(--ui-kind-milestone);
-  --k-milestone-soft: var(--ui-kind-milestone-soft);
-  --k-feature: var(--ui-kind-feature);
-  --k-feature-soft: var(--ui-kind-feature-soft);
-  --chat-w: var(--ui-shell-assistant-default);
-  --chat-h: var(--ui-shell-assistant-height-default);
+/* Dark theme: OS setting unless forced light; the same values again when forced dark. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ui-color-canvas: #111214;
+    --ui-color-surface: #18191C;
+    --ui-color-surface-subtle: #1D1F22;
+    --ui-color-surface-muted: #26282C;
+    --ui-color-rail: #0E0F11;
+    --ui-color-rail-deep: #08090A;
+    --ui-color-rail-text: #B0B3BA;
+    --ui-color-rail-text-strong: #F2F3F5;
+    --ui-color-rail-muted: #7A7E86;
+    --ui-color-nav-active: #26282E;
+    --ui-color-text: #E6E7EA;
+    --ui-color-text-secondary: #B4B7BE;
+    --ui-color-text-muted: #8D919A;
+    --ui-color-accent: #8B8CF8;
+    --ui-color-accent-hover: #A5A6FA;
+    --ui-color-accent-soft: rgba(139, 140, 248, .14);
+    --ui-color-accent-line: rgba(139, 140, 248, .40);
+    --ui-color-on-accent: #11122A;
+    --ui-color-success: #5CC28A;
+    --ui-color-success-soft: rgba(92, 194, 138, .13);
+    --ui-color-warning: #E0B04A;
+    --ui-color-warning-soft: rgba(224, 176, 74, .13);
+    --ui-color-danger: #F07A6E;
+    --ui-color-danger-soft: rgba(240, 122, 110, .12);
+    --ui-color-danger-border: rgba(240, 122, 110, .35);
+    --ui-color-border-subtle: rgba(255, 255, 255, .06);
+    --ui-color-border: rgba(255, 255, 255, .10);
+    --ui-color-border-strong: rgba(255, 255, 255, .20);
+    --ui-color-neutral-soft: rgba(255, 255, 255, .07);
+    --ui-color-hover: rgba(255, 255, 255, .04);
+    --ui-color-scrim: rgba(0, 0, 0, .55);
+    --ui-status-idea: #E0B04A;
+    --ui-status-idea-soft: rgba(224, 176, 74, .13);
+    --ui-status-draft: #86A6F0;
+    --ui-status-draft-soft: rgba(134, 166, 240, .13);
+    --ui-status-ready: #B994F0;
+    --ui-status-ready-soft: rgba(185, 148, 240, .13);
+    --ui-status-published: #5CC28A;
+    --ui-status-published-soft: rgba(92, 194, 138, .13);
+    --ui-status-archived: #8D919A;
+    --ui-status-archived-soft: rgba(141, 145, 154, .14);
+    --ui-kind-activity: #8FB0E8;
+    --ui-kind-activity-soft: rgba(143, 176, 232, .14);
+    --ui-kind-experiment: #E39BC0;
+    --ui-kind-experiment-soft: rgba(227, 155, 192, .14);
+    --ui-kind-milestone: #A9B5C4;
+    --ui-kind-milestone-soft: rgba(169, 181, 196, .14);
+    --ui-kind-feature: #67C7DB;
+    --ui-kind-feature-soft: rgba(103, 199, 219, .14);
+    --ui-id-ocean-bg: #18304F;
+    --ui-id-ocean-fg: #9EC3F2;
+    --ui-id-clay-bg: #43251B;
+    --ui-id-clay-fg: #F2B39A;
+    --ui-id-plum-bg: #38213B;
+    --ui-id-plum-fg: #E2AEE6;
+    --ui-id-ochre-bg: #3A2F12;
+    --ui-id-ochre-fg: #EACB7A;
+    --ui-id-slate-bg: #253039;
+    --ui-id-slate-fg: #B6C3D1;
+    --ui-id-rose-bg: #3F1E2A;
+    --ui-id-rose-fg: #F2A9C0;
+    --ui-shadow-raise: 0 0 0 1px rgba(255, 255, 255, .04);
+    --ui-shadow-sticky: 0 1px 2px rgba(0, 0, 0, .4);
+    --ui-shadow-menu: 0 12px 32px -6px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .06);
+    --ui-shadow-modal: 0 16px 48px rgba(0, 0, 0, .6);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ui-color-canvas: #111214;
+  --ui-color-surface: #18191C;
+  --ui-color-surface-subtle: #1D1F22;
+  --ui-color-surface-muted: #26282C;
+  --ui-color-rail: #0E0F11;
+  --ui-color-rail-deep: #08090A;
+  --ui-color-rail-text: #B0B3BA;
+  --ui-color-rail-text-strong: #F2F3F5;
+  --ui-color-rail-muted: #7A7E86;
+  --ui-color-nav-active: #26282E;
+  --ui-color-text: #E6E7EA;
+  --ui-color-text-secondary: #B4B7BE;
+  --ui-color-text-muted: #8D919A;
+  --ui-color-accent: #8B8CF8;
+  --ui-color-accent-hover: #A5A6FA;
+  --ui-color-accent-soft: rgba(139, 140, 248, .14);
+  --ui-color-accent-line: rgba(139, 140, 248, .40);
+  --ui-color-on-accent: #11122A;
+  --ui-color-success: #5CC28A;
+  --ui-color-success-soft: rgba(92, 194, 138, .13);
+  --ui-color-warning: #E0B04A;
+  --ui-color-warning-soft: rgba(224, 176, 74, .13);
+  --ui-color-danger: #F07A6E;
+  --ui-color-danger-soft: rgba(240, 122, 110, .12);
+  --ui-color-danger-border: rgba(240, 122, 110, .35);
+  --ui-color-border-subtle: rgba(255, 255, 255, .06);
+  --ui-color-border: rgba(255, 255, 255, .10);
+  --ui-color-border-strong: rgba(255, 255, 255, .20);
+  --ui-color-neutral-soft: rgba(255, 255, 255, .07);
+  --ui-color-hover: rgba(255, 255, 255, .04);
+  --ui-color-scrim: rgba(0, 0, 0, .55);
+  --ui-status-idea: #E0B04A;
+  --ui-status-idea-soft: rgba(224, 176, 74, .13);
+  --ui-status-draft: #86A6F0;
+  --ui-status-draft-soft: rgba(134, 166, 240, .13);
+  --ui-status-ready: #B994F0;
+  --ui-status-ready-soft: rgba(185, 148, 240, .13);
+  --ui-status-published: #5CC28A;
+  --ui-status-published-soft: rgba(92, 194, 138, .13);
+  --ui-status-archived: #8D919A;
+  --ui-status-archived-soft: rgba(141, 145, 154, .14);
+  --ui-kind-activity: #8FB0E8;
+  --ui-kind-activity-soft: rgba(143, 176, 232, .14);
+  --ui-kind-experiment: #E39BC0;
+  --ui-kind-experiment-soft: rgba(227, 155, 192, .14);
+  --ui-kind-milestone: #A9B5C4;
+  --ui-kind-milestone-soft: rgba(169, 181, 196, .14);
+  --ui-kind-feature: #67C7DB;
+  --ui-kind-feature-soft: rgba(103, 199, 219, .14);
+  --ui-id-ocean-bg: #18304F;
+  --ui-id-ocean-fg: #9EC3F2;
+  --ui-id-clay-bg: #43251B;
+  --ui-id-clay-fg: #F2B39A;
+  --ui-id-plum-bg: #38213B;
+  --ui-id-plum-fg: #E2AEE6;
+  --ui-id-ochre-bg: #3A2F12;
+  --ui-id-ochre-fg: #EACB7A;
+  --ui-id-slate-bg: #253039;
+  --ui-id-slate-fg: #B6C3D1;
+  --ui-id-rose-bg: #3F1E2A;
+  --ui-id-rose-fg: #F2A9C0;
+  --ui-shadow-raise: 0 0 0 1px rgba(255, 255, 255, .04);
+  --ui-shadow-sticky: 0 1px 2px rgba(0, 0, 0, .4);
+  --ui-shadow-menu: 0 12px 32px -6px rgba(0, 0, 0, .6), 0 0 0 1px rgba(255, 255, 255, .06);
+  --ui-shadow-modal: 0 16px 48px rgba(0, 0, 0, .6);
 }
 
 @media (pointer: coarse) {

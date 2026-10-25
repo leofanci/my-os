@@ -61,12 +61,29 @@ def list_meta():
             rec = json.loads(f.read_text())
         except (OSError, json.JSONDecodeError):
             continue
-        out.append({k: rec.get(k) for k in ("id", "title", "created", "updated", "turn_count")})
+        out.append({k: rec.get(k) for k in ("id", "title", "created", "updated", "turn_count",
+                                            "room", "scope", "tokens", "cost")})
     return sorted(out, key=lambda r: r.get("updated") or 0, reverse=True)
 
 
-def record_turn(sess, scope, user_msg, reply):
-    """Append one exchange to the chat backing `sess` and snapshot its resume state."""
+def records():
+    """Every saved chat, full records (for cost roll-ups)."""
+    for f in CHATS_DIR.glob("*.json") if CHATS_DIR.is_dir() else []:
+        try:
+            rec = json.loads(f.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(rec, dict):
+            yield rec
+
+
+def record_turn(sess, scope, user_msg, reply, bot=None, room=None, meta=None, extra=None):
+    """Append one exchange to the chat backing `sess` and snapshot its resume state.
+    `bot` = id of the teammate that answered (shown on the reply when reopened);
+    `room` = channel/DM the thread started in (core.rooms; kept once set);
+    `meta` = extra reply fields (approval id, tokens, cost) — tokens/cost also
+    add up on the chat so threads show their running cost; `extra` = more
+    assistant messages of the same turn (teammates pulled in, lead follow-up)."""
     rec = load(sess.session_id) or {
         "id": sess.session_id,
         "title": title_from(user_msg),
@@ -75,7 +92,18 @@ def record_turn(sess, scope, user_msg, reply):
     }
     rec["messages"].append({"role": "user", "content": user_msg})
     if reply:
-        rec["messages"].append({"role": "assistant", "content": reply})
+        msg = {"role": "assistant", "content": reply, "ts": time.time()}
+        if bot:
+            msg["bot"] = bot
+        msg.update({k: v for k, v in (meta or {}).items() if v is not None})
+        rec["messages"].append(msg)
+    for m in extra or []:
+        rec["messages"].append({"role": "assistant", "ts": time.time(),
+                                **{k: v for k, v in m.items() if v is not None}})
+    for part in [meta or {}] + list(extra or []):
+        for key in ("tokens", "cost"):
+            if part.get(key):
+                rec[key] = (rec.get(key) or 0) + part[key]
     rec.update({
         "updated": time.time(),
         "scope": list(scope) if scope else None,
@@ -83,6 +111,9 @@ def record_turn(sess, scope, user_msg, reply):
         "turn_count": sess._turn_count,
         "last_skill": sess._last_skill,
         "skill_explicit": sess._skill_explicit,
+        "last_bot": getattr(sess, "_last_bot", None),
     })
+    if room and not rec.get("room"):
+        rec["room"] = room
     save(rec)
     return rec

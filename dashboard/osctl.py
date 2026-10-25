@@ -7,12 +7,15 @@ through this CLI, so the authored-files-are-truth invariant cannot be bypassed.
 """
 import argparse
 import fnmatch
+import functools
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # repo root
 from dashboard import chat_session, db, fileops  # noqa: E402
+from core import bots  # noqa: E402
 from core.ids import (  # noqa: E402
     bare_slug,
     build_catalog,
@@ -23,6 +26,94 @@ from core.ids import (  # noqa: E402
     parse_id,
     resolve_section,
 )
+
+
+# --------------------------------------------------------------------------- #
+# Workspace isolation. The chat server sets MYOS_WORKSPACE for every bot turn:
+# "hq" (the holding's CEO office: sees everything) or a project slug (one
+# company: its bots only touch that project). The calendar is the one shared
+# thing, and other workspaces show there only as busy time.
+# --------------------------------------------------------------------------- #
+def _workspace():
+    ws = (os.environ.get("MYOS_WORKSPACE") or "").strip()
+    return ws if ws and ws != "hq" else None
+
+
+_BLOCKED_IN_WORKSPACE = {"create-project"}
+# A consulted teammate (MYOS_READONLY) may only look things up; the lead saves.
+_READ_ONLY_CMDS = {"tree", "get-project", "get-posts", "read-file", "get-id-catalog",
+                   "resolve-id", "get-memory", "get-busy", "get-subsections",
+                   "get-brief-spec", "get-voice", "research-signal"}
+# Repo areas that hold every workspace's data at once (calendar via get-busy).
+_PRIVATE_PREFIXES = ("chats/", "team/", "portfolio/", "database/", "os.db")
+# Args whose value names an existing entity (create commands mint new slugs,
+# which resolve to no owner and pass).
+_OWNER_ARGS = ("project", "entity", "profile", "product", "slug", "id", "channel")
+
+
+@functools.cache
+def _owners():
+    """slug/id → owning project, for every entity in the index. Built once per
+    command (main clears it), however many checks ask."""
+    tree, posts = db.tree(), db.posts()
+    own = {}
+    for proj in tree:
+        own[proj["slug"]] = proj["slug"]
+        for prof in proj.get("profiles", []):
+            own[prof["slug"]] = proj["slug"]
+            for ch in prof.get("channels", []):
+                own[ch["slug"]] = proj["slug"]
+        for prod in proj.get("products", []):
+            own[prod["slug"]] = proj["slug"]
+    for post in posts:
+        if post.get("profile_slug") in own:
+            own[post["id"]] = own[post["profile_slug"]]
+    for ms in db._rows("SELECT id, entity_slug FROM milestones"):
+        if ms.get("id") and ms.get("entity_slug") in own:
+            own[str(ms["id"]).lower()] = own[ms["entity_slug"]]
+    try:
+        reg = build_id_registry(tree, posts, root=fileops.ROOT)
+        for entry in reg.entries:
+            if entry.get("kind") == "project" and (entry.get("ref") or {}).get("project"):
+                own[entry["id"]] = entry["ref"]["project"]
+    except Exception:  # noqa: BLE001 — ids are a convenience, slugs still guard
+        pass
+    return own
+
+
+def _guard(args, ws):
+    """Refuse anything that reaches outside workspace `ws`."""
+    if args.cmd in _BLOCKED_IN_WORKSPACE:
+        raise fileops.ActionError(f"{args.cmd} is only available in HQ")
+    if getattr(args, "local_folder", None) is not None:
+        # A linked folder becomes the bot's --add-dir: only the user links one.
+        raise fileops.ActionError("linking a local folder is only available in HQ")
+    if args.cmd in ("remember", "get-memory") and not args.project:
+        args.project = ws  # a company's bot keeps memory in its company, never in HQ
+    own = _owners()
+    for name, value in vars(args).items():
+        if not (name in _OWNER_ARGS or name.endswith("_id")):
+            continue
+        if not isinstance(value, str) or not value:
+            continue
+        key = value.strip().lower()
+        owner = own.get(key) or own.get(key.split(".", 1)[0])
+        if owner and owner != ws:
+            raise fileops.ActionError(f"'{value}' belongs to another workspace")
+    path = getattr(args, "path", None)
+    if isinstance(path, str) and path:
+        # Resolve the way read-file does, then compare lowercased: absolute
+        # paths, "..", symlinks and a case-insensitive disk all land here.
+        root = fileops.ROOT.resolve()
+        try:
+            rel = (root / path).resolve().relative_to(root).as_posix().lower()
+        except ValueError:
+            raise fileops.ActionError("that file is outside this workspace") from None
+        if rel.startswith(_PRIVATE_PREFIXES):
+            raise fileops.ActionError("that file holds every workspace's data; not readable here")
+        parts = rel.split("/")
+        if parts[0] == "projects" and len(parts) > 1 and parts[1] != ws.lower():
+            raise fileops.ActionError("that file belongs to another workspace")
 
 
 def _emit(obj, ok=True):
@@ -42,7 +133,10 @@ def _build_parser():
     p = sub.add_parser("tree", help="Print current project/profile/channel structure")
     def _tree(a):
         lines = []
+        ws = _workspace()
         for proj in db.tree():
+            if ws and proj["slug"] != ws:
+                continue
             lines.append(f"{proj['slug']} ({proj.get('kind') or proj.get('type')})")
             for prof in proj.get("profiles", []):
                 lines.append(f"  profile {prof['slug']} \"{prof['name']}\"")
@@ -160,6 +254,17 @@ def _build_parser():
             body_extra = json.loads(raw)
         return fileops.create_memo(a.project, a.memo_type, fields, body_extra=body_extra)
     p.set_defaults(_run=_create_memo)
+
+    p = sub.add_parser("remember", help="Append one line to a bot's memory (per project, or HQ)")
+    p.add_argument("--bot", required=True)
+    p.add_argument("--project", help="project slug; omit for HQ memory")
+    p.add_argument("--text", required=True)
+    p.set_defaults(_run=lambda a: {"path": bots.remember(a.bot, a.text, a.project)})
+
+    p = sub.add_parser("get-memory", help="Read a bot's memory (per project, or HQ)")
+    p.add_argument("--bot", required=True)
+    p.add_argument("--project")
+    p.set_defaults(_run=lambda a: {"memory": bots.read_memory(a.bot, a.project, tail=0)})
 
     p = sub.add_parser("create-experiment", help="Create strategy/experiments/<stem>.json")
     p.add_argument("--project", required=True)
@@ -326,10 +431,29 @@ def _build_parser():
     p.add_argument("--title")
     p.add_argument("--date")
     p.add_argument("--date-end", dest="date_end")
+    p.add_argument("--time", help="start HH:MM (24h); timed activities may not overlap")
+    p.add_argument("--time-end", dest="time_end", help="end HH:MM (default: start + 1h)")
     p.add_argument("--type")
     p.add_argument("--priority")
     p.set_defaults(_run=lambda a: fileops.create_activity(
-        _fields(a, ["entity", "title", "date", "date_end", "type", "priority"])))
+        _fields(a, ["entity", "title", "date", "date_end", "time", "time_end", "type", "priority"])))
+
+    p = sub.add_parser("get-busy", help="Booked times across ALL workspaces (the CEO has one calendar)")
+    p.add_argument("--from", dest="date_from", required=True, help="YYYY-MM-DD")
+    p.add_argument("--to", dest="date_to", help="YYYY-MM-DD (default: same day)")
+    def _get_busy(a):
+        ws, end = _workspace(), a.date_to or a.date_from
+        own = _owners() if ws else {}
+        slots = []
+        for act in fileops.timed_activities():
+            if not (a.date_from <= act["date"] <= end):
+                continue
+            mine = not ws or act["entity"] == ws or own.get(str(act["entity"]).lower()) == ws
+            slots.append({"date": act["date"], "time": act["time"], "time_end": act["time_end"],
+                          "title": act["title"] if mine else "busy (another workspace)",
+                          "entity": act["entity"] if mine else None})
+        return {"busy": sorted(slots, key=lambda x: (x["date"], x["time"]))}
+    p.set_defaults(_run=_get_busy)
 
     p = sub.add_parser("create-milestone")
     p.add_argument("--title", required=True)
@@ -577,6 +701,10 @@ def _build_parser():
     p.add_argument("--profile", default=None)
     def _get_posts(a):
         rows = db.profile_posts(a.profile) if a.profile else db.posts()
+        ws = _workspace()
+        if ws:
+            own = _owners()
+            rows = [r for r in rows if own.get(r.get("profile_slug")) == ws]
         return {"posts": rows}
     p.set_defaults(_run=_get_posts)
 
@@ -619,7 +747,11 @@ def _build_parser():
     p = sub.add_parser("get-id-catalog", help="List all canonical IDs (UI skeleton + live entities)")
     p.add_argument("--text", action="store_true", help="Human-readable summary instead of JSON entries")
     def _id_catalog(a):
-        entries = build_catalog(db.tree(), root=fileops.ROOT, posts=db.posts())
+        ws = _workspace()
+        tree = [p for p in db.tree() if not ws or p["slug"] == ws]
+        own = _owners() if ws else {}
+        posts = [r for r in db.posts() if not ws or own.get(r.get("profile_slug")) == ws]
+        entries = build_catalog(tree, root=fileops.ROOT, posts=posts)
         if a.text:
             return {"catalog": catalog_as_text(entries), "count": len(entries)}
         return {"entries": entries, "count": len(entries)}
@@ -721,7 +853,14 @@ def _brief_field_value(brief: dict, field: str):
 def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
+    _owners.cache_clear()
     try:
+        if os.environ.get("MYOS_READONLY") and args.cmd not in _READ_ONLY_CMDS:
+            raise fileops.ActionError("read-only: you were consulted. Tell your teammate "
+                                      "what to save; they will do it.")
+        ws = _workspace()
+        if ws:
+            _guard(args, ws)
         result = args._run(args)
     except fileops.ActionError as exc:
         return _emit({"error": str(exc)}, ok=False)

@@ -385,6 +385,8 @@ def collect_activities(root: Path):
             "title": title,
             "date": f.get("date"),
             "date_end": f.get("date_end"),
+            "time": f.get("time"),
+            "time_end": f.get("time_end"),
             "type": f.get("type") or "task",
             "status": status,
             "priority": priority if priority in PRIORITIES else None,
@@ -553,8 +555,8 @@ def build(root: Path):
         features,
     )
     cur.executemany(
-        "INSERT INTO activities (entity_slug,title,date,date_end,type,status,priority)"
-        " VALUES (:entity_slug,:title,:date,:date_end,:type,:status,:priority)",
+        "INSERT INTO activities (entity_slug,title,date,date_end,time,time_end,type,status,priority)"
+        " VALUES (:entity_slug,:title,:date,:date_end,:time,:time_end,:type,:status,:priority)",
         activities,
     )
     cur.executemany(

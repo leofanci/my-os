@@ -10,28 +10,65 @@
 <script src="/vendor/xterm-addon-fit.js"></script>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-hash" viewBox="0 0 24 24"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></symbol>
+    <symbol id="i-inbox" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.7-.9l-.8-1.2A2 2 0 0 0 7.9 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M6.3 17.7l-1.4 1.4M19.1 4.9l-1.4 1.4"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></symbol>
+    <symbol id="i-list-check" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></symbol>
+    <symbol id="i-compose" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-threads" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M14 3v18"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.4 11.1-9.2 9.1a6 6 0 0 1-8.5-8.5l8.6-8.5A4 4 0 1 1 18 8.8l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.5-8.5"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="m5 12 7-7 7 7M12 19V5"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12.8 2.2a2 2 0 0 0-1.6 0L2.6 6.1a1 1 0 0 0 0 1.8l8.6 3.9a2 2 0 0 0 1.6 0l8.6-3.9a1 1 0 0 0 0-1.8Z"/><path d="m22 17.6-9.2 4.2a2 2 0 0 1-1.6 0L2 17.6M22 12.6l-9.2 4.2a2 2 0 0 1-1.6 0L2 12.6"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M18 17V9M13 17V5M8 17v-3"/></symbol>
+    <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m15.5 8.5-2 5-5 2 2-5z"/></symbol>
+    <symbol id="i-flask" viewBox="0 0 24 24"><path d="M9 3h6M10 3v6L4.5 18.5A1.7 1.7 0 0 0 6 21h12a1.7 1.7 0 0 0 1.5-2.5L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-map" viewBox="0 0 24 24"><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2z"/><path d="M9 4v14M15 6v14"/></symbol>
+    <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24"><path d="M4 22V4a1 1 0 0 1 1-1h12l-2 4 2 4H5"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-reply" viewBox="0 0 24 24"><path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></symbol>
+    <symbol id="i-instagram" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17.5 6.5h.01"/></symbol>
+    <symbol id="i-tiktok" viewBox="0 0 24 24"><path d="M14 3v11.5a3.5 3.5 0 1 1-3.5-3.5"/><path d="M14 3c.5 2.8 2.4 4.6 5 5"/></symbol>
+    <symbol id="i-linkedin" viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-4 0v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></symbol>
+    <symbol id="i-x-brand" viewBox="0 0 24 24"><path d="M4 4h4.5L20 20h-4.5Z"/><path d="m20 4-6.5 7M4 20l6.5-7"/></symbol>
+    <symbol id="i-youtube" viewBox="0 0 24 24"><path d="M2.5 17a24 24 0 0 1 0-10 2 2 0 0 1 1.4-1.4 49.6 49.6 0 0 1 16.2 0A2 2 0 0 1 21.5 7a24 24 0 0 1 0 10 2 2 0 0 1-1.4 1.4 49.6 49.6 0 0 1-16.2 0A2 2 0 0 1 2.5 17"/><path d="m10 15 5-3-5-3z"/></symbol>
+    <symbol id="i-facebook" viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></symbol>
+  </defs>
+</svg>
 <div class="titlebar"></div>
 <div class="app" id="app" data-os-id="panel:shell">
+  <nav class="ws-bar" id="ws-bar" aria-label="Workspaces"></nav>
   <aside class="panel side" id="rail" data-os-id="panel:rail"></aside>
-  <div class="right-col" data-os-id="panel:main-col">
-    <section class="panel main" id="main" data-os-id="panel:main"><div class="scroll"><div style="padding:30px;color:var(--dim)">loading…</div></div></section>
-    <div class="panel term-panel" id="term-panel" data-os-id="panel:terminal">
-      <div class="tbar" id="term-tab"><span id="term-chevron">▸</span>&nbsp;Terminal
-        <span class="thint">full claude · all skills</span>
-        <button class="tclose" id="term-close" title="Toggle terminal" data-os-id="btn:global:terminal-toggle">open ⌃`</button></div>
-      <div class="term-mount" id="term"></div>
-    </div>
-  </div>
   <aside class="panel chat-dock" id="chat-dock" data-os-id="panel:chat">
-    <div class="chat-resize" id="chat-resize" title="Drag to resize chat"></div>
     <div class="dock-bar">
-      <span class="av"></span>
-      <div class="chat-head"><b id="chat-title">New chat</b><span class="sm" id="chat-status">Ready</span></div>
+      <button class="term-btn" id="nav-toggle" title="Workspaces and channels" aria-label="Open navigation"><svg class="i" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      <div class="chat-head"><b id="room-title"># hq</b><span class="sm"><span id="chat-title">New thread</span> · <span id="chat-status">Ready</span></span></div>
       <div style="margin-left:auto;display:flex;gap:6px">
-        <button class="term-btn" id="chat-list-btn" title="Saved chats" data-os-id="btn:global:chat-list">☰</button>
-        <button class="term-btn" id="chat-new" title="New chat (old one stays saved)" data-os-id="btn:global:chat-new">+</button>
-        <button class="term-btn" id="chat-move" title="Move chat to bottom-left" data-os-id="btn:global:chat-move">⇲</button>
-        <button class="term-btn" id="chat-hide" title="Hide chat" data-os-id="btn:global:chat-hide">✕</button>
+        <button class="term-btn" id="room-edit" title="Edit channel" aria-label="Edit channel" hidden><svg class="i" aria-hidden="true"><use href="#i-compose"/></svg></button>
+        <button class="term-btn" id="chat-list-btn" title="Threads in this channel" aria-label="Threads" data-os-id="btn:global:chat-list"><svg class="i" aria-hidden="true"><use href="#i-threads"/></svg></button>
+        <button class="term-btn" id="chat-new" title="New thread (old one stays saved)" aria-label="New thread" data-os-id="btn:global:chat-new"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
+        <button class="term-btn" id="canvas-toggle" title="Show or hide canvas" aria-label="Canvas" data-os-id="btn:global:canvas-toggle"><svg class="i" aria-hidden="true"><use href="#i-panel"/></svg></button>
       </div>
     </div>
     <div class="chat-list" id="chat-list" hidden></div>
@@ -39,18 +76,30 @@
     <div class="compose">
       <div class="attachments" id="attachments"></div>
       <div class="ibox">
-        <button class="attach-btn" id="attach-btn" title="Skills · web search · attach file (or type / )" data-os-id="btn:global:attach">⊕</button>
+        <button class="attach-btn" id="attach-btn" title="Skills · web search · attach file (or type / )" aria-label="Skills and attachments" data-os-id="btn:global:attach"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg></button>
         <input type="file" id="file-input" multiple style="display:none">
-        <textarea id="chat-input" data-os-id="fld:global:chat:input" placeholder="Ask about this workspace…" rows="1"></textarea>
-        <button class="send" id="chat-send" data-os-id="btn:global:chat-send">↑</button>
+        <textarea id="chat-input" data-os-id="fld:global:chat:input" placeholder="Message the team… (@ to tag a teammate)" rows="1"></textarea>
+        <button class="send" id="chat-send" aria-label="Send" data-os-id="btn:global:chat-send"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></button>
       </div>
     </div>
   </aside>
+  <div class="scrim" id="nav-scrim"></div>
+  <div class="right-col" data-os-id="panel:main-col">
+    <div class="canvas-resize" id="canvas-resize" title="Drag to resize canvas"></div>
+    <nav class="panel canvas-nav" id="canvas-nav" hidden></nav>
+    <section class="panel main" id="main" data-os-id="panel:main"><div class="scroll"><div class="empty">loading…</div></div></section>
+    <div class="panel term-panel" id="term-panel" data-os-id="panel:terminal">
+      <div class="tbar" id="term-tab"><svg class="i term-chevron" aria-hidden="true"><use href="#i-chevron-right"/></svg>&nbsp;Terminal
+        <span class="thint">full claude · all skills</span>
+        <button class="tclose" id="term-close" title="Toggle terminal" data-os-id="btn:global:terminal-toggle">open ⌃`</button></div>
+      <div class="term-mount" id="term"></div>
+    </div>
+  </div>
 </div>
-<button class="chat-reopen" id="chat-reopen" data-os-id="btn:global:chat-reopen">💬 Chat</button>
 <div id="toast" data-os-id="panel:toast"></div>
 <script src="/os-ids.js"></script>
 <script src="/post-copy.js"></script>
+<script src="/content-view.js"></script>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -1,6 +1,8 @@
 const $ = s => document.querySelector(s);
 const $$ = s => Array.from(document.querySelectorAll(s));
 const esc = s => (s==null?"":String(s)).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// One outline icon set: the sprite in app.html, symbol ids "i-<name>".
+const icon = (name, cls = "") => `<svg class="i${cls ? " " + cls : ""}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
 const EMPTY = "n/a";
 function normalizeDashes(s){ return String(s==null?"":s).replace(/\s*—\s*/g,", "); }
 
@@ -168,8 +170,9 @@ function renderMemoBody(b,type){
   return html;
 }
 
+// Chat text: paragraphs and lists, with @mentions as accent-colored names.
 function formatChatText(raw){
-  return formatBlocks(raw);
+  return formatBlocks(raw).replace(/(^|[\s>(])@([a-z][a-z0-9-]*)/g, '$1<b class="mention">@$2</b>');
 }
 const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/(^-|-$)/g,"");
 function toast(m,sticky){const t=$("#toast");t.textContent=m;t.style.opacity=1;clearTimeout(t._timer);if(!sticky)t._timer=setTimeout(()=>t.style.opacity=0,2400);}
@@ -182,15 +185,25 @@ function postUrl(id, profileSlug, suffix=""){
 
 // ── router ───────────────────────────────────────────────────────────────────
 let _NAV_EXTRAS = {};
+// Bumped on every navigation. An async view takes a guard before it fetches and
+// checks it before drawing, so a slow load never paints over the next page.
+let ROUTE_SEQ = 0;
+const routeGuard = () => { const seq = ROUTE_SEQ; return () => seq === ROUTE_SEQ; };
 function navigate(hash, extras){
   _NAV_EXTRAS = extras || {};
   if(location.hash===hash) parseRoute(hash);
   else location.hash = hash;
 }
 const ROUTES = [
+  [/^\/content(?:\/(posts|calendar|briefs|voice))?$/, ([t]) => { setState("content",{tab:t||"posts"}); renderContent(t||"posts"); }],
   [/^\/calendar$/,                              ()       => { setState("calendar"); renderTimeline(); }],
   [/^\/day\/(\d{4}-\d{2}-\d{2})$/,              ([d])    => { setState("day",{day:d}); renderDay(d); }],
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
+  [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
+  [/^\/approvals$/,                             ()       => { setState("approvals"); renderApprovals(); }],
+  [/^\/files$/,                                 ()       => { setState("files"); renderFiles(); }],
+  [/^\/room\/new$/,                              ()       => renderRoomForm(null)],
+  [/^\/room\/([a-z0-9-]+)\/edit$/,                ([n])    => renderRoomForm(n)],
   [/^\/needs$/,                                 ()       => { setState("needs"); renderNeeds(); }],
   [/^\/project\/new$/,                          ()       => renderNewProject()],
   [/^\/project\/([^/]+)\/edit$/,                ([s])    => renderEditProject(s)],
@@ -236,12 +249,13 @@ const ROUTES = [
 ];
 function parseRoute(hash){
   const path = (hash||"#/calendar").replace(/^#/,"").replace(/\?.*$/,"");
-  $("#main")?.classList.toggle("profile-view", /^\/profile\/[^/]+$/.test(path));
+  ROUTE_SEQ += 1;
   $("#main")?.classList.toggle("form-view", /\/(?:new|edit|setup|add|log|generate|revise)$/.test(path));
   CURRENT_POST = null;
   CURRENT_PROFILE_SLUG = null;
   setState("route");
   const ex = _NAV_EXTRAS; _NAV_EXTRAS = {};
+  setFocus(ex.focus);   // only a deliverable link focuses; any other navigation shows all
   for(const [re, fn] of ROUTES){
     const m = path.match(re);
     if(m){
@@ -251,11 +265,14 @@ function parseRoute(hash){
       _NAV_EXTRAS={}; highlight(); return;
     }
   }
-  navigate("#/calendar");
+  navigate(defaultRoute());
 }
+// Where the canvas opens when nothing else is asked for.
+const defaultRoute = () => (wsProject() ? "#/content" : "#/calendar");
 function setState(view, extra={}){
   STATE={view, project:extra.project||null, section:extra.section||null,
-         profile:extra.profile||null, channelGuidelines:extra.channelGuidelines||null};
+         profile:extra.profile||null, channelGuidelines:extra.channelGuidelines||null,
+         day:extra.day||null, tab:extra.tab||null};
 }
 // True only while the URL shows this profile's post list. STATE.view stays
 // "profile" on post/form sub-pages, so redraws must check the route itself.
@@ -287,8 +304,8 @@ const fsel = (name,opts,val,osId=null) => `<select name="${name}"${osId?` data-o
 const fta = (name,val='',rows=5,extra='',osId=null) => `<textarea name="${name}" rows="${rows}"${osId?` data-os-id="${esc(osId)}"`:""} ${extra}>${esc(val)}</textarea>`;
 // channel picker: checkboxes from the profile's channels (no manual slug typing)
 const fchannels = (channels, selected=[]) => (channels && channels.length)
-  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${PLATFORM_ICON[c.platform]||"⌗"}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
-  : `<div style="font-size:12.5px;color:var(--dim)">No channels yet — add one in Setup first.</div>`;
+  ? `<div class="chan-checks">${channels.map(c=>`<label class="chan-check"><input type="checkbox" class="chanbox" value="${esc(c.slug)}"${(selected||[]).includes(c.slug)?" checked":""}> <span style="opacity:.55">${platIcon(c.platform)}</span> ${esc(PLAT_NAME[c.platform]||c.platform||c.name||c.slug)}</label>`).join("")}</div>`
+  : `<div class="help">No channels yet — add one in Setup first.</div>`;
 const checkedChannels = root => [...root.querySelectorAll(".chanbox:checked")].map(b=>b.value).join(",");
 const mentionBare = c => {
   if (c.osId && c.osId.includes(".")) return c.osId.split(".").pop();
@@ -298,7 +315,7 @@ const mentionBare = c => {
 function formVals(root){ const d={}; root.querySelectorAll("[name]").forEach(i=>d[i.name]=i.value); return d; }
 function pageHeader(title, crumb, btns='', pageId=null){
   const idBar = pageId ? `<div class="sec-meta" style="margin-top:5px">${sectionIdChip(pageId, {dropTabSuffix:true})}</div>` : "";
-  return `<div class="topbar"><div><div class="crumbs"><a class="bk" style="cursor:pointer;color:var(--navy)">← ${esc(crumb)}</a></div><h1 class="title">${esc(title)}</h1>${idBar}</div><div style="margin-left:auto;display:flex;gap:8px">${btns}</div></div>`;
+  return `<div class="topbar"><div><div class="crumbs"><a class="bk text-link">← ${esc(crumb)}</a></div><h1 class="title">${esc(title)}</h1>${idBar}</div><div style="margin-left:auto;display:flex;gap:8px">${btns}</div></div>`;
 }
 document.addEventListener("click", e=>{ if(e.target.classList.contains("bk")) history.back(); });
 
@@ -315,7 +332,22 @@ const SECTIONS = PROJECT_SECTIONS;
 let STATE = {view:"calendar", project:null, section:null, profile:null, channelGuidelines:null};
 let _TREE = [];
 let _POSTS = [];   // flat post index for @-mentions, refreshed in renderRail
-let _SKILLS = [];  // [{name, description}] for the manual skill picker (/ and ⊕)
+let _SKILLS = [];  // [{name, description}] for the manual skill picker (/ and +)
+let _BOTS = [];    // team roster from /api/bots (@handle teammates that own skills)
+const botById = id => _BOTS.find(b => b.id === id);
+// Identity hues shared by bots, profiles and project tiles (--ui-id-<hue>-*).
+const ID_HUES = ["ocean", "clay", "plum", "ochre", "slate", "rose"];
+const hueFor = key => ID_HUES[[...String(key)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0) % ID_HUES.length];
+// Built-in teammates get a fixed icon and hue; any other bot falls back to its
+// initial on a hue derived from its id.
+const BOT_LOOK = {
+  cmo: ["chart", "clay"], cos: ["compass", "slate"], cto: ["terminal", "plum"], gtm: ["route", "ocean"],
+  product: ["layers", "ochre"], research: ["search", "rose"], social: ["compose", "ocean"],
+};
+function botAvatar(b, cls = ""){
+  const [ic, hue] = BOT_LOOK[b?.id] || [null, hueFor(b?.id || "")];
+  return `<span class="av bot t-${hue}${cls ? " " + cls : ""}" aria-hidden="true">${ic ? icon(ic) : esc((b?.name || "?")[0].toUpperCase())}</span>`;
+}
 // Post open in detail view. Full slot+brief inlined only when the turn needs it
 // (content keywords, @mention) — otherwise a compact pointer saves tokens.
 // Set in renderPostDetail, cleared on every navigation in parseRoute.
@@ -339,18 +371,7 @@ function saveOpen(){
 // A node is open if it's in the OPEN set (persisted). Navigate actions below
 // auto-add the parent to OPEN so navigating to a child keeps it visible,
 // but the user can still manually collapse the parent afterwards.
-function isOpen(kind, slug){
-  if(kind === "projects") return OPEN.projects.has(slug);
-  if(kind === "profiles") return OPEN.profiles.has(slug);
-  return false;
-}
-function toggleOpen(kind, slug){
-  const set = OPEN[kind];
-  set.has(slug) ? set.delete(slug) : set.add(slug);
-  saveOpen(); renderRail();
-}
-
-async function boot(){ await ensureSchemas(); await renderRail(); parseRoute(location.hash||"#/calendar"); }
+async function boot(){ await ensureSchemas(); await renderRail(); parseRoute(location.hash||defaultRoute()); }
 
 async function ensureIdRegistry(force=false){
   if (!force && Object.keys(IdReg.lookup || {}).length) return;
@@ -403,79 +424,460 @@ function schemaFields(kind, memoType=null){
   return [];
 }
 
+// ── workspaces (Slack-style): HQ = the holding's CEO office, every project =
+// one company. Each has its own channels, DMs, threads and switched-on bots;
+// bots in one never see another. The calendar is the one shared thing.
+let _WORKSPACES = [];  // [{id, name, kind}] from /api/workspaces
+let _WS = "hq";
+try { _WS = localStorage.getItem("wsId") || "hq"; } catch {}
+let _ROOMS = [];   // current workspace's rooms: [{id, kind, name, members, lead}]
+let _APPROVALS = [];  // pending approvals visible here (HQ: every workspace)
+const fmtTokens = n => !n ? "" : n >= 1e6 ? `${(n/1e6).toFixed(1)}M tok` : n >= 1000 ? `${(n/1000).toFixed(1)}k tok` : `${n} tok`;
+const fmtCost = c => c ? `$${c < 0.01 ? c.toFixed(4) : c.toFixed(2)}` : "";
+const fmtUsage = (tokens, cost) => [fmtTokens(tokens), fmtCost(cost)].filter(Boolean).join(" · ");
+const roomById = id => _ROOMS.find(r => r.id === id);
+const wsById = id => _WORKSPACES.find(w => w.id === id);
+const wsProject = () => (_WS !== "hq" ? _TREE.find(p => p.slug === _WS) || null : null);
+
+function wsBadge(w){
+  if (w.id === "hq") return "HQ";
+  const words = (w.name || w.id).split(/[\s_-]+/).filter(Boolean);
+  return ((words[0] || "")[0] + ((words[1] || "")[0] || (words[0] || "")[1] || "")).toUpperCase();
+}
+
+function renderWsBar(){
+  const bar = $("#ws-bar"); if (!bar) return;
+  bar.innerHTML = _WORKSPACES.map(w => `<button class="ws-btn${w.id === _WS ? " active" : ""}${w.id === "hq" ? " hq" : ` t-${hueFor(w.id)}`}" data-ws="${esc(w.id)}" title="${esc(w.name)}${w.id === "hq" ? " · holding" : ` · ${esc(w.kind)}`}">${esc(wsBadge(w))}</button>`).join("")
+    + `<button class="ws-btn ws-add" id="new-project-btn" data-os-id="btn:global:new-project" title="New project (= new workspace)" aria-label="New project">${icon("plus")}</button>`;
+  bar.querySelectorAll("[data-ws]").forEach(b => b.onclick = () => switchWorkspace(b.dataset.ws));
+  $("#new-project-btn").onclick = e => { e.stopPropagation(); openNewProject(); };
+}
+
+async function switchWorkspace(ws){
+  if (window.ChatRooms?.busy()) return toast("Reply in progress · Esc to stop");
+  const changed = ws !== _WS;
+  _WS = ws;
+  try { localStorage.setItem("wsId", ws); } catch {}
+  await renderRail();
+  await window.ChatRooms?.enterWorkspace();
+  if (changed) {   // new company: back to the conversation, canvas closed but ready on its content
+    window.ChatRooms?.hideCanvas();
+    navigate(ws === "hq" ? "#/calendar" : "#/content");
+  }
+}
+window.Workspaces = { switchTo: switchWorkspace, current: () => _WS };
+
+// Sidebar sections the user folded away (Channels, Teammates, Your time).
+const RAIL_COLLAPSED = new Set((() => { try { return JSON.parse(localStorage.getItem("railCollapsed")) || []; } catch { return []; } })());
+// Narrow windows: the workspace bar and sidebar live in a drawer.
+const closeNav = () => document.getElementById("app")?.classList.remove("nav-open");
+// One menu open at a time; the button that opened it tracks aria-expanded.
+const closeMenus = () => document.querySelectorAll(".menu.open").forEach(m => {
+  m.classList.remove("open"); m._btn?.setAttribute("aria-expanded", "false");
+});
+function toggleMenu(btn, menu){
+  const opening = !menu.classList.contains("open");
+  closeMenus();
+  if (!opening) return;
+  menu.classList.add("open"); menu._btn = btn; btn.setAttribute("aria-expanded", "true");
+}
+document.addEventListener("click", closeMenus);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenus(); });
+
 async function renderRail(){
   const skillsP = _SKILLS.length ? Promise.resolve(_SKILLS) : api("/api/skills-index").catch(() => []);
   const regP = api("/api/id-registry").then(d => { IdReg.load(d); }).catch(() => IdReg.load({}));
   const schP = ensureSchemas();
-  [_TREE, _POSTS, _SKILLS] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP]);
-  await ensureIdRegistry();
-  const projects = _TREE.map((p,pi)=>{
-    const totalFeatures = p.products.reduce((n,prod)=>n+prod.features,0);
-    const profileRows = p.profiles.length ? p.profiles.map(prof=>{
-      const hasCh = prof.channels.length > 0;
-      const profOpen = !hasCh || isOpen("profiles", prof.slug);
-      const wedge = hasCh ? (profOpen ? "▾" : "▸") : "·";
-      const channelsBlock = prof.channels.length ? `<div class="kid">
-        ${prof.channels.map(ch=>`<a class="channel-row" data-profile="${esc(prof.slug)}" data-chan-filter="${esc(ch.slug)}"><span class="channel-icon">${PLATFORM_ICON[ch.platform]||"⌗"}</span>${esc(PLAT_NAME[ch.platform]||ch.platform)}</a>`).join("")}
-        <a class="new-channel-row" data-new-channel="${esc(prof.slug)}">＋ Channel</a>
-      </div>` : ``;
-      return `<a class="profile-row" data-profile="${esc(prof.slug)}">
-        <span class="rail-chevron" data-toggle-profile="${esc(prof.slug)}">${wedge}</span>
-        <span class="rail-name">${esc(prof.name)}</span><span class="c">${prof.posts}</span>
-      </a>
-      ${hasCh && profOpen ? channelsBlock : ""}`;
-    }).join("") : `<a style="color:var(--dim);font-size:12px;padding:4px 9px">No profiles yet</a>`;
-    const pOpen = isOpen("projects", p.slug);
-    return `
-    <div class="project-group">
-      <div class="project-row" data-toggle-project="${esc(p.slug)}">
-        <span class="rail-chevron">${pOpen?"▾":"▸"}</span><span class="project-dot project-dot-${pi%4}" aria-hidden="true"></span><span class="rail-name">${esc(p.name)}</span>
-        <span class="project-kind">${esc(p.kind||p.type)}</span>
-        ${p.local_folder?`<button class="rail-folder" data-open-project-folder="${esc(p.slug)}" title="Open linked folder">▣</button>`:""}
-        <button class="rail-edit" data-edit-project="${esc(p.slug)}" data-os-id="${esc(OSID.route(`project/${p.slug}/edit`))}" title="Edit project">✎</button></div>
-      ${pOpen ? `<nav class="sec">
-        ${SECTIONS.map(s=>`<a data-project="${esc(p.slug)}" data-section="${s.key}" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap"><span class="ico">${s.ico}</span> ${esc(s.label)}${
-          s.key==="experiments"&&p.experiments?`<span class="c">${p.experiments}</span>`:
-          s.key==="product"&&totalFeatures?`<span class="c">${totalFeatures}</span>`:""}</a>`).join("")}
-        <div class="grp profile-group-label">Profiles
-          <button class="add-btn" data-new-profile="${esc(p.slug)}" data-os-id="${esc(OSID.btn("proj",p.slug,"new-profile"))}" title="Add profile">＋</button></div>
-        ${profileRows}
-      </nav>` : ""}
-    </div>`;
-  }).join("");
+  const wsP = api("/api/workspaces").then(d => d.workspaces || []).catch(() => [{ id: "hq", name: "HQ", kind: "hq" }]);
+  [_TREE, _POSTS, _SKILLS, , , _WORKSPACES] = await Promise.all([api("/api/tree"), api("/api/posts-index").catch(() => []), skillsP, regP, schP, wsP]);
+  if (!wsById(_WS)) { _WS = "hq"; try { localStorage.setItem("wsId", "hq"); } catch {} }
+  const q = `?ws=${encodeURIComponent(_WS)}`;
+  [_BOTS, _ROOMS, _APPROVALS] = await Promise.all([
+    api("/api/bots" + q).then(d => d.bots || []).catch(() => []),
+    api("/api/rooms" + q).then(d => d.rooms || []).catch(() => []),
+    api("/api/approvals" + q).then(d => d.approvals || []).catch(() => []),
+  ]);
+  renderWsBar();
+  const w = wsById(_WS) || { id: "hq", name: "HQ", kind: "hq" };
+  const roomRow = r => {
+    const b = r.kind === "dm" ? botById(r.lead) : null;
+    return `<a class="room-row" data-room="${esc(r.id)}">${b ? botAvatar(b) : icon("hash")}<span class="rail-name">${esc(r.name)}</span></a>`;
+  };
+  const section = (key, title, rows, add = "") => `<section class="rail-sec${RAIL_COLLAPSED.has(key) ? " collapsed" : ""}">
+      <div class="rail-hdr"><button class="rail-tg" data-rail-tg="${key}" aria-expanded="${!RAIL_COLLAPSED.has(key)}">${icon("chevron")}<span>${title}</span></button>${add}</div>
+      <nav class="nav${key === "time" ? "" : " rooms"}">${rows}</nav>
+    </section>`;
+  const channels = _ROOMS.filter(r => r.kind !== "dm");
+  const dms = _ROOMS.filter(r => r.kind === "dm");
   $("#rail").innerHTML = `
-    <div class="brand" id="brand-btn"><img class="mark" src="/logo.svg" alt=""><b>myOS</b>
-      <div class="brand-menu" id="brand-menu"><a id="quit-btn">Quit myOS</a></div>
+    <div class="rail-head">
+      <button class="ws-name" id="brand-btn" aria-haspopup="menu" aria-expanded="false"><img class="mark" src="/logo.svg" alt=""><b>${esc(w.name)}</b>${icon("chevron")}</button>
+      <button class="rail-ib" id="rail-compose" title="New thread" aria-label="New thread">${icon("compose")}</button>
+      <div class="menu brand-menu" id="brand-menu" role="menu"><a id="quit-btn">Quit myOS</a></div>
     </div>
-    <div class="rail-hdr"><span class="label">Now</span></div>
-    <nav class="nav">
-      <a data-view="needs"><span class="ico">◉</span> Tasks of the day</a>
-      <a data-view="calendar"><span class="ico">▦</span> Calendar</a>
-      <a data-view="operations"><span class="ico">✓</span> Operations</a>
-    </nav>
-    <div class="rail-hdr"><span class="label">Projects</span>
-      <button class="add-btn" id="new-project-btn" data-os-id="btn:global:new-project" title="New project">＋</button></div>
-    ${projects || '<div style="padding:8px 12px;color:var(--dim);font-size:12px">No projects yet — click ＋ to create one</div>'}
-    `;
-  $("#rail").querySelectorAll("[data-view]").forEach(a=>a.onclick=()=>selectGlobal(a.dataset.view));
-  $("#rail").querySelectorAll("[data-section]").forEach(a=>a.onclick=()=>selectSection(a.dataset.project,a.dataset.section));
-  $("#rail").querySelectorAll("[data-profile]").forEach(a=>a.onclick=e=>{ e.stopPropagation(); selectProfile(a.dataset.profile, a.dataset.chanFilter||null); });
-  $("#rail").querySelectorAll("[data-new-profile]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewProfile(b.dataset.newProfile); });
-  $("#rail").querySelectorAll("[data-new-channel]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openNewChannel(b.dataset.newChannel); });
-  $("#rail").querySelectorAll("[data-open-project-folder]").forEach(b=>b.onclick=async e=>{
-    e.stopPropagation();
-    try{ await jpost(`/api/project/${b.dataset.openProjectFolder}/folder/open`,{}); }
-    catch(err){ toast("✗ "+err.message); }
+    <div class="rail-scroll">
+      <nav class="nav">
+        <a data-view="approvals">${icon("inbox")}<span class="rail-name">Approvals</span>${_APPROVALS.length ? `<span class="badge">${_APPROVALS.length}</span>` : ""}</a>
+        ${w.id !== "hq" ? `<a data-view="files">${icon("folder")}<span class="rail-name">Files</span></a>` : ""}
+        <a data-view="content">${icon("layers")}<span class="rail-name">Content</span></a>
+        <a data-view="team">${icon("users")}<span class="rail-name">Team</span><span class="count">${_BOTS.filter(b => b.active).length}</span></a>
+      </nav>
+      ${section("channels", "Channels", channels.map(roomRow).join(""),
+        `<button class="add-btn" id="new-room-btn" title="New channel" aria-label="New channel">${icon("plus")}</button>`)}
+      ${section("teammates", "Teammates", dms.map(roomRow).join(""))}
+      ${section("time", "Your time", `
+        <a data-view="needs">${icon("sun")}<span class="rail-name">Today</span></a>
+        <a data-view="calendar">${icon("calendar")}<span class="rail-name">Calendar</span></a>
+        <a data-view="operations">${icon("list-check")}<span class="rail-name">Operations</span></a>`)}
+    </div>`;
+  $("#rail").querySelectorAll("[data-view]").forEach(a => a.onclick = () => {
+    closeNav();
+    window.ChatRooms?.showCanvas();
+    selectGlobal(a.dataset.view);
   });
-  $("#rail").querySelectorAll("[data-edit-project]").forEach(b=>b.onclick=e=>{ e.stopPropagation(); openEditProject(b.dataset.editProject); });
-  $("#rail").querySelectorAll("[data-toggle-project]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("projects", el.dataset.toggleProject); });
-  $("#rail").querySelectorAll("[data-toggle-profile]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); toggleOpen("profiles", el.dataset.toggleProfile); });
-  $("#new-project-btn").onclick=e=>{ e.stopPropagation(); openNewProject(); };
-  const brandMenu = $("#brand-menu");
-  $("#brand-btn").onclick = e => { e.stopPropagation(); brandMenu.classList.toggle("open"); };
-  document.addEventListener("click", () => brandMenu.classList.remove("open"));
+  $("#rail").querySelectorAll("[data-room]").forEach(a => a.onclick = () => { closeNav(); window.ChatRooms?.select(a.dataset.room); });
+  $("#rail").querySelectorAll("[data-rail-tg]").forEach(b => b.onclick = () => {
+    const key = b.dataset.railTg;
+    RAIL_COLLAPSED.has(key) ? RAIL_COLLAPSED.delete(key) : RAIL_COLLAPSED.add(key);
+    try { localStorage.setItem("railCollapsed", JSON.stringify([...RAIL_COLLAPSED])); } catch {}
+    b.closest(".rail-sec").classList.toggle("collapsed", RAIL_COLLAPSED.has(key));
+    b.setAttribute("aria-expanded", String(!RAIL_COLLAPSED.has(key)));
+  });
+  $("#new-room-btn").onclick = e => { e.stopPropagation(); closeNav(); window.ChatRooms?.showCanvas(); navigate("#/room/new"); };
+  $("#rail-compose").onclick = () => { closeNav(); window.ChatRooms?.newThread(); };
+  $("#brand-btn").onclick = e => { e.stopPropagation(); toggleMenu(e.currentTarget, $("#brand-menu")); };
   $("#quit-btn").onclick = () => { fetch("/api/quit", {method:"POST"}).catch(()=>{}); setTimeout(()=>window.close(), 350); };
+  window.ChatRooms?.refresh();
   highlight();
+}
+
+// Project the canvas is showing: the open view's project, else (unless
+// viewOnly) the active room's.
+function canvasProject(viewOnly=false){
+  if (STATE.project) return _TREE.find(p => p.slug === STATE.project) || null;
+  const prof = STATE.profile || CURRENT_PROFILE_SLUG;
+  if (prof) return _TREE.find(p => p.profiles.some(x => x.slug === prof)) || null;
+  if (STATE.channelGuidelines) return _TREE.find(p => p.profiles.some(pr => pr.channels.some(c => c.slug === STATE.channelGuidelines))) || null;
+  const path = (location.hash || "").replace(/^#/, "");
+  const m = path.match(/^\/project\/([^/]+)/);
+  if (m && _TREE.some(p => p.slug === m[1])) return _TREE.find(p => p.slug === m[1]);
+  return viewOnly ? null : wsProject();
+}
+
+// Canvas bar: a breadcrumb of what is open, Files, and a More menu holding the
+// project's sections and profiles.
+// kind: [icon, Files filter label, one item's label]
+const KIND_META = {
+  memo: ["doc", "Memos", "Memo"], experiment: ["flask", "Experiments", "Experiment"], doc: ["book", "Docs", "Doc"],
+  roadmap: ["map", "Roadmap", "Roadmap"], plan: ["route", "Go-to-market", "Go-to-market plan"],
+  content: ["calendar", "Content", "Content plan"], brief: ["compose", "Post briefs", "Post brief"], voice: ["mic", "Voice", "Voice"],
+};
+const VIEW_LABEL = { content: "Content", files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
+const profileName = slug => _TREE.flatMap(p => p.profiles).find(x => x.slug === slug)?.name || slug;
+// "Instagram, TikTok": the channels of a deliverable's profile.
+const delivChannels = d => (_TREE.flatMap(p => p.profiles).find(x => x.slug === d.profile)?.channels || [])
+  .map(c => PLAT_NAME[c.platform] || c.platform || c.slug).join(", ");
+
+// [[label, route or null]] from the workspace down to the open item.
+function canvasCrumbs(){
+  const p = wsProject();
+  const path = (location.hash || "").replace(/^#/, "").replace(/\?.*$/, "");
+  const crumbs = [[p ? p.name : "HQ", defaultRoute()]];
+  const prof = STATE.profile || CURRENT_PROFILE_SLUG;
+  let m;
+  if (/^\/content\b/.test(path)) crumbs.push(["Content", "#/content"]);
+  else if ((m = path.match(/^\/profile\/([^/]+)/))) crumbs.push([profileName(m[1]), `#/profile/${m[1]}`]);
+  else if ((m = path.match(/^\/post\/([^/]+)/))) {
+    if (prof) crumbs.push([profileName(prof), `#/profile/${prof}`]);
+    crumbs.push([(OSID.post(m[1]) || m[1]).split(".").pop(), null]);
+  }
+  else if ((m = path.match(/^\/project\/[^/]+\/([^/]+)$/))) crumbs.push([SECTIONS.find(x => x.key === m[1])?.label || m[1], null]);
+  else if (VIEW_LABEL[path.slice(1)]) crumbs.push([VIEW_LABEL[path.slice(1)], null]);
+  return crumbs;
+}
+
+function renderCanvasNav(){
+  const nav = $("#canvas-nav"); if (!nav) return;
+  const p = wsProject();
+  const crumbs = canvasCrumbs();
+  nav.hidden = false;
+  nav.innerHTML = `<div class="cn-row">
+      <span class="cn-crumb">${crumbs.map(([label, go], i) => i === crumbs.length - 1 || !go
+        ? `<b>${esc(label)}</b>` : `<a data-go="${esc(go)}">${esc(label)}</a>`).join(icon("chevron-right"))}</span>
+      ${p ? `<button class="btn ghost sm cn-files${STATE.view === "files" ? " on" : ""}" data-cn-files>${icon("folder")} Files</button>
+      <div class="cn-more"><button class="term-btn" data-cn-more aria-haspopup="menu" aria-expanded="false" title="More" aria-label="More">${icon("more")}</button>
+        <div class="menu" role="menu">
+          <div class="menu-h">Sections</div>
+          ${SECTIONS.map(x => `<button data-cn-sec="${esc(x.key)}">${esc(x.label)}</button>`).join("")}
+          ${(p.profiles || []).length ? `<hr><div class="menu-h">Profiles</div>
+          ${p.profiles.map(x => `<button data-cn-prof="${esc(x.slug)}">${esc(x.name)}</button>`).join("")}` : ""}
+          <hr><button data-cn-edit>Project settings</button>
+        </div></div>` : ""}
+      ${FOCUS_ID && STATE.view !== "content" ? `<button class="btn ghost sm" data-cn-all title="Show the rest of this section">Show all</button>` : ""}
+      <button class="term-btn cn-close" data-cn-close title="Close canvas" aria-label="Close canvas">${icon("x")}</button>
+    </div>`;
+  nav.querySelectorAll("[data-go]").forEach(a => a.onclick = () => navigate(a.dataset.go));
+  nav.querySelector("[data-cn-files]")?.addEventListener("click", () => navigate("#/files"));
+  nav.querySelector("[data-cn-close]").onclick = () => window.ChatRooms?.hideCanvas();
+  nav.querySelector("[data-cn-more]")?.addEventListener("click", e => {
+    e.stopPropagation();
+    toggleMenu(e.currentTarget, e.currentTarget.nextElementSibling);
+  });
+  nav.querySelectorAll("[data-cn-sec]").forEach(b => b.onclick = () => selectSection(p.slug, b.dataset.cnSec));
+  nav.querySelectorAll("[data-cn-prof]").forEach(b => b.onclick = () => selectProfile(b.dataset.cnProf, null));
+  nav.querySelector("[data-cn-edit]")?.addEventListener("click", () => openEditProject(p.slug));
+  nav.querySelector("[data-cn-all]")?.addEventListener("click", () => { setFocus(null); renderCanvasNav(); });
+}
+
+// Open one deliverable in the canvas, scrolled to its card. On project
+// sections, focus also hides the other groups (a generated rule keyed on the
+// item's id, so re-renders keep it); the Content view highlights the row.
+let FOCUS_ID = null;
+function setFocus(id){
+  FOCUS_ID = id || null;
+  let tag = document.getElementById("focus-style");
+  if (!tag) { tag = document.createElement("style"); tag.id = "focus-style"; document.head.appendChild(tag); }
+  tag.textContent = FOCUS_ID
+    ? `#main .sec-group:not(:has([data-os-id="${CSS.escape(FOCUS_ID)}"])){display:none}`
+    : "";
+}
+function openDeliverable(item){
+  if (!item) return;
+  window.ChatRooms?.showCanvas();
+  const from = item.bot ? { bot: item.bot, at: item.updated } : null;
+  navigate(item.link, { ...(item.profile ? { profileSlug: item.profile } : {}), focus: item.focus || null, from });
+  if (!item.focus) return;
+  let tries = 0;
+  const seek = () => {
+    const el = $("#main").querySelector(`[data-os-id="${CSS.escape(item.focus)}"]`);
+    if (!el) { if (++tries < 20) setTimeout(seek, 100); return; }
+    (el.closest(".post-row, .pf, .pcard, .post, .sec-group") || el).scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+  setTimeout(seek, 60);
+}
+
+// ── Content (canvas default): every profile's posts, one card per profile ────
+let CONTENT_FILTER = "all";              // all | ideas | drafts | ready | published
+const CONTENT_EXPANDED = new Set();      // profile slugs showing every row
+const CONTENT_COLLAPSED = new Set();     // profile slugs whose card is folded
+const CONTENT_TABS = [["posts", "Posts"], ["calendar", "Calendar"], ["briefs", "Briefs"], ["voice", "Voice"]];
+const CONTENT_FILTERS = [["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"], ["ready", "Ready"], ["published", "Published"]];
+const FILTER_EMPTY = { all: "No posts yet", ideas: "No ideas", drafts: "No drafts", ready: "Nothing ready", published: "Nothing published" };
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+// The workspace's project, or every project in HQ. Profiles carry their
+// identity hue, by position in the project.
+const contentProjects = () => (wsProject() ? [wsProject()] : _TREE).map(p => ({
+  ...p, profiles: (p.profiles || []).map((pf, i) => ({ ...pf, hue: ID_HUES[i % ID_HUES.length] })),
+}));
+
+const channelChips = channels => channels.map(c =>
+  `<span class="plat">${platIcon(c.platform)}${esc(PLAT_NAME[c.platform] || c.platform || c.slug)}</span>`).join("");
+
+// One post as a row: status, channels, date; title; excerpt; next step.
+function postRowHtml(post, channels, { selectable = false, focused = false, selected = false, note = "" } = {}){
+  const na = nextActionFor(post);
+  const osId = OSID.post(post.id);
+  const platforms = [...new Set((post.channels || []).map(sl => channels.find(c => c.slug === sl)).filter(Boolean))];
+  const excerpt = post.concept
+    ? `<div class="pr-x">${esc(post.concept)}</div>`
+    : post.brief_path ? "" : `<div class="pr-x empty">Not written yet</div>`;
+  return `<div class="post-row${focused ? " focused" : ""}${selected ? " sel" : ""}" data-post="${esc(post.id)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
+    ${selectable ? `<input type="checkbox" class="selbox" data-sel="${esc(post.id)}"${selected ? " checked" : ""} aria-label="Select post">` : ""}
+    <div class="pr-top"><span class="stp ${STATUS_PILL_CLASS[post.status] || "idea"}">${esc(plainStatus(post.status))}</span>${channelChips(platforms)}
+      <span class="when">${icon("clock")}${esc(post.date || "No date")}</span></div>
+    <button type="button" class="pr-title" data-view="${esc(post.id)}">${esc(post.working_title || post.pillar || post.id)}</button>
+    ${excerpt}
+    <div class="pr-foot">
+      ${na ? `<button class="btn sm${na.kind === "review" ? " primary" : ""}" data-act="${esc(post.id)}">${esc(na.label)}</button>` : ""}
+      <button class="btn sm ghost" data-edit="${esc(post.id)}">Edit</button>
+      ${note ? `<span class="focus-note">${icon("reply")}${esc(note)}</span>` : ""}
+      <span class="pr-id">${sectionIdChip(osId)}</span>
+    </div></div>`;
+}
+
+// Profile header shared by the Content cards and the profile page.
+function profileHeadHtml(profile, { tag = "div", end = "", sub = "", chips = true } = {}){
+  const name = profile.name || profile.slug;
+  return `<${tag} class="pf-head">
+      <span class="av t-${profile.hue || "slate"}" aria-hidden="true">${esc(name[0].toUpperCase())}</span>
+      <div class="pf-id">
+        <div class="pf-name"><a href="#/profile/${esc(profile.slug)}">${esc(name)}</a>${sectionIdChip(OSID.prof(profile.slug))}</div>
+        <div class="pf-sub">${chips ? channelChips(profile.channels || []) : ""}${sub}</div>
+      </div>
+      <div class="pf-end">${end}</div>
+    </${tag}>`;
+}
+
+// One collapsible card per profile; the first `limit` rows, then "Show N more".
+function profileCardHtml(group, { limit = ContentView.PAGE_SIZE, filter = "all", focusId = null, note = "", collapsed = false } = {}){
+  const { profile, counts, needsYou } = group;
+  const posts = group.posts.filter(p => filter === "all" || STAGE_GROUP[p.status] === filter);
+  const shown = posts.slice(0, limit);
+  const channels = profile.channels || [];
+  const mix = ["ideas", "drafts", "ready", "published"].filter(b => counts[b])
+    .map(b => `<i class="mix-${b}" style="width:${(counts[b] / counts.all * 100).toFixed(1)}%"></i>`).join("");
+  const rows = shown.map(p => {
+    const focused = !!focusId && OSID.post(p.id) === focusId;
+    return postRowHtml(p, channels, { focused, note: focused ? note : "" });
+  }).join("") || `<div class="empty">${FILTER_EMPTY[group.posts.length ? filter : "all"]}</div>`;
+  const osId = OSID.prof(profile.slug);
+  return `<details class="pf${focusId && focusId === osId ? " focused" : ""}"${collapsed ? "" : " open"} data-profile="${esc(profile.slug)}"${osId ? ` data-os-id="${esc(osId)}"` : ""}>
+    ${profileHeadHtml(profile, { tag: "summary",
+      sub: needsYou ? `<span class="pf-needs">${needsYou} waiting on you</span>` : "",
+      end: `${counts.all ? `<span class="mix" aria-hidden="true">${mix}</span>` : ""}<span class="cnt">${plural(counts.all, "post")}</span>${icon("chevron", "chev")}` })}
+    ${rows}
+    ${posts.length > shown.length ? `<button class="pf-more" data-pf-more="${esc(profile.slug)}">Show ${posts.length - shown.length} more</button>` : ""}
+  </details>`;
+}
+
+const contentHead = (tab, summary) => `<div class="doc-head">
+    <h2 class="doc-title">Content</h2>
+    <p class="doc-lede">${esc(summary)}</p>
+    <nav class="doc-tabs">${CONTENT_TABS.map(([k, label]) => `<a href="#/content${k === "posts" ? "" : "/" + k}"${k === tab ? ' class="on" aria-current="page"' : ""}>${label}</a>`).join("")}</nav>
+  </div>`;
+
+async function renderContent(tab = "posts"){
+  const from = _NAV_EXTRAS.from || null, focusArrived = !!_NAV_EXTRAS.focus;
+  const stillOn = routeGuard();
+  const projects = contentProjects();
+  const profiles = projects.flatMap(p => p.profiles);
+  const noProfiles = `<div class="empty">No profiles yet. Ask a teammate in chat to set one up.</div>`;
+  if (tab === "calendar") {
+    const scope = wsProject() ? new Set(projects.flatMap(p => [p.slug, ...(p.products || []).map(x => x.slug),
+      ...p.profiles.flatMap(pf => [pf.slug, ...(pf.channels || []).map(c => c.slug)])])) : null;
+    return renderTimeline({ scope, head: contentHead(tab, plural(profiles.length, "profile")) });
+  }
+  if (tab === "briefs" || tab === "voice") {
+    const [seg, key, ic, noun] = tab === "briefs" ? ["brief-specs", "specs", "doc", "brief spec"] : ["voices", "voices", "mic", "voice"];
+    const lists = await Promise.all(profiles.map(pf =>
+      api(`/api/profile/${encodeURIComponent(pf.slug)}/${seg}`).then(d => d[key] || []).catch(() => [])));
+    if (!stillOn()) return;
+    const cards = profiles.map((pf, i) => `<section class="pf">${profileHeadHtml(pf, { end: `<span class="cnt">${plural(lists[i].length, noun)}</span>` })}
+        ${lists[i].map(x => `<a class="doc-row" href="#/profile/${esc(pf.slug)}/setup">${icon(ic)}<b>${esc(x.id)}</b>
+          <span class="doc-row-x">${esc((x.text || "").split("\n").find(l => l.trim()) || "Empty")}</span>
+          <span class="plat">${esc(x.platforms || "all")}</span></a>`).join("")
+          || `<div class="empty">No ${noun}s yet</div>`}
+      </section>`).join("");
+    $("#main").innerHTML = `<div class="scroll"><div class="doc">${contentHead(tab, plural(profiles.length, "profile"))}${cards || noProfiles}</div></div>`;
+    return;
+  }
+
+  const lists = await Promise.all(profiles.map(pf =>
+    api(`/api/profile/${encodeURIComponent(pf.slug)}/posts`).catch(() => [])));
+  if (!stillOn()) return;
+  const posts = lists.flat();
+  const byId = new Map(posts.map(p => [p.id, p]));
+  const sections = projects.map(project => ({ project, groups: ContentView.groupByProfile(posts, project.profiles) }))
+    .filter(sec => sec.groups.length);
+  const groups = sections.flatMap(sec => sec.groups);
+  const waiting = groups.reduce((n, g) => n + g.needsYou, 0);
+  const summary = [plural(profiles.length, "profile"), plural(posts.length, "post"), waiting ? `${waiting} waiting on you` : ""]
+    .filter(Boolean).join(" · ");
+  const focusId = FOCUS_ID;
+  if (focusArrived) CONTENT_FILTER = "all";   // a deliverable's row must be visible
+  const age = from && relAge(from.at);
+  const note = from ? `from @${botById(from.bot)?.handle || from.bot}, ${age === "now" ? "just now" : `${age} ago`}` : "";
+  const total = b => groups.reduce((n, g) => n + g.counts[b], 0);
+
+  const card = g => {
+    const focused = !!focusId && (OSID.prof(g.profile.slug) === focusId || g.posts.some(p => OSID.post(p.id) === focusId));
+    const opts = { filter: CONTENT_FILTER, focusId, note, collapsed: CONTENT_COLLAPSED.has(g.profile.slug) && !focused };
+    return profileCardHtml(g, CONTENT_EXPANDED.has(g.profile.slug) || focused ? { ...opts, limit: Infinity } : opts);
+  };
+  const draw = () => {
+    $("#main").innerHTML = `<div class="scroll"><div class="doc">${contentHead("posts", summary)}
+      ${groups.length ? `<div class="filters">${CONTENT_FILTERS.map(([k, label]) => `<button type="button" class="chip${CONTENT_FILTER === k ? " on" : ""}" data-f="${k}" aria-pressed="${CONTENT_FILTER === k}">${label} <span class="n">${total(k)}</span></button>`).join("")}</div>
+      ${sections.map(sec => `${wsProject() ? "" : `<h3 class="cv-project">${esc(sec.project.name)}</h3>`}${sec.groups.map(card).join("")}`).join("")}` : noProfiles}
+    </div></div>`;
+    const main = $("#main");
+    main.querySelectorAll("[data-f]").forEach(c => c.onclick = () => { CONTENT_FILTER = c.dataset.f; draw(); });
+    main.querySelectorAll("[data-pf-more]").forEach(b => b.onclick = () => { CONTENT_EXPANDED.add(b.dataset.pfMore); draw(); });
+    main.querySelectorAll("details.pf").forEach(d => d.addEventListener("toggle", () => {
+      d.open ? CONTENT_COLLAPSED.delete(d.dataset.profile) : CONTENT_COLLAPSED.add(d.dataset.profile);
+    }));
+    const open = (id, suffix = "") => navigate(`#/post/${id}${suffix}`, { profileSlug: byId.get(id)?.profile_slug });
+    main.querySelectorAll("[data-view]").forEach(a => a.onclick = () => open(a.dataset.view));
+    main.querySelectorAll("[data-edit]").forEach(b => b.onclick = () => open(b.dataset.edit, "/edit"));
+    main.querySelectorAll("[data-act]").forEach(b => b.onclick = async () => {
+      const post = byId.get(b.dataset.act);
+      b.disabled = true;
+      if (!await runNextAction(post, post.profile_slug)) { b.disabled = false; return; }
+      renderRail();
+      if (stillOn()) renderContent("posts");
+    });
+  };
+  draw();
+}
+
+// Files: everything this company's team has handed you, newest first.
+async function renderFiles(){
+  const p = wsProject();
+  if (!p) { $("#main").innerHTML = `<div class="scroll"><div class="empty">Files live in each company's workspace.</div></div>`; return; }
+  const stillOn = routeGuard();
+  const files = (await api(`/api/files?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).files || [];
+  if (!stillOn()) return;
+  let filt = "all";
+  const kinds = [...new Set(files.map(f => f.kind))];
+  const draw = () => {
+    const list = filt === "all" ? files : files.filter(f => f.kind === filt);
+    const rows = list.length ? list.map((f, i) => `<div class="post file-row" data-file="${i}">
+        <span class="kind-ic">${icon(KIND_META[f.kind]?.[0] || "doc")}</span>
+        <div class="t">${esc(f.label)}<small>${esc(KIND_META[f.kind]?.[1] || f.kind)}${f.status ? ` · ${esc(f.status)}` : ""} · ${relAge(f.updated)}</small></div>
+        <button class="go">Open</button></div>`).join("")
+      : `<div class="empty">Nothing here yet. Ask in #general, e.g. "@cmo draft our positioning".</div>`;
+    $("#files-list").innerHTML = `<div class="filters" style="margin-bottom:12px">
+        <button class="chip${filt === "all" ? " on" : ""}" data-kind="all">All <span class="n">${files.length}</span></button>
+        ${kinds.map(k => `<button class="chip${filt === k ? " on" : ""}" data-kind="${esc(k)}">${esc(KIND_META[k]?.[1] || k)}</button>`).join("")}
+      </div><div class="rowc">${rows}</div>`;
+    $("#files-list").querySelectorAll("[data-kind]").forEach(c => c.onclick = () => { filt = c.dataset.kind; draw(); });
+    $("#files-list").querySelectorAll("[data-file]").forEach(r => r.onclick = () => openDeliverable(list[+r.dataset.file]));
+  };
+  $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">${esc(p.name)}</div><h1 class="title">Files</h1></div></div>
+    <div class="scroll"><div id="files-list"></div></div>`;
+  draw();
+}
+
+// Topic channel form (canvas): name, project, members, lead.
+function renderRoomForm(name){
+  const existing = name ? roomById(`${_WS}/t-${name}`) : null;
+  if (name && !existing) { $("#main").innerHTML = `<div class="scroll"><div class="empty">Channel not found.</div></div>`; return; }
+  const active = _BOTS.filter(b => b.active);
+  const members = new Set(existing ? existing.members : []);
+  const lead = existing ? existing.lead : "cos";
+  $("#main").innerHTML = `
+    ${pageHeader(existing ? `#${existing.name}` : "New channel", "Back", existing ? `<button class="btn" id="room-del">Delete channel</button>` : "")}
+    <div class="scroll"><form class="form" id="room-form" style="max-width:560px">
+      ${flabel("Name")}${finput("name", existing?.name || "", 'placeholder="acme-launch" autocomplete="off"')}
+      <p class="field-help">Lowercase, digits, dashes. Shows as #name.</p>
+      <p class="field-help">In ${esc(wsById(_WS)?.name || "HQ")}: bots here only see this workspace.</p>
+      ${flabel("Members")}
+      <div class="chan-checks">${active.map(b => `<label class="chan-check"><input type="checkbox" class="room-member" value="${esc(b.id)}"${members.has(b.id) ? " checked" : ""}> ${botAvatar(b)} ${esc(b.name)}</label>`).join("")}</div>
+      ${flabel("Lead")}${fsel("lead", active.map(b => [b.id, b.name]), lead)}
+      <p class="field-help">Untagged messages go to the lead only. Members answer when you @tag them.</p>
+      <div style="margin-top:18px;display:flex;gap:8px"><button class="btn primary" type="submit">${existing ? "Save" : "Create channel"}</button></div>
+    </form></div>`;
+  $("#room-form").onsubmit = async e => {
+    e.preventDefault();
+    const v = formVals($("#room-form"));
+    const picked = [...document.querySelectorAll(".room-member:checked")].map(i => i.value);
+    try {
+      const out = await jpost("/api/rooms", { ws: _WS, name: v.name, members: picked, lead: v.lead, replace: existing?.name || null });
+      await renderRail();
+      window.ChatRooms?.select(out.id);
+      history.back();
+      toast(existing ? "Channel saved ✓" : "Channel created ✓");
+    } catch (err) { toast("✗ " + err.message); }
+  };
+  const del = $("#room-del");
+  if (del) del.onclick = async () => {
+    if (!del.classList.contains("armed")) { del.classList.add("armed"); del.textContent = "Click again to delete"; return; }
+    try {
+      await jpost("/api/rooms/delete", { ws: _WS, name: existing.name });
+      await renderRail(); window.ChatRooms?.select(`${_WS}/general`);
+      toast("Channel deleted ✓ (threads moved to #general)");
+    } catch (err) { toast("✗ " + err.message); }
+  };
 }
 
 function openNewProject(){ navigate("#/project/new"); }
@@ -515,11 +917,11 @@ function wireLocalFolderControls(root, projectSlug=null){
 }
 
 function highlight(){
+  renderCanvasNav();
   const mark=(a,on)=>{a.classList.toggle("active",on);if(on)a.setAttribute("aria-current","page");else a.removeAttribute("aria-current");};
-  document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
-  document.querySelectorAll("#rail [data-section]").forEach(a=>mark(a,STATE.view==="section"&&STATE.project===a.dataset.project&&STATE.section===a.dataset.section));
-  document.querySelectorAll("#rail [data-profile]").forEach(a=>mark(a,(STATE.view==="profile"||STATE.view==="profileSetup")&&STATE.profile===a.dataset.profile));
-  document.querySelectorAll("#rail [data-chan-guidelines]").forEach(a=>mark(a,STATE.view==="channelGuidelines"&&STATE.channelGuidelines===a.dataset.chanGuidelines));
+  const canvasOpen = !document.getElementById("app")?.classList.contains("canvas-hidden");
+  document.querySelectorAll("#rail [data-view]").forEach(a=>mark(a,canvasOpen&&STATE.view===a.dataset.view&&!STATE.project&&!STATE.profile&&!STATE.channelGuidelines));
+  document.querySelectorAll("#rail [data-room]").forEach(a=>mark(a,a.dataset.room===window.ChatRooms?.current()));
   requestAnimationFrame(()=>document.querySelector("#rail [aria-current='page']")?.scrollIntoView({block:"nearest"}));
 }
 function selectGlobal(v){ navigate(`#/${v}`); }
@@ -537,9 +939,13 @@ function selectChannelGuidelines(slug){
 async function refreshViews(){
   await renderRail();
   const v = STATE.view;
+  if (v === "content") return renderContent(STATE.tab);
   if (v === "calendar") return renderTimeline();
   if (v === "day") return renderDay(STATE.day);
   if (v === "operations") return renderOperations();
+  if (v === "team") return renderTeam();
+  if (v === "approvals") return renderApprovals();
+  if (v === "files") return renderFiles();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
   if (v === "profileSetup") return renderProfileSetup(STATE.profile);
@@ -548,13 +954,15 @@ async function refreshViews(){
 }
 
 async function renderNeeds(){
+  const stillOn = routeGuard();
   const [tl] = await Promise.all([api("/api/timeline").catch(()=>[]), ensureIdRegistry()]);
+  if (!stillOn()) return;
   const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const today=iso(new Date());
   const rows=[];
-  const push=(prio,r,meta,go)=>{ const col=KIND_COLOR[r.kind]||"var(--dim)", ic=KIND_ICON[r.kind]||"•";
+  const push=(prio,r,meta,go)=>{
     const act = r.kind==="activity"&&r.status!=="done" ? "Mark done" : r.kind==="post" ? "Open post" : "Open";
-    rows.push({prio,stripe:col,icbg:`background:var(--panel-chat);color:${col}`,ic,t:r.title||r.kind,m:meta,act,go}); };
+    rows.push({prio,kind:r.kind,ic:kindIcon(r.kind),t:r.title||r.kind,m:meta,act,go}); };
   const goFor = r => r.kind==="post"&&r.ref_id ? ()=>navigate(`#/post/${r.ref_id}`,{profileSlug:r.entity_slug})
     : r.kind==="activity" ? ()=>navigate("#/operations")
     : r.kind==="experiment" ? ()=>navigate(`#/project/${r.entity_slug}/experiments`)
@@ -566,8 +974,8 @@ async function renderNeeds(){
   rows.sort((a,b)=>a.prio-b.prio);
   const dateLabel=new Date().toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric"});
   const body = rows.length ? `<div class="list">${rows.map((r,i)=>`
-    <div class="arow" data-need="${i}"><span class="stripe" style="background:${r.stripe}"></span>
-      <span class="ig" style="${r.icbg}">${r.ic}</span>
+    <div class="arow tone-${esc(r.kind)}" data-need="${i}"><span class="stripe"></span>
+      <span class="ig">${r.ic}</span>
       <span class="body"><span class="t">${esc(r.t)}</span><span class="m">${esc(r.m)}</span></span>
       <span class="act">${esc(r.act)}</span></div>`).join("")}</div>`
     : `<div class="sec-empty"><p>Nothing planned for today.</p><p class="sec-hint">Posts, activities, and milestones scheduled for today show up here.</p></div>`;
@@ -577,7 +985,9 @@ async function renderNeeds(){
 }
 
 async function renderOperations(){
+  const stillOn = routeGuard();
   const all = await api("/api/timeline");
+  if (!stillOn()) return;
   const items = all.filter(r=>r.kind==="activity");
   const statuses=["planned","running","blocked","done"];
   let FILT="active";
@@ -592,7 +1002,7 @@ async function renderOperations(){
         ${!done?`<button class="go" data-done-title="${esc(r.title)}" data-done-entity="${esc(r.entity_slug||"")}">Mark done</button>`:""}
         <button class="more" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>Edit</button>
       </div>`;
-    }).join("") : `<div style="padding:24px 4px;color:var(--dim)">Nothing here.</div>`;
+    }).join("") : `<div class="empty">Nothing here.</div>`;
     const active=items.filter(r=>r.status!=="done").length;
     $("#ops-list").innerHTML=`
       <div class="filters" style="margin-bottom:14px">
@@ -610,12 +1020,108 @@ async function renderOperations(){
   }
   $("#main").innerHTML=`
     <div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Operations</h1></div>
-      <div style="margin-left:auto"><button class="btn primary" id="newOpBtn">＋ Activity</button></div></div>
+      <div style="margin-left:auto"><button class="btn primary" id="newOpBtn">${icon("plus")} Activity</button></div></div>
     <div class="scroll"><div id="ops-list"></div></div>`;
   draw();
   $("#newOpBtn").onclick=()=>navigate("#/activity/new");
 }
-function plainStatus(s){ return ({planned:"Idea",approved_slot:"Idea",briefed:"Draft",approved:"Ready",published:"Published",rejected:"Archived"})[s]||s; }
+// ── Team: bots as teammates, org chart + on/off. A switched-off bot's skills
+// roll up to its manager (server decides); Chief of Staff is always on.
+async function renderTeam(){
+  const stillOn = routeGuard();
+  let costs = { bots: {}, total: {}, days: 30 };
+  const draw = () => {
+    const depth = b => { let d = 0, cur = b; while (cur && cur.reports_to !== "ceo" && d < 5) { cur = botById(cur.reports_to); d++; } return d; };
+    const rows = _BOTS.map(b => {
+      const own = new Set(b.skills);
+      const covered = b.effective_skills.filter(s => !own.has(s));
+      const boss = b.reports_to === "ceo" ? "You (CEO)" : (botById(b.reports_to)?.name || b.reports_to);
+      const coverNote = b.covering.length ? `<small class="team-cover">covering for ${b.covering.map(c => esc(botById(c)?.name || c)).join(", ")}</small>` : "";
+      const offNote = !b.active ? `<small class="team-cover">off · skills handled by ${esc(botById(b.manager)?.name || "Chief of Staff")}</small>` : "";
+      return `<div class="post team-row${b.active ? "" : " off"}" style="margin-left:${depth(b) * 22}px">
+        ${botAvatar(b)}
+        <div class="t"><b>${esc(b.name)}</b> <span class="bot-handle">@${esc(b.handle)}</span>
+          <small>${esc(b.about)}</small>
+          <small>Reports to ${esc(boss)}</small>
+          <div class="team-skills">${b.skills.map(s => `<span class="tag">${esc(s)}</span>`).join("")}${covered.map(s => `<span class="tag covered" title="covering">${esc(s)}</span>`).join("")}</div>
+          ${coverNote}${offNote}
+          <small class="team-usage">${(() => { const c = costs.bots[b.id]; return c && c.turns ? `${c.turns} ${c.turns === 1 ? "reply" : "replies"} · ${fmtUsage(c.tokens, c.cost)} (est., ${costs.days}d)` : `no replies in ${costs.days}d`; })()}
+            · <a class="mem-toggle" data-mem="${esc(b.id)}">Memory</a></small>
+          <div class="mem-box" hidden></div>
+        </div>
+        ${b.recommended && !b.active ? `<span class="tag">recommended</span>` : ""}
+        ${b.locked ? `<span class="tag">always on</span>` : `<button class="go" data-bot-toggle="${esc(b.id)}" data-on="${b.active ? 1 : 0}">${b.active ? "Switch off" : "Switch on"}</button>`}
+      </div>`;
+    }).join("");
+    const t = costs.total || {};
+    $("#team-list").innerHTML = `<div class="team-total">${t.turns ? `Last ${costs.days} days: ${t.turns} ${t.turns === 1 ? "reply" : "replies"} · ${fmtUsage(t.tokens, t.cost)} (est.)` : ""}</div><div class="rowc">${rows}</div>`;
+    $("#team-list").querySelectorAll("[data-mem]").forEach(a => a.onclick = () => toggleMemory(a.closest(".team-row"), a.dataset.mem));
+    $("#team-list").querySelectorAll("[data-bot-toggle]").forEach(btn => btn.onclick = async () => {
+      try {
+        const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { ws: _WS, active: btn.dataset.on !== "1" });
+        _BOTS = d.bots || _BOTS; draw(); renderRail().catch(() => {});
+      } catch (e) { toast("✗ " + e.message); }
+    });
+  };
+  $("#main").innerHTML = `
+    <div class="topbar"><div><div class="crumbs">${esc(wsById(_WS)?.name || "HQ")} · ${esc(_WS === "hq" ? "holding" : wsById(_WS)?.kind || "")}</div><h1 class="title">Team</h1></div></div>
+    <div class="scroll"><div class="help">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
+  if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
+  costs = await api(`/api/costs?ws=${encodeURIComponent(_WS)}`).catch(() => costs);
+  if (stillOn()) draw();
+}
+
+// ── Approvals inbox: proposals bots are waiting on you for (HQ: every company).
+function relAge(ts){
+  const d = Date.now() / 1000 - (ts || 0);
+  return d < 60 ? "now" : d < 3600 ? `${Math.floor(d / 60)}m` : d < 86400 ? `${Math.floor(d / 3600)}h` : `${Math.floor(d / 86400)}d`;
+}
+async function renderApprovals(){
+  const items = _APPROVALS;
+  const rows = items.length ? items.map(a => {
+    const b = botById(a.bot) || { id: a.bot, name: a.bot };
+    const room = (a.room || "").split("/")[1] || "general";
+    const where = `${wsById(a.ws)?.name || a.ws} · ${room.startsWith("dm-") ? "DM" : "#" + room.replace(/^t-/, "")}`;
+    return `<div class="post approval-row">
+      ${botAvatar(b)}
+      <div class="t">${esc(a.summary)}<small>${esc(b.name)} · ${esc(where)} · ${relAge(a.created)}</small></div>
+      <button class="go" data-ap-go="${esc(a.id)}">Open</button>
+      <button class="go primary-go" data-ap-ok="${esc(a.id)}">Approve</button>
+      <button class="more" data-ap-no="${esc(a.id)}">Dismiss</button>
+    </div>`;
+  }).join("") : `<div class="empty">Nothing waiting on you.</div>`;
+  $("#main").innerHTML = `
+    <div class="topbar"><div><div class="crumbs">${esc(_WS === "hq" ? "Every workspace" : wsById(_WS)?.name || "")}</div><h1 class="title">Approvals</h1></div></div>
+    <div class="scroll"><div class="help">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it.</div><div class="rowc">${rows}</div></div>`;
+  const find = id => items.find(a => a.id === id);
+  $("#main").querySelectorAll("[data-ap-go]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apGo)));
+  $("#main").querySelectorAll("[data-ap-ok]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apOk), "approved"));
+  $("#main").querySelectorAll("[data-ap-no]").forEach(b => b.onclick = async () => {
+    try { await jpost("/api/approvals/dismiss", { chat: find(b.dataset.apNo).chat }); await renderRail(); renderApprovals(); }
+    catch (e) { toast("✗ " + e.message); }
+  });
+}
+
+async function toggleMemory(row, botId){
+  const box = row.querySelector(".mem-box");
+  if (!box.hidden) { box.hidden = true; return; }
+  const draw = lines => {
+    box.innerHTML = `${lines.length ? lines.map(l => `<div class="mem-line"><span>${esc(l.replace(/^- /, ""))}</span><button class="cl-del" data-mem-del="${esc(l)}" title="Forget">✕</button></div>`).join("") : `<div class="mem-empty">Nothing remembered in this workspace yet.</div>`}
+      <form class="mem-add"><input name="text" placeholder="Add a fact this bot should remember here…" maxlength="300"><button class="btn" type="submit">Add</button></form>`;
+    box.querySelectorAll("[data-mem-del]").forEach(b => b.onclick = async () => {
+      try { draw((await jpost("/api/memory/delete", { ws: _WS, bot: botId, line: b.dataset.memDel })).lines); } catch (e) { toast("✗ " + e.message); }
+    });
+    box.querySelector(".mem-add").onsubmit = async e => {
+      e.preventDefault();
+      const text = e.target.text.value.trim(); if (!text) return;
+      try { draw((await jpost("/api/memory", { ws: _WS, bot: botId, text })).lines); } catch (err) { toast("✗ " + err.message); }
+    };
+  };
+  box.hidden = false;
+  try { draw((await api(`/api/memory?ws=${encodeURIComponent(_WS)}&bot=${encodeURIComponent(botId)}`)).lines || []); }
+  catch (e) { toast("✗ " + e.message); }
+}
+
 
 function latestMemo(project, type){
   return (project.memos || []).filter(m => m.type === type).sort((a, b) => b.version - a.version)[0] || null;
@@ -659,7 +1165,7 @@ function renderArtifactHead(title, id, trailing=""){
 
 function metaPlain(label, value){
   if(value==null||value==="") return "";
-  return `<span class="meta-plain" style="font-size:11px;color:var(--dim)"><b style="color:var(--ink2)">${esc(label)}:</b> ${esc(value)}</span>`;
+  return `<span class="meta-plain"><b>${esc(label)}:</b> ${esc(value)}</span>`;
 }
 
 function titledWithId(title, id=null, opts={}){
@@ -809,7 +1315,7 @@ function renderMdSubsections(projectSlug, p, docKey, text, opts = {}){
     const subId = docSubsectionId(projectSlug, p, docKey, title);
     const titleKey = OSID.slugKey(title);
     const editBtn = opts.editable
-      ? `<button type="button" class="btn" data-edit-doc-sub="${esc(docKey)}" data-sub-title="${esc(title)}" data-sub-key="${esc(titleKey)}" style="padding:4px 10px;font-size:11px">✎ Edit</button>`
+      ? `<button type="button" class="btn sm" data-edit-doc-sub="${esc(docKey)}" data-sub-title="${esc(title)}" data-sub-key="${esc(titleKey)}">${icon("compose")} Edit</button>`
       : "";
     html += renderSecGroup(title, `<div class="pcard"><div class="sec-body memo-body">${inner}</div></div>`, subId, editBtn);
   });
@@ -1044,9 +1550,9 @@ function strategyCard(slug, st){
   const id = composedIdOnly(st.id);
   const star = st.primary ? `<span class="gtm-star" title="Primary channel-motion">★</span>` : "";
   const chan = st.channel_slug
-    ? `<span class="meta-plain"><b style="color:var(--ink2)">channel:</b> ${esc(st.channel_slug)}</span>` : "";
+    ? `<span class="meta-plain"><b>channel:</b> ${esc(st.channel_slug)}</span>` : "";
   const exps = (st.experiments || []).map(x =>
-    `<button class="gtm-exp" data-gtm-exp="${esc(slug)}" title="${esc(x.assumption || x.stem)}">⚗ ${esc(x.stem)}${
+    `<button class="gtm-exp" data-gtm-exp="${esc(slug)}" title="${esc(x.assumption || x.stem)}">${icon("flask")} ${esc(x.stem)}${
       x.status ? ` · ${esc(x.status)}` : ""}</button>`).join("");
   const lens = exps
     ? `<div class="gtm-lens"><span class="gtm-lens-h">Experiments</span>${exps}</div>`
@@ -1198,7 +1704,7 @@ function renderProductSection(slug, p){
   products.forEach(prod => {
     const feats = (p.features || []).filter(f => f.product_slug === prod.slug);
     const prodId = composedIdOnly(OSID.prod(prod.slug));
-    const addBtn = `<button class="btn" type="button" data-add-feat="${esc(prod.slug)}" style="padding:6px 10px;font-size:11px">＋ Feature</button>`;
+    const addBtn = `<button class="btn sm" type="button" data-add-feat="${esc(prod.slug)}">${icon("plus")} Feature</button>`;
     const sectionOrder = roadmapSectionOrder(p);
     const buckets = Object.fromEntries(sectionOrder.map(([k]) => [k, []]));
     buckets.other = [];
@@ -1206,7 +1712,7 @@ function renderProductSection(slug, p){
       const k = roadmapSectionKey(f.roadmap_section);
       (buckets[k] || buckets.other).push(f);
     });
-    let inner = `<p style="font-size:12px;color:var(--dim);margin:0 0 12px">${feats.length} feature${feats.length !== 1 ? "s" : ""} in roadmap</p>`;
+    let inner = `<p class="help">${feats.length} feature${feats.length !== 1 ? "s" : ""} in roadmap</p>`;
     sectionOrder.forEach(([key, label]) => {
       const group = buckets[key] || [];
       if (!group.length) return;
@@ -1240,32 +1746,33 @@ function hasProjectTechnical(p){
 function sectionAddButtons(slug, section, p){
   const out = [];
   if (section === "validation") {
-    if (!hasProjectIntake(p)) out.push({ label: "＋ Intake", route: `#/project/${slug}/intake/new` });
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/problem-validation` });
+    if (!hasProjectIntake(p)) out.push({ label: "Intake", route: `#/project/${slug}/intake/new` });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/problem-validation` });
   } else if (section === "experiments") {
-    out.push({ label: "＋ Experiment", route: `#/project/${slug}/experiment/new` });
+    out.push({ label: "Experiment", route: `#/project/${slug}/experiment/new` });
   } else if (section === "pricing") {
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/positioning`, pickType: true });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/positioning`, pickType: true });
   } else if (section === "product") {
-    out.push({ label: "＋ Product", route: `#/project/${slug}/product/new` });
+    out.push({ label: "Product", route: `#/project/${slug}/product/new` });
     if ((p.products || []).length === 1)
-      out.push({ label: "＋ Feature", route: `#/product/${p.products[0].slug}/feature/new`, projectSlug: slug });
+      out.push({ label: "Feature", route: `#/product/${p.products[0].slug}/feature/new`, projectSlug: slug });
     else if ((p.products || []).length > 1)
-      out.push({ label: "＋ Feature", route: `#/project/${slug}/product`, pickProduct: true });
+      out.push({ label: "Feature", route: `#/project/${slug}/product`, pickProduct: true });
   } else if (section === "technical") {
-    if (!hasProjectTechnical(p)) out.push({ label: "＋ Technical", route: `#/project/${slug}/technical/new` });
-    else out.push({ label: "＋ Subsection", route: `#/project/${slug}/technical/subsection/new` });
+    if (!hasProjectTechnical(p)) out.push({ label: "Technical", route: `#/project/${slug}/technical/new` });
+    else out.push({ label: "Subsection", route: `#/project/${slug}/technical/subsection/new` });
   } else if (section === "gtm") {
-    out.push({ label: "＋ Memo", route: `#/project/${slug}/memo/new/channels`, pickType: true });
-    out.push({ label: "＋ Phase", route: `#/project/${slug}/gtm/phase/new` });
-    out.push({ label: "＋ Strategy", route: `#/project/${slug}/gtm/strategy/new` });
+    out.push({ label: "Memo", route: `#/project/${slug}/memo/new/channels`, pickType: true });
+    out.push({ label: "Phase", route: `#/project/${slug}/gtm/phase/new` });
+    out.push({ label: "Strategy", route: `#/project/${slug}/gtm/strategy/new` });
   }
   return out;
 }
 
 async function renderProjectSection(slug, section){
-  await refreshIdRegistry();
-  const [p] = await Promise.all([api(`/api/project/${slug}`), ensureIdRegistry()]);
+  const stillOn = routeGuard();
+  const [p] = await Promise.all([api(`/api/project/${slug}`), refreshIdRegistry()]);
+  if (!stillOn()) return;
   const title = (SECTIONS.find(s => s.key === section) || {}).label || section;
   const sec = (p.sections || {})[section] || {};
   const renderers = {
@@ -1277,10 +1784,10 @@ async function renderProjectSection(slug, section){
     technical: () => renderTechnicalSection(slug, p, sec),
     gtm: () => renderGtmSection(slug, p),
   };
-  const body = (renderers[section] || (() => `<div style="padding:24px 4px;color:var(--dim)">Unknown section.</div>`))();
+  const body = (renderers[section] || (() => `<div class="empty">Unknown section.</div>`))();
   const adds = sectionAddButtons(slug, section, p);
   const addHtml = adds.map((a, i) =>
-    `<button class="btn${i === adds.length - 1 ? " primary" : ""}" data-sec-add="${i}">${esc(a.label)}</button>`
+    `<button class="btn${i === adds.length - 1 ? " primary" : ""}" data-sec-add="${i}">${icon("plus")} ${esc(a.label)}</button>`
   ).join("");
   const tabId = composedIdOnly(OSID.tabProj(slug, section));
   $("#main").innerHTML = `<div class="topbar"><div><div class="crumbs">${esc(p.entity.name)} · <b>${esc(title)}</b></div>
@@ -1323,8 +1830,8 @@ async function renderProjectSection(slug, section){
 
 let CAL = (function(){ const d=new Date(); return {y:d.getFullYear(), m:d.getMonth(), filter:"all", mode:"month"}; })();
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-function calShift(delta){ let m=CAL.m+delta,y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={...CAL,y,m}; renderTimeline(); }
-function calToday(){ const d=new Date(); CAL={...CAL,y:d.getFullYear(),m:d.getMonth()}; renderTimeline(); }
+function calShift(delta){ let m=CAL.m+delta,y=CAL.y; if(m<0){m=11;y--;} if(m>11){m=0;y++;} CAL={...CAL,y,m}; }
+function calToday(){ const d=new Date(); CAL={...CAL,y:d.getFullYear(),m:d.getMonth()}; }
 
 function evDone(r){
   return (r.kind==="post"&&r.status==="published")||(r.kind==="activity"&&r.status==="done");
@@ -1360,7 +1867,7 @@ function evDetail(r){
       try{
         await jpost("/api/activity/delete",{title:r.title});
         undoToast(`Activity "${r.title}" deleted`, async()=>{
-          await jpost("/api/activity/new",{title:r.title,entity:r.entity_slug,date:r.date,type:r.type||"task"});
+          await jpost("/api/activity/new",{title:r.title,entity:r.entity_slug,date:r.date,time:r.time||"",time_end:r.time_end||"",type:r.type||"task"});
           refreshViews();
         });
         refreshViews();
@@ -1387,8 +1894,13 @@ function toggleEvDetail(el, r){
   el.parentNode.insertBefore(evDetail(r), el.nextSibling);
 }
 
-async function renderTimeline(){
-  const all = await api("/api/timeline");
+// The calendar across every workspace, or (Content view's Calendar tab) only
+// the rows of `scope` (entity slugs) under the given `head`.
+async function renderTimeline({ scope = null, head = null } = {}){
+  const again = () => renderTimeline({ scope, head });
+  const stillOn = routeGuard();
+  const all = (await api("/api/timeline")).filter(r => !scope || scope.has(r.entity_slug));
+  if (!stillOn()) return;
   const kinds=["post","activity","milestone","experiment","feature"];
   const filtered = CAL.filter==="all" ? all : all.filter(r=>r.kind===CAL.filter);
   const byDay={}; filtered.forEach(r=>{ if(r.date){ (byDay[r.date]=byDay[r.date]||[]).push(r); } });
@@ -1400,8 +1912,8 @@ async function renderTimeline(){
     const d=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i), k=iso(d), out=d.getMonth()!==CAL.m;
     const evs=(byDay[k]||[]).map(r=>{
       const cls = r.kind==="post" ? `ev post-${STATUS_PILL_CLASS[r.status]||"idea"}` : `ev k-${esc(r.kind)}`;
-      const title=r.title||r.kind, mark=KIND_ICON[r.kind]||"•", label=`${KIND_NAME[r.kind]||r.kind}: ${title}`;
-      return `<div class="${cls}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc(title)}" data-ev='${esc(JSON.stringify({...r,title:title.slice(0,80)}))}'><span class="ev-mark" aria-hidden="true">${mark}</span><span class="ev-title">${esc(title)}</span></div>`;
+      const title=r.title||r.kind, mark=kindIcon(r.kind), label=`${KIND_NAME[r.kind]||r.kind}: ${r.time?r.time+" ":""}${title}`;
+      return `<div class="${cls}" role="button" tabindex="0" aria-label="${esc(label)}" title="${esc((r.time?`${r.time}-${r.time_end||""} `:"")+title)}" data-ev='${esc(JSON.stringify({...r,title:title.slice(0,80)}))}'><span class="ev-mark" aria-hidden="true">${mark}</span><span class="ev-title">${esc(title)}</span></div>`;
     }).join("");
     cells+=`<div class="day${out?" out":""}${k===today?" today":""}" data-day="${k}" title="Double-click to open this day"><div class="n">${d.getDate()}</div>${evs}</div>`;
     if(i>=34&&d.getMonth()!==CAL.m&&(i+1)%7===0) break;
@@ -1421,31 +1933,29 @@ async function renderTimeline(){
   const grp={}; dated.forEach(r=>{ (grp[r.date]=grp[r.date]||[]).push(r); });
   const listHtml = Object.keys(grp).sort().map(dk=>{
     const rws = grp[dk].map(r=>{
-      const col=KIND_COLOR[r.kind]||"var(--dim)";
       return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
-        <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when" style="margin-left:auto">${esc(r.status)}</span>`:""}</div>
-        <div class="t">${esc(r.title||r.kind)}</div>
+        <div class="pc-top"><span class="plat tone-${esc(r.kind)}">${esc(KIND_NAME[r.kind]||r.kind)}</span>${r.status?`<span class="when">${esc(r.status)}</span>`:""}</div>
+        <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
         <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
     }).join("");
     return `<div class="wk">${esc(dayLabel(dk))}</div><div class="cards postcards calcards">${rws}</div>`;
   }).join("") || `<div class="sec-empty"><p>Nothing scheduled yet.</p></div>`;
   const isList = CAL.mode==="list";
   const seg = `<div class="seg" style="margin:0"><button type="button" class="${isList?"":"on"}" data-mode="month" aria-pressed="${!isList}">Month</button><button type="button" class="${isList?"on":""}" data-mode="list" aria-pressed="${isList}">List</button></div>`;
-  $("#main").innerHTML=`
-    <div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Calendar</h1></div>
-      <div style="margin-left:auto;display:flex;gap:10px;align-items:center">${seg}
-        <button class="btn" id="newActBtn">＋ Activity</button>
-        <button class="btn" id="newMsBtn">＋ Milestone</button>
-      </div></div>
-    <div class="scroll">
-      <div class="cal-filters">${chips}</div>
+  const tools = `${seg}<button class="btn" id="newActBtn">${icon("plus")} Activity</button><button class="btn" id="newMsBtn">${icon("plus")} Milestone</button>`;
+  const body = `<div class="cal-filters">${chips}</div>
       ${CAL_LEGEND}
       ${isList ? listHtml : `<div class="cal-head"><span class="mlabel">${MONTHS[CAL.m]} ${CAL.y}</span>
-        <div class="cal-nav"><button id="cprev">‹</button><button id="ctoday">Today</button><button id="cnext">›</button></div></div>
-      <div class="cal">${dow}${cells}</div>`}</div>`;
-  $("#main").querySelectorAll("[data-mode]").forEach(s=>s.onclick=()=>{ CAL.mode=s.dataset.mode; renderTimeline(); });
-  if(!isList){ $("#cprev").onclick=()=>calShift(-1); $("#cnext").onclick=()=>calShift(1); $("#ctoday").onclick=calToday; }
-  $("#main").querySelectorAll(".kchip").forEach(c=>c.onclick=()=>{ CAL.filter=c.dataset.kf; renderTimeline(); });
+        <div class="cal-nav"><button id="cprev" aria-label="Previous month">‹</button><button id="ctoday">Today</button><button id="cnext" aria-label="Next month">›</button></div></div>
+      <div class="cal">${dow}${cells}</div>`}`;
+  $("#main").innerHTML = head
+    ? `<div class="scroll"><div class="doc">${head}<div class="cal-tools">${tools}</div>${body}</div></div>`
+    : `<div class="topbar"><div><div class="crumbs">Across everything</div><h1 class="title">Calendar</h1></div>
+      <div class="topbar-end">${tools}</div></div>
+    <div class="scroll">${body}</div>`;
+  $("#main").querySelectorAll("[data-mode]").forEach(s=>s.onclick=()=>{ CAL.mode=s.dataset.mode; again(); });
+  if(!isList){ $("#cprev").onclick=()=>{ calShift(-1); again(); }; $("#cnext").onclick=()=>{ calShift(1); again(); }; $("#ctoday").onclick=()=>{ calToday(); again(); }; }
+  $("#main").querySelectorAll(".kchip").forEach(c=>c.onclick=()=>{ CAL.filter=c.dataset.kf; again(); });
   $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onclick=e=>{ e.stopPropagation(); try{showEventPopup(JSON.parse(el.dataset.ev));}catch(_){} });
   $("#main").querySelectorAll("[data-ev]").forEach(el=>el.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); el.click(); } });
   $("#main").querySelectorAll(".day[data-day]").forEach(el=>el.ondblclick=()=>navigate(`#/day/${el.dataset.day}`));
@@ -1453,54 +1963,59 @@ async function renderTimeline(){
   $("#newMsBtn").onclick=()=>navigate("#/milestone/new");
 }
 
-const STAGE_GROUP = {planned:"ideas",approved_slot:"ideas",briefed:"drafts",approved:"drafts",published:"published",rejected:"archived"};
-// One distinct color per pipeline stage, shared by the calendar and the profile post list.
-const STATUS_PILL_CLASS = {planned:"idea",approved_slot:"idea",briefed:"draft",approved:"ready",published:"published",rejected:"archived"};
-const NEXT = {
-  planned:{label:"Write it →",brief:1}, approved_slot:{label:"Write it →",brief:1},
-  briefed:{label:"Review →",to:"approved"}, approved:{label:"Publish →",to:"published"},
-  published:null, rejected:{label:"Restore",to:"planned"},
-};
+// Pipeline rules (buckets, pills, labels, next step) live in content-view.js.
+const { STAGE_GROUP, STATUS_PILL: STATUS_PILL_CLASS, statusLabel: plainStatus, nextActionFor } = ContentView;
 
-// Wraps NEXT with the publish-requires-a-date rule: an approved, undated post
-// still shows an action button, but it routes to the edit form instead of
-// firing the publish transition. Shared by every view that renders a post's
-// next-action button (profile list, post detail, Unscheduled bucket).
-function nextActionFor(p){
-  const n = NEXT[p.status];
-  if(!n) return null;
-  if(p.status==="approved" && !p.date) return {label:"Add date to publish", blocked:true};
-  return {label:n.label, blocked:false, to:n.to, brief:n.brief};
+// Carry out a post's next step. Review and Schedule only open the post (or its
+// date editor); the rest change it on the server and resolve true so the
+// caller re-renders.
+async function runNextAction(post, profileSlug){
+  const na = nextActionFor(post); if (!na) return false;
+  const id = post.id;
+  if (na.kind === "review") { navigate(`#/post/${id}`, {profileSlug}); return false; }
+  if (na.kind === "schedule") { navigate(`#/post/${id}/edit`, {profileSlug}); return false; }
+  try {
+    if (na.kind === "brief") {
+      toast("Writing via claude -p… (a few seconds)", true);
+      await api(postUrl(id, profileSlug, "/brief"), {method:"POST"});
+      toast("Draft ready ✓");
+    } else {
+      const status = na.kind === "publish" ? "published" : "planned";
+      await jpost(postUrl(id, profileSlug, "/status"), {status});
+      toast("✓ " + plainStatus(status));
+    }
+    return true;
+  } catch (e) { toast("✗ " + e.message); return false; }
 }
 
-const PLATFORM_ICON = {instagram:"◎",tiktok:"♪",x:"𝕏",linkedin:"in",youtube:"▶",facebook:"f"};
+const PLATFORM_ICON = {instagram:"instagram",tiktok:"tiktok",x:"x-brand",linkedin:"linkedin",youtube:"youtube",facebook:"facebook"};
+const platIcon = platform => icon(PLATFORM_ICON[platform] || "hash");
 const PLAT_NAME = {instagram:"Instagram",tiktok:"TikTok",x:"X",linkedin:"LinkedIn",youtube:"YouTube",facebook:"Facebook"};
-const KIND_COLOR = {post:"var(--k-post)",activity:"var(--k-activity)",experiment:"var(--k-experiment)",milestone:"var(--k-milestone)",feature:"var(--k-feature)"};
 const KIND_NAME = {post:"Post",experiment:"Experiment",milestone:"Milestone",activity:"Activity",feature:"Feature"};
-const KIND_ICON = {post:"▶",experiment:"◐",milestone:"✦",activity:"○",feature:"◆"};
+const KIND_ICON = {post:"doc",experiment:"flask",milestone:"flag",activity:"clock",feature:"layers"};
+const kindIcon = kind => icon(KIND_ICON[kind] || "doc");
 // one calendar/day card, shared by the List view and the per-day view
 function calCard(r){
   const isPost = r.kind==="post";
-  const skey = STATUS_PILL_CLASS[r.status]||"idea";
-  const col = isPost ? `var(--s-${skey})` : (KIND_COLOR[r.kind]||"var(--dim)");
+  const tone = isPost ? STATUS_PILL_CLASS[r.status]||"idea" : r.kind;
   const label = isPost ? plainStatus(r.status) : (KIND_NAME[r.kind]||r.kind);
   return `<div class="post postcard calcard" data-ev='${esc(JSON.stringify({...r,title:(r.title||"").slice(0,80)}))}'>
-    <div class="pc-top"><span class="plat" style="background:${col};color:#fff">${esc(label)}</span></div>
-    <div class="t">${esc(r.title||r.kind)}</div>
+    <div class="pc-top"><span class="plat tone-${esc(tone)}">${esc(label)}</span></div>
+    <div class="t">${r.time?`<span class="cal-time">${esc(r.time)}-${esc(r.time_end||"")}</span>`:""}${esc(r.title||r.kind)}</div>
     <div class="pc-sub">${esc(r.entity_name||r.kind)}</div></div>`;
 }
 const CAL_LEGEND = `<div class="cal-legend">
   <span class="lg-grp">Posts</span>
-  <span class="lg"><i style="background:var(--s-idea)"></i>Idea</span>
-  <span class="lg"><i style="background:var(--s-draft)"></i>Draft</span>
-  <span class="lg"><i style="background:var(--s-ready)"></i>Ready</span>
-  <span class="lg"><i style="background:var(--s-published)"></i>Published</span>
+  <span class="lg"><i class="tone-idea"></i>Idea</span>
+  <span class="lg"><i class="tone-draft"></i>Draft</span>
+  <span class="lg"><i class="tone-ready"></i>Ready</span>
+  <span class="lg"><i class="tone-published"></i>Published</span>
   <span class="lg-sep"></span>
   <span class="lg-grp">Type</span>
-  <span class="lg"><i style="background:var(--k-experiment)"></i>Experiment</span>
-  <span class="lg"><i style="background:var(--k-milestone)"></i>Milestone</span>
-  <span class="lg"><i style="background:var(--k-activity)"></i>Activity</span>
-  <span class="lg"><i style="background:var(--k-feature)"></i>Feature</span>
+  <span class="lg"><i class="tone-experiment"></i>Experiment</span>
+  <span class="lg"><i class="tone-milestone"></i>Milestone</span>
+  <span class="lg"><i class="tone-activity"></i>Activity</span>
+  <span class="lg"><i class="tone-feature"></i>Feature</span>
 </div>`;
 // full-screen list of a single day's scheduled items (double-click a calendar day).
 // Rows navigate straight to the item — no intermediate detail card.
@@ -1538,22 +2053,23 @@ function showEventPopup(r){
   document.addEventListener("keydown", function esc(e){ if(e.key==="Escape"){ close(); document.removeEventListener("keydown",esc); } });
 }
 async function renderDay(dateStr){
+  const stillOn = routeGuard();
   const all = await api("/api/timeline").catch(()=>[]);
+  if (!stillOn()) return;
   const items = all.filter(r=>r.date===dateStr).sort((a,b)=>(a.kind||"").localeCompare(b.kind||""));
   const label = new Date(dateStr+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"});
   const body = items.length
     ? `<div class="list">${items.map((r,i)=>{
-        const col=KIND_COLOR[r.kind]||"var(--dim)";
-        return `<div class="arow" data-day-row="${i}"><span class="stripe" style="background:${col}"></span>
-          <span class="ig" style="background:var(--panel-chat);color:${col}">${KIND_ICON[r.kind]||"•"}</span>
+        return `<div class="arow tone-${esc(r.kind)}" data-day-row="${i}"><span class="stripe"></span>
+          <span class="ig">${kindIcon(r.kind)}</span>
           <span class="body"><span class="t">${esc(r.title||r.kind)}</span><span class="m">${esc(KIND_NAME[r.kind]||r.kind)}${r.entity_name?` · ${esc(r.entity_name)}`:""}${r.status?` · ${esc(r.status)}`:""}</span></span>
           <span class="act">${r.kind==="post"?"Open post":"Open"}</span></div>`;
       }).join("")}</div>`
     : `<div class="sec-empty"><p>Nothing scheduled for this day.</p></div>`;
-  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" style="cursor:pointer;color:var(--navy)">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
+  $("#main").innerHTML=`<div class="topbar"><div><div class="crumbs"><a id="dayBack" class="text-link">Calendar</a> &nbsp;›&nbsp; <b>${esc(label)}</b></div>
       <h1 class="title" style="margin-top:6px">${esc(label)}</h1></div>
       <div style="margin-left:auto;display:flex;gap:8px">
-        <button class="btn" id="dayAct">＋ Activity</button>
+        <button class="btn" id="dayAct">${icon("plus")} Activity</button>
         <button class="btn" id="dayBackBtn">← Calendar</button></div></div>
     <div class="scroll"><p class="lead">${items.length} item${items.length===1?"":"s"} scheduled for this day.</p>${body}</div>`;
   $("#dayBack").onclick=()=>navigate("#/calendar");
@@ -1563,52 +2079,54 @@ async function renderDay(dateStr){
 }
 const PROFILE_SCROLL = {};  // slug -> last scrollTop of the post list, so back-navigation restores position
 const PROFILE_FILTER = {};  // slug -> selected post filter, so async refreshes do not reset the active tab
+const PROFILE_CHAN = {};    // slug -> selected channel filter, same reason
+// Profile filter chips: [key, label]. Scheduled/Unscheduled cut by date; the
+// rest are ContentView buckets.
+const PROFILE_FILTERS = [["scheduled", "Scheduled"], ["all", "All"], ["ideas", "Ideas"], ["drafts", "Drafts"],
+  ["ready", "Ready"], ["published", "Published"], ["unscheduled", "Unscheduled"]];
+const unscheduled = p => p.status !== "published" && !p.date;
+const inProfileFilter = (p, f) => f === "unscheduled" ? unscheduled(p)
+  : f === "scheduled" ? !!p.date
+  : f === "all" || STAGE_GROUP[p.status] === f;
+
+// The full profile page: one profile card (header with every profile action,
+// channel filters, status filters) over the shared post rows, with bulk select.
 async function renderProfile(slug, initChanFilter){
   CURRENT_PROFILE_SLUG = slug;
+  const stillOn = routeGuard();
   const [posts, profData] = await Promise.all([
     api(`/api/profile/${slug}/posts`),
     api(`/api/profile/${slug}`),
     ensureIdRegistry(),
   ]);
-  const profNode = _TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===slug)||{channels:[]};
-  const channels = profNode.channels||[];
-  const count = g => posts.filter(p=>STAGE_GROUP[p.status]===g).length;
-  const unsCount = () => posts.filter(p=>p.status!=="published" && !p.date).length;
-  const datedCount = () => posts.filter(p=>p.date).length;
-  let FILTER = PROFILE_FILTER[slug] || "scheduled";
-  let CHAN_FILTER = initChanFilter||null;
-  const stageOf = p => FILTER==="unscheduled" ? (p.status!=="published" && !p.date)
-    : FILTER==="scheduled" ? !!p.date
-    : (FILTER==="all" || STAGE_GROUP[p.status]===FILTER);
-  const matchFilter = p => stageOf(p) && (!CHAN_FILTER||(p.channels&&p.channels.includes(CHAN_FILTER)));
-  // newest first: dated posts by date desc, undated (unscheduled) float to top
-  const byRecency = (a,b) => (a.date||"9999").localeCompare(b.date||"9999") * -1;
+  if (!stillOn()) return;
+  const profile = contentProjects().flatMap(p => p.profiles).find(pr => pr.slug === slug)
+    || { slug, name: profData.name, channels: [] };
+  const channels = profile.channels || [];
+  let FILTER = PROFILE_FILTER[slug] || "all";
+  let CHAN_FILTER = initChanFilter || PROFILE_CHAN[slug] || null;
+  const matchFilter = p => inProfileFilter(p, FILTER) && (!CHAN_FILTER || (p.channels || []).includes(CHAN_FILTER));
   const SELECTED = new Set();  // post ids ticked for bulk actions
-  const chanSection = `<div class="profile-summary">
-    <div class="profile-channels">
-      ${channels.map(ch=>`<span class="chan-pill-wrap${CHAN_FILTER===ch.slug?" on":""}"><button class="chan-pill${CHAN_FILTER===ch.slug?" on":""}" data-cf="${esc(ch.slug)}" style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap">${PLATFORM_ICON[ch.platform]||"⌗"} ${titledWithId(PLAT_NAME[ch.platform]||ch.platform)}${ch.handle?` <span style="opacity:.6;font-size:10px">${esc(ch.handle)}</span>`:""}</button><button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup">⚙</button></span>`).join("")}
-      <button class="profile-text-btn" id="addChanBtn">＋ Add channel</button>
-    </div>
-    ${profData.topic?`<div class="profile-topic">${esc(profData.topic)}</div>`:""}
-  </div>`;
-  const profBtns = `<div class="profile-actions"><button class="btn" id="addIdea">＋ Add idea</button>`
-    + `<button class="btn primary" id="genIdeas">✦ Generate ideas</button>`
-    + `<details class="profile-more"><summary class="btn" title="More profile actions" aria-label="More profile actions">•••</summary><div class="profile-more-menu">`
-    + `<button id="setupBtn">Setup</button><button id="logPosted">Log posted</button><button id="writeAll">Write all ideas</button>`
-    + `</div></details></div>`;
-  $("#main").innerHTML = `${pageHeader(profData.name||slug, "Profiles", profBtns, OSID.prof(slug))}
-    <div class="scroll">
-      <div class="profile-content">${chanSection}
-      <div class="profile-list-head"><div class="profile-count">${posts.length} posts</div><div class="filters">
-        <button type="button" class="chip${FILTER==="scheduled"?" on":""}" data-f="scheduled" aria-pressed="${FILTER==="scheduled"}">Scheduled <span class="n">${datedCount()}</span></button>
-        <button type="button" class="chip${FILTER==="all"?" on":""}" data-f="all" aria-pressed="${FILTER==="all"}">All <span class="n">${posts.length}</span></button>
-        <button type="button" class="chip${FILTER==="ideas"?" on":""}" data-f="ideas" aria-pressed="${FILTER==="ideas"}">Ideas <span class="n">${count("ideas")}</span></button>
-        <button type="button" class="chip${FILTER==="drafts"?" on":""}" data-f="drafts" aria-pressed="${FILTER==="drafts"}">Drafts <span class="n">${count("drafts")}</span></button>
-        <button type="button" class="chip${FILTER==="published"?" on":""}" data-f="published" aria-pressed="${FILTER==="published"}">Published <span class="n">${count("published")}</span></button>
-        <button type="button" class="chip${FILTER==="unscheduled"?" on":""}" data-f="unscheduled" aria-pressed="${FILTER==="unscheduled"}">Unscheduled <span class="n">${unsCount()}</span></button>
-      </div></div>
-      <div id="selbar"></div>
-      <div class="cards postcards" id="list"></div></div></div>`;
+  const actions = `<button class="btn sm" id="addIdea">${icon("plus")} Add idea</button>
+    <button class="btn sm primary" id="genIdeas">${icon("zap")} Generate ideas</button>
+    <details class="profile-more"><summary class="btn sm ghost" title="More profile actions" aria-label="More profile actions">${icon("more")}</summary>
+      <div class="profile-more-menu"><button id="setupBtn">Setup</button><button id="logPosted">Log posted</button><button id="writeAll">Write all ideas</button></div></details>`;
+  const chanPills = channels.map(ch => `<span class="chan-pill-wrap${CHAN_FILTER === ch.slug ? " on" : ""}">
+      <button class="chan-pill${CHAN_FILTER === ch.slug ? " on" : ""}" data-cf="${esc(ch.slug)}">${platIcon(ch.platform)}${titledWithId(PLAT_NAME[ch.platform] || ch.platform)}${ch.handle ? `<span class="chan-handle">${esc(ch.handle)}</span>` : ""}</button>
+      <button class="chan-gear" data-cg="${esc(ch.slug)}" title="Channel setup" aria-label="Channel setup">${icon("gear")}</button></span>`).join("");
+  const count = f => posts.filter(p => inProfileFilter(p, f)).length;
+  $("#main").innerHTML = `<div class="scroll"><div class="doc">
+    <section class="pf pf-page">
+      ${profileHeadHtml(profile, { chips: false, sub: profData.topic ? `<span class="profile-topic">${esc(profData.topic)}</span>` : "", end: `<div class="profile-actions">${actions}</div>` })}
+      <div class="pf-tools">
+        <div class="profile-channels">${chanPills}<button class="profile-text-btn" id="addChanBtn">${icon("plus")} Add channel</button></div>
+        <div class="profile-list-head"><span class="profile-count">${plural(posts.length, "post")}</span><div class="filters">
+          ${PROFILE_FILTERS.map(([k, label]) => `<button type="button" class="chip${FILTER === k ? " on" : ""}" data-f="${k}" aria-pressed="${FILTER === k}">${label} <span class="n">${count(k)}</span></button>`).join("")}
+        </div></div>
+        <div id="selbar"></div>
+      </div>
+      <div id="list"></div>
+    </section></div></div>`;
 
   function drawSelBar(){
     const bar = $("#selbar"); if(!bar) return;
@@ -1616,62 +2134,37 @@ async function renderProfile(slug, initChanFilter){
     // prune selections no longer visible so the count is honest
     [...SELECTED].forEach(id=>{ if(!visible.some(p=>p.id===id)) SELECTED.delete(id); });
     if(!SELECTED.size){ bar.innerHTML=""; return; }
-    bar.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:9px 13px;background:rgba(192,57,43,.06);border:1px solid rgba(192,57,43,.25);border-radius:11px">
-      <b style="font-size:13px">${SELECTED.size} selected</b>
-      <button class="btn" id="selAll" style="font-size:12px;padding:4px 10px">Select all ${visible.length}</button>
-      <button class="btn" id="selClear" style="font-size:12px;padding:4px 10px">Clear</button>
-      <button class="btn danger-btn" id="selDel" style="margin-left:auto">Delete ${SELECTED.size}</button></div>`;
+    bar.innerHTML=`<div class="selbar"><b>${SELECTED.size} selected</b>
+      <button class="btn sm" id="selAll">Select all ${visible.length}</button>
+      <button class="btn sm ghost" id="selClear">Clear</button>
+      <button class="btn sm danger-btn" id="selDel">Delete ${SELECTED.size}</button></div>`;
     $("#selAll").onclick=()=>{ visible.forEach(p=>SELECTED.add(p.id)); drawList(); };
     $("#selClear").onclick=()=>{ SELECTED.clear(); drawList(); };
     $("#selDel").onclick=()=>renderConfirmBulkDelete([...SELECTED],slug);
   }
 
   function drawList(){
-    const list = posts.filter(matchFilter).sort(byRecency);
+    const list = ContentView.sortPosts(posts.filter(matchFilter));
     const el = $("#list");
     drawSelBar();
-    if(!list.length){ el.innerHTML=`<div style="padding:24px 4px;color:var(--dim)">Nothing here. Add an idea or generate a batch.</div>`; return; }
-    el.innerHTML = list.map(p=>{
-      const pk=STATUS_PILL_CLASS[p.status]||"idea";
-      const na=nextActionFor(p);
-      const title = p.working_title || p.pillar || p.id;
-      const isIdea = p.status==="planned"||p.status==="approved_slot";
-      const sub = isIdea ? (p.concept || "Not written yet") : (p.brief_path?"Written":"");
-      const platMap={}; (channels||[]).forEach(c=>platMap[c.slug]=c.platform);
-      const plats=[...new Set((p.channels||[]).map(sl=>platMap[sl]).filter(Boolean))];
-      const platChips = plats.length
-        ? plats.map(pl=>`<span class="plat ${esc(pl)}">${esc(PLAT_NAME[pl]||pl)}</span>`).join("")
-        : `<span class="plat generic">${esc(p.pillar||"post")}</span>`;
-      const postChip = sectionIdChip(OSID.post(p.id));
-      return `<div class="post postcard${SELECTED.has(p.id)?" sel":""}">
-        <input type="checkbox" class="selbox" data-sel="${esc(p.id)}" ${SELECTED.has(p.id)?"checked":""} title="Select">
-        <div class="pc-top">${platChips}<span class="stp ${pk}" style="margin-left:auto">${esc(plainStatus(p.status))}</span></div>
-        <div class="t" data-view="${esc(p.id)}" style="cursor:pointer">${esc(title)}</div>
-        ${sub?`<div class="pc-sub">${esc(sub)}</div>`:""}
-        <div class="pc-foot">
-          ${na?`<button class="go" data-act="${esc(p.id)}">${esc(na.label)}</button>`:""}
-          <button class="more" data-menu="${esc(p.id)}">Edit</button>
-          <span class="pc-end"><span class="pc-id">${postChip}</span>${p.date?`<span class="when">${esc(p.date)}</span>`:""}</span>
-        </div></div>`;
-    }).join("");
+    el.innerHTML = list.map(p => postRowHtml(p, channels, { selectable: true, selected: SELECTED.has(p.id) })).join("")
+      || `<div class="empty">Nothing here. Add an idea or generate a batch.</div>`;
     el.querySelectorAll("[data-sel]").forEach(b=>b.onclick=e=>{ e.stopPropagation();
       b.checked ? SELECTED.add(b.dataset.sel) : SELECTED.delete(b.dataset.sel);
-      b.closest(".post")?.classList.toggle("sel",b.checked); drawSelBar(); });
+      b.closest(".post-row")?.classList.toggle("sel",b.checked); drawSelBar(); });
     el.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>doNext(b.dataset.act));
-    el.querySelectorAll("[data-menu]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.menu}/edit`,{profileSlug:slug}));
+    el.querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.edit}/edit`,{profileSlug:slug}));
     el.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>navigate(`#/post/${b.dataset.view}`,{profileSlug:slug}));
   }
   function byId(id){ return posts.find(p=>p.id===id)||{}; }
-  async function doNext(id){ const p=byId(id), na=nextActionFor(p); if(!na) return;
-    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug:slug}); }
-    try{ if(na.brief){ toast("Writing via claude -p… (a few seconds)"); await api(postUrl(id,slug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else { await api(postUrl(id,slug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
-      if(onProfileList(slug)) renderProfile(slug); renderRail(); }catch(e){ toast("✗ "+e.message); } }
+  async function doNext(id){
+    if(!await runNextAction(byId(id), slug)) return;
+    if(onProfileList(slug)) renderProfile(slug); renderRail(); }
 
   $("#main").querySelectorAll(".chip").forEach(c=>c.onclick=()=>{ FILTER=c.dataset.f; PROFILE_FILTER[slug] = FILTER;
     $("#main").querySelectorAll(".chip").forEach(x=>{ const on=x===c; x.classList.toggle("on",on); x.setAttribute("aria-pressed",String(on)); }); drawList(); });
   $("#main").querySelectorAll(".chan-pill").forEach(p=>p.onclick=()=>{
-    CHAN_FILTER = CHAN_FILTER===p.dataset.cf ? null : p.dataset.cf;
+    CHAN_FILTER = PROFILE_CHAN[slug] = CHAN_FILTER===p.dataset.cf ? null : p.dataset.cf;
     $("#main").querySelectorAll(".chan-pill").forEach(x=>x.classList.toggle("on",x.dataset.cf===CHAN_FILTER));
     $("#main").querySelectorAll(".chan-pill-wrap").forEach(x=>x.classList.toggle("on",x.querySelector(".chan-pill")?.dataset.cf===CHAN_FILTER));
     drawList(); });
@@ -1824,11 +2317,11 @@ async function renderProfileSetup(slug){
 }
 
 async function renderChannelGuidelines(slug){
-  $("#main").innerHTML = `${pageHeader("Channel guidelines", slug, `<button class="btn" id="refineBtn">✨ Refine with AI</button><button class="btn primary" id="saveBtn">Save</button>`, OSID.chan(slug))}
-    <div style="padding:0 24px 8px;font-size:12px;color:var(--dim)">Injected into every generation for this channel</div>
+  $("#main").innerHTML = `${pageHeader("Channel guidelines", slug, `<button class="btn" id="refineBtn">${icon("zap")} Refine with AI</button><button class="btn primary" id="saveBtn">Save</button>`, OSID.chan(slug))}
+    <div class="help">Injected into every generation for this channel</div>
     <div class="scroll">
-      <p style="color:var(--dim);font-size:12px;margin:0 0 12px">Use <code>## General</code> + per-platform sections. These guidelines are injected into every generation for this channel.</p>
-      <textarea id="glText" rows="22" style="width:100%;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;font:12px/1.6 ui-monospace,Menlo,monospace;background:rgba(255,255,255,.82);resize:vertical" placeholder="Add guidelines here…"></textarea>
+      <p class="help">Use <code>## General</code> + per-platform sections. These guidelines are injected into every generation for this channel.</p>
+      <textarea id="glText" class="code-editor" rows="22" placeholder="Add guidelines here…"></textarea>
     </div>`;
   try{
     const d = await api(`/api/channel/${slug}/guidelines`);
@@ -1847,7 +2340,7 @@ async function renderChannelGuidelines(slug){
       t.value = d.refined;
       toast("Refined — review and Save when ready");
     }catch(e){ toast("✗ "+e.message); }
-    finally{ btn.textContent = "✨ Refine with AI"; btn.disabled = false; }
+    finally{ btn.innerHTML = `${icon("zap")} Refine with AI`; btn.disabled = false; }
   };
 }
 
@@ -1877,14 +2370,14 @@ function renderSlideOverlayList(items, postId, opts = {}){
     const text = o.overlay ?? "";
     const fld = OSID.briefFld(postId, `slide-${n}`);
     return `<div style="display:flex;align-items:flex-start;gap:8px">`
-      + `<span style="font:700 12px/1.5 var(--body);color:var(--dim);min-width:16px;text-align:right;padding-top:8px;flex-shrink:0">${esc(String(n))}</span>`
+      + `<span class="slide-n">${esc(String(n))}</span>`
       + `<div style="flex:1">`
       + `<div style="margin-bottom:4px">${sectionIdChip(fld)}</div>`
-      + `<div style="font-size:12.5px;line-height:1.5;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;white-space:pre-wrap">${esc(text)}</div>`
+      + `<div class="pre-box">${esc(text)}</div>`
       + `</div></div>`;
   }).join("");
   const addBtn = opts.showAdd
-    ? `<button type="button" class="btn" id="pd-add-slide" style="margin-top:8px;font-size:11.5px">＋ Slide</button>`
+    ? `<button type="button" class="btn" id="pd-add-slide">${icon("plus")} Slide</button>`
     : "";
   return `<div style="display:flex;flex-direction:column;gap:8px">${rows}${addBtn}</div>`;
 }
@@ -1895,10 +2388,10 @@ function renderGenPromptList(prompts, postId){
     const fld = `gen-prompt-${n}`;
     const chipId = OSID.briefFld(postId, fld);
     return `<div style="display:flex;gap:10px;align-items:flex-start">`
-      + `<span style="font:700 12px/1.5 var(--body);color:var(--dim);min-width:20px;text-align:right;padding-top:8px;flex-shrink:0">${esc(String(n))}</span>`
+      + `<span class="slide-n">${esc(String(n))}</span>`
       + `<div style="flex:1">`
       + `<div style="margin-bottom:4px">${sectionIdChip(chipId)}</div>`
-      + `<div style="font-size:12.5px;line-height:1.55;background:rgba(0,0,0,.04);border-radius:8px;padding:8px 12px;white-space:pre-wrap;border:1px solid var(--hair)">${esc(text)}</div>`
+      + `<div class="pre-box">${esc(text)}</div>`
       + `</div></div>`;
   }).join("") + `</div>`;
 }
@@ -1913,19 +2406,19 @@ function renderBriefValue(v){
     if(typeof v[0]==="object"&&v[0]!==null){
       if(v.every(isSlideOverlayItem)) return renderSlideOverlayList(v);
       return `<div style="display:flex;flex-direction:column;gap:6px">`+v.map(o=>
-        `<div style="font-size:12.5px;line-height:1.5;background:rgba(0,0,0,.04);border-radius:8px;padding:6px 10px;white-space:pre-wrap">`
+        `<div class="pre-box">`
         +Object.entries(o).filter(([,val])=>val!=null&&val!=="")
-          .map(([kk,val])=>`<b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${esc(Array.isArray(val)?val.join(" · "):val)}`).join("&nbsp; · &nbsp;")
+          .map(([kk,val])=>`<b>${esc(humanizeKey(kk))}:</b> ${esc(Array.isArray(val)?val.join(" · "):val)}`).join("&nbsp; · &nbsp;")
         +`</div>`).join("")+`</div>`;
     }
-    return `<div style="font-size:12.5px;line-height:1.6;color:var(--navy)">${v.map(esc).join(" · ")}</div>`;
+    return `<div class="accent-text">${v.map(esc).join(" · ")}</div>`;
   }
   if(typeof v==="object"){                              // nested object, e.g. visual_brief
     return Object.entries(v).filter(([,val])=>val!=null&&val!=="").map(([kk,val])=>
-      `<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b style="color:var(--ink2)">${esc(humanizeKey(kk))}:</b> ${renderBriefValue(val)}</div>`
+      `<div style="font-size:12.5px;line-height:1.55;margin-bottom:4px"><b>${esc(humanizeKey(kk))}:</b> ${renderBriefValue(val)}</div>`
     ).join("");
   }
-  return `<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;background:rgba(0,0,0,.03);border-radius:10px;padding:10px 12px">${esc(v)}</div>`;
+  return `<div class="pre-box">${esc(v)}</div>`;
 }
 
 // Identity fields stored on the brief JSON but shown elsewhere in the post UI.
@@ -1935,7 +2428,7 @@ function briefSect(h, b, fldId){
   const chip = fldId ? sectionIdChip(fldId) : "";
   return `<div style="margin-top:16px">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">${esc(h)}</div>${chip}
+      <div class="eyebrow">${esc(h)}</div>${chip}
     </div>${b}</div>`;
 }
 
@@ -1984,9 +2477,9 @@ function renderBriefEditSection(brief, postId){
     .join("");
   if (!fields) return "";
   const brId = sectionIdChip(OSID.brief(postId));
-  return `<div style="margin-top:28px;padding-top:22px;border-top:1px solid var(--hair)">
+  return `<div class="section-split">
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">Brief</div>${brId}
+      <div class="eyebrow">Brief</div>${brId}
     </div>${fields}</div>`;
 }
 
@@ -2039,11 +2532,11 @@ function renderBriefBody(slot, brief, n, postId){
   if(slot.concept&&!brief) body+=briefSect("Concept",`<div style="font-size:13px;line-height:1.6">${esc(slot.concept)}</div>`);
   if(slot.notes) body+=briefSect("Notes",`<div style="font-size:13px;line-height:1.6;white-space:pre-wrap">${esc(slot.notes)}</div>`);
   if(slot.working_title&&!brief) body+=briefSect("Working title",`<div style="font-size:13px;line-height:1.6">${esc(slot.working_title)}</div>`);
-  if(brief&&brief._error) body+=briefSect("Brief",`<div style="color:var(--ui-color-danger);font-size:13px">${esc(brief._error)}</div>`);
+  if(brief&&brief._error) body+=briefSect("Brief",`<div class="error-text">${esc(brief._error)}</div>`);
   else if(brief){
     const brId = postId ? OSID.brief(postId) : null;
     if(brId) body+=`<div style="display:flex;align-items:center;gap:8px;margin-top:16px;margin-bottom:8px;flex-wrap:wrap">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim)">Brief</div>${sectionIdChip(brId)}</div>`;
+      <div class="eyebrow">Brief</div>${sectionIdChip(brId)}</div>`;
     for(const [k,v] of Object.entries(brief)){
       if(k.startsWith("_")||BRIEF_UI_SKIP.has(k)) continue;
       const shown=k==="cover_overlay"?sentenceCase(v):v;
@@ -2057,17 +2550,19 @@ function renderBriefBody(slot, brief, n, postId){
       if(html) body+=briefSect(humanizeKey(k), html, fldId);
     }
   } else {
-    body+=`<div style="margin-top:16px;color:var(--dim);font-size:13px">Not written yet${n&&n.brief?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
+    body+=`<div class="empty">Not written yet${n&&n.kind==="brief"?` — click <b>${esc(n.label)}</b> to generate.`:"."}</div>`;
   }
   return body;
 }
 
 // ── Post detail (replaces showDetail modal) ──────────────────────────────────
 async function renderPostDetail(id, profileSlug){
+  const stillOn = routeGuard();
   let detail;
   try{
     [detail] = await Promise.all([api(postUrl(id,profileSlug)), ensureIdRegistry()]);
   }catch(e){ return toast("✗ "+e.message); }
+  if (!stillOn()) return;
   const slot=detail.slot||{}, brief=detail.brief||null;
   CURRENT_PROFILE_SLUG = profileSlug || detail.profile_slug || null;
   CURRENT_POST = { id, slot, brief };
@@ -2075,25 +2570,29 @@ async function renderPostDetail(id, profileSlug){
   const title=slot.working_title||slot.pillar||id;
   const canRevise=["planned","approved_slot","briefed","approved"].includes(st);
   const postContent=PostCopy.formatPostContent(slot, brief);
-  const meta=[["Date",slot.date],["Format",slot.format],["Pillar",slot.pillar],
-              ["Objective",slot.objective]]
+  const meta=[["Format",slot.format],["Pillar",slot.pillar],["Objective",slot.objective]]
     .filter(([,v])=>v!=null&&v!=="").map(([k,v])=>metaPlain(k,v)).join("");
-  const chanSlugs=(slot.channels||[]).filter(Boolean);
-  const chanMeta=chanSlugs.length
-    ? `<span class="meta-plain" style="font-size:11px;color:var(--dim)"><b style="color:var(--ink2)">Channels:</b> ${chanSlugs.map(esc).join(", ")}</span>`
-    : "";
-  const crumb=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===profileSlug)||{}).name||profileSlug||"Back";
+  const channels=(_TREE.flatMap(p=>p.profiles).find(pr=>pr.slug===CURRENT_PROFILE_SLUG)||{}).channels||[];
+  const platforms=[...new Set((slot.channels||[]).map(sl=>channels.find(c=>c.slug===sl)).filter(Boolean))];
+  // A draft is approved only here, explicitly; every other status gets its next step.
   const btns=[
-    na?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
+    st==="briefed"?`<button class="btn primary" id="approvePost">${icon("check")} Approve</button>`
+      : na?`<button class="btn primary" id="pd-next">${esc(na.label)}</button>`:"",
     `<button class="btn" id="pd-edit">Edit</button>`,
-    postContent?`<button class="btn" id="pd-copy">Copy post</button>`:"",
     canRevise?`<button class="btn" id="pd-revise">Revise</button>`:"",
-    `<details class="profile-more"><summary class="btn" title="More post actions" aria-label="More post actions">•••</summary><div class="profile-more-menu"><button class="danger-btn" id="pd-del">Delete</button></div></details>`,
+    postContent?`<button class="btn ghost" id="pd-copy">Copy post</button>`:"",
+    `<details class="profile-more"><summary class="btn ghost" title="More post actions" aria-label="More post actions">${icon("more")}</summary><div class="profile-more-menu"><button class="danger-btn" id="pd-del">Delete</button></div></details>`,
   ].filter(Boolean).join("");
-  $("#main").innerHTML=`${pageHeader(title,crumb,btns, OSID.post(id))}
-    <div class="scroll reading-scroll">
-      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px">${meta}${chanMeta}</div>
-      ${renderBriefBody(slot,brief,na,id)}</div>`;
+  $("#main").innerHTML=`<div class="scroll"><div class="doc post-page">
+      <header class="pp-head">
+        <div class="pr-top"><span class="stp ${STATUS_PILL_CLASS[st]||"idea"}">${esc(plainStatus(st))}</span>${channelChips(platforms)}
+          <span class="when">${icon("clock")}${esc(slot.date||"No date")}</span></div>
+        <h1 class="pp-title">${esc(title)}</h1>
+        <div class="pp-meta">${meta}${sectionIdChip(OSID.post(id))}</div>
+        <div class="pp-actions">${btns}</div>
+      </header>
+      ${renderBriefBody(slot,brief,na,id)}</div></div>`;
+  renderCanvasNav();   // the breadcrumb now knows the post's profile
   wireIdChips($("#main"));
   const addSlide=document.getElementById("pd-add-slide");
   if(addSlide) addSlide.onclick=async()=>{
@@ -2110,13 +2609,16 @@ async function renderPostDetail(id, profileSlug){
   const copyBtn=document.getElementById("pd-copy");
   if(copyBtn) copyBtn.onclick=()=>copyText(postContent,"Post copied ✓");
   const rdBtn=document.getElementById("pd-revise"); if(rdBtn) rdBtn.onclick=()=>navigate(`#/post/${id}/revise`,{profileSlug});
-  const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
-    if(na.blocked){ return navigate(`#/post/${id}/edit`,{profileSlug}); }
-    nb.disabled=true;
-    try{ if(na.brief){ toast("Writing via claude -p…",true); await api(postUrl(id,profileSlug,"/brief"),{method:"POST"}); toast("Draft ready ✓"); }
-      else{ await api(postUrl(id,profileSlug,"/status"),{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({status:na.to})}); toast("✓ "+plainStatus(na.to)); }
+  const ap=document.getElementById("approvePost"); if(ap) ap.onclick=async()=>{
+    ap.disabled=true;
+    try{ await jpost(postUrl(id,profileSlug,"/status"),{status:"approved"}); toast("✓ Ready");
       navigate(`#/post/${id}`,{profileSlug}); }
-    catch(e){ nb.disabled=false; toast("✗ "+e.message); }
+    catch(e){ ap.disabled=false; toast("✗ "+e.message); }
+  };
+  const nb=document.getElementById("pd-next"); if(nb) nb.onclick=async()=>{
+    nb.disabled=true;
+    if(await runNextAction({...slot, id, status:st}, profileSlug)) navigate(`#/post/${id}`,{profileSlug});
+    else nb.disabled=false;
   };
 }
 
@@ -2150,7 +2652,7 @@ async function renderEditPost(id, profileSlug){
       ${briefSection}`;
   $("#main").innerHTML=`${pageHeader("Edit post",crumb,`<button class="btn danger-btn" id="ep-del">Delete</button><button class="btn primary" id="ep-save">Save</button>`, OSID.post(id))}
     <div class="scroll"><div class="fpage">
-      <div style="font:700 11px/1 var(--body);letter-spacing:.07em;text-transform:uppercase;color:var(--dim);margin-bottom:14px">${isLogged?"Logged post":"Slot"}</div>
+      <div class="eyebrow">${isLogged?"Logged post":"Slot"}</div>
       ${slotFields}
     </div></div>`;
   wireIdChips($("#main"));
@@ -2182,9 +2684,9 @@ async function renderRevise(id){
   const profileSlug=detail.profile_slug||"";
   CURRENT_PROFILE_SLUG = profileSlug || null;
   CURRENT_POST = { id, slot, brief };
-  $("#main").innerHTML=`${pageHeader("✨ Revise with AI",title,`<button class="btn primary" id="rv-go">Revise</button>`, OSID.post(id))}
+  $("#main").innerHTML=`${pageHeader("Revise with AI",title,`<button class="btn primary" id="rv-go">Revise</button>`, OSID.post(id))}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Describe what should change in this ${kind}. The AI will apply your instruction and preserve everything else.
       </p>
       ${flabel("Instruction")}${fta("instruction","",4,'placeholder="e.g. punchier hook, caption under 200 chars, focus on 90s thrillers" required')}
@@ -2192,7 +2694,7 @@ async function renderRevise(id){
   document.getElementById("rv-go").onclick=async()=>{
     const btn=document.getElementById("rv-go"), instruction=$("#main textarea[name=instruction]").value.trim();
     if(!instruction) return toast("Enter an instruction first");
-    btn.disabled=true; btn.textContent="Revising…"; toast("✨ Revising via claude -p…",true);
+    btn.disabled=true; btn.textContent="Revising…"; toast("Revising via claude -p…",true);
     try{ await jpost(`/api/post/${id}/revise`,{instruction}); toast("Revised ✓");
       history.back(); }
     catch(e){ btn.disabled=false; btn.textContent="Revise"; toast("✗ "+e.message); }
@@ -2216,7 +2718,7 @@ function renderNewProject(){
   s.oninput=()=>{ s.dataset.manual=s.value?"1":""; };
   document.getElementById("np-save").onclick=async()=>{
     const data=formVals($("#main"));
-    try{ await jpost("/api/project/new",data); if(data.slug){OPEN.projects.add(data.slug);saveOpen();} toast("Project created ✓"); await renderRail(); history.back(); }
+    try{ const out=await jpost("/api/project/new",data); toast("Project created ✓ · new workspace"); await window.Workspaces.switchTo(out.slug||data.slug); }
     catch(e){ toast("✗ "+e.message); }
   };
 }
@@ -2231,7 +2733,7 @@ async function renderEditProject(slug){
       ${flabel("Status")}${fsel("status",[["idea","Idea"],["prototype","Prototype"],["live","Live"],["revenue","Revenue"]],e.status||"idea")}
       ${flabel("Hours / week")}${finput("hours_per_week",String(e.hours_per_week??0),'type="number" min="0"')}
       ${localFolderField(e.local_folder||"",Boolean(e.local_folder))}
-      <p style="margin-top:12px;font-size:11.5px;color:var(--dim)">Slug <b>${esc(slug)}</b> is fixed — it's the identity used across files.</p>
+      <p class="help">Slug <b>${esc(slug)}</b> is fixed — it's the identity used across files.</p>
     </div></div>`;
   wireLocalFolderControls($("#main"),slug);
   document.getElementById("ep2-save").onclick=async()=>{
@@ -2247,7 +2749,7 @@ function renderNewIntake(projectSlug){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
   $("#main").innerHTML = `${pageHeader("New intake", projName, `<button class="btn primary" id="ni-save">Create intake</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 12px;line-height:1.55">
+      <p class="help">
         Creates <code>strategy/intake.md</code> with starter headings. Edit in chat or your editor; IDs update on save via reindex.
       </p>
     </div></div>`;
@@ -2264,8 +2766,8 @@ function renderNewTechnical(projectSlug){
   const projName = (_TREE.find(p => p.slug === projectSlug) || {}).name || projectSlug;
   $("#main").innerHTML = `${pageHeader("New technical", projName, `<button class="btn primary" id="nt-save">Create technical</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 12px;line-height:1.55">
-        Creates <code>technical.md</code> with starter sections. Edit each with ✎ on the Technical tab.
+      <p class="help">
+        Creates <code>technical.md</code> with starter sections. Edit each with Edit on the Technical tab.
       </p>
     </div></div>`;
   document.getElementById("nt-save").onclick = async () => {
@@ -2283,7 +2785,7 @@ async function renderNewDocSubsection(projectSlug, docKey){
   $("#main").innerHTML = `${pageHeader("New subsection", projName, `<button class="btn primary" id="ns-save">Add subsection</button>`)}
     <div class="scroll"><div class="fpage">
       ${flabel("Section title")}${finput("title", "", 'placeholder="e.g. Security" required')}
-      <p style="font-size:12px;color:var(--dim);margin:12px 0 0">Adds a heading to this project&apos;s ${esc(docKey)} list and <code>${esc(docKey)}.md</code>.</p>
+      <p class="help">Adds a heading to this project&apos;s ${esc(docKey)} list and <code>${esc(docKey)}.md</code>.</p>
     </div></div>`;
   document.getElementById("ns-save").onclick = async () => {
     const title = ($("#main input[name=title]").value || "").trim();
@@ -2320,8 +2822,8 @@ async function renderEditDocSubsection(projectSlug, docKey, titleKey, extras = {
   const subId = docSubsectionId(projectSlug, p, docKey, title);
   $("#main").innerHTML = `${pageHeader(`Edit · ${title}`, projName, `<button class="btn primary" id="es-save">Save</button>`, subId)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 10px">Markdown for <b>${esc(title)}</b> only.</p>
-      <textarea id="es-body" style="width:100%;min-height:320px;border:1px solid var(--hair);border-radius:12px;padding:14px 16px;font:13.5px/1.65 var(--body);resize:vertical">${esc(body)}</textarea>
+      <p class="help">Markdown for <b>${esc(title)}</b> only.</p>
+      <textarea id="es-body" class="doc-editor">${esc(body)}</textarea>
     </div></div>`;
   document.getElementById("es-save").onclick = async () => {
     try {
@@ -2340,7 +2842,7 @@ async function renderNewMemo(projectSlug, memoType){
   const formHtml = fields.map(renderSchemaField).join("");
   $("#main").innerHTML = `${pageHeader("New memo", `${projName} · ${label}`, `<button class="btn primary" id="nm-save">Create memo</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">Next version: <code>${esc(memoType)}-vN.json</code> — same schema as chat/osctl writes.</p>
+      <p class="help">Next version: <code>${esc(memoType)}-vN.json</code> — same schema as chat/osctl writes.</p>
       ${formHtml}
     </div></div>`;
   document.getElementById("nm-save").onclick = async () => {
@@ -2381,7 +2883,7 @@ const STRAT_STATUS_OPTS = [["proposed","proposed"],["active","active"],["paused"
 function renderNewPhase(projectSlug){
   $("#main").innerHTML = `${pageHeader("New GTM phase", _projName(projectSlug), `<button class="btn primary" id="np-save">Create phase</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">A time-boxed bet (e.g. "First 10 customers"). Strategies sit under it.</p>
+      <p class="help">A time-boxed bet (e.g. "First 10 customers"). Strategies sit under it.</p>
       ${flabel("Name")}${finput("name","",'placeholder="First 10 customers" required')}
       ${flabel("Goal")}${finput("goal","",'placeholder="10 paying users"')}
       ${flabel("Timebox")}${finput("timebox","",'placeholder="Q3 2026 / 6 weeks"')}
@@ -2440,7 +2942,7 @@ async function renderNewStrategy(projectSlug){
   const p = await api(`/api/project/${projectSlug}`);
   $("#main").innerHTML = `${pageHeader("New GTM strategy", _projName(projectSlug), `<button class="btn primary" id="ns-save">Create strategy</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:12px;color:var(--dim);margin:0 0 14px">A channel-motion (e.g. "LinkedIn founder-led outbound"). Tag experiments to it to build the lens.</p>
+      <p class="help">A channel-motion (e.g. "LinkedIn founder-led outbound"). Tag experiments to it to build the lens.</p>
       ${flabel("Name")}${finput("name","",'placeholder="LinkedIn founder-led outbound" required')}
       ${flabel("Phase")}${fsel("phase",_phaseOpts(p),"")}
       ${flabel("Channel")}${fsel("channel",_channelOpts(projectSlug),"")}
@@ -2593,12 +3095,12 @@ async function renderChannelSetup(channelSlug, profileSlug){
   try{ gl=await api(`/api/channel/${channelSlug}/guidelines`); }catch(_){}
   const platOpts=[["instagram","Instagram"],["tiktok","TikTok"],["x","X / Twitter"],["linkedin","LinkedIn"],["youtube","YouTube"],["facebook","Facebook"]];
   const crumb=profNode.name||profileSlug||"Back";
-  $("#main").innerHTML=`${pageHeader(`${PLATFORM_ICON[ch.platform]||"⌗"} ${PLAT_NAME[ch.platform]||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
+  $("#main").innerHTML=`${pageHeader(`${PLAT_NAME[ch.platform]||ch.platform||channelSlug} setup`,crumb,`<button class="btn danger-btn" id="cs-del">Delete channel</button><button class="btn primary" id="cs-save">Save</button>`, OSID.chan(channelSlug))}
     <div class="scroll"><div class="fpage">
       ${flabel("Platform")}${fsel("platform",platOpts,ch.platform||"instagram")}
       ${flabel("Handle (optional)")}${finput("handle",ch.handle||"",'placeholder="@handle"')}
       ${flabel("Voice & guidelines")}
-      <p style="font-size:12px;color:var(--dim);margin:0 0 8px;line-height:1.5">Injected into every generation for this channel.</p>
+      <p class="help">Injected into every generation for this channel.</p>
       ${fta("text",gl.text||"",10,'style="font-family:ui-monospace,Menlo,monospace;font-size:12px"')}
     </div></div>`;
   document.getElementById("cs-save").onclick=async()=>{
@@ -2645,7 +3147,7 @@ async function renderLogPosted(slug){
   const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   $("#main").innerHTML=`${pageHeader("Log posted",crumb,`<button class="btn primary" id="lp-save">Log posted</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Record something you already posted (not on the calendar). It lands as
         Published on the date below.</p>
       ${flabel("Title")}${finput("working_title","",'placeholder="short internal label"')}
@@ -2672,16 +3174,16 @@ async function renderGenerateIdeas(slug){
   const crumb=profNode.name||slug;
   const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
   const start=new Date(), end=new Date(Date.now()+14*864e5);
-  $("#main").innerHTML=`${pageHeader("Generate ideas",crumb,`<button class="btn primary" id="gi-save">Generate ✦</button>`)}
+  $("#main").innerHTML=`${pageHeader("Generate ideas",crumb,`<button class="btn primary" id="gi-save">${icon("zap")} Generate</button>`)}
     <div class="scroll"><div class="fpage">
-      <p style="font-size:13px;color:var(--dim);margin:0 0 16px;line-height:1.55">
+      <p class="help">
         Claude will generate a batch of content ideas for this profile. Takes ~15–30s.
       </p>
       ${flabel("Period start")}${finput("period_start",isoDay(start),'type="date" required')}
       ${flabel("Period end")}${finput("period_end",isoDay(end),'type="date" required')}
       <div style="display:flex;align-items:center;gap:8px;margin:2px 0 16px">
         <input type="checkbox" id="gi-dates" style="width:16px;height:16px;cursor:pointer">
-        <label for="gi-dates" style="font-size:13px;color:var(--ink2);cursor:pointer">Assign dates to posts (spread across the period above)</label>
+        <label for="gi-dates" class="chan-check">Assign dates to posts (spread across the period above)</label>
       </div>
       ${flabel("Platforms")}${finput("platforms",channels.map(c=>c.platform).join(","),'placeholder="tiktok,instagram"')}
       ${flabel("Cadence (posts per platform / week)")}${finput("cadence","",'placeholder="3"')}
@@ -2702,18 +3204,26 @@ async function renderGenerateIdeas(slug){
 
 // ── New activity / milestone / edit milestone ────────────────────────────────
 async function renderNewActivity(extras={}){
-  const projectOpts=_TREE.map(p=>`<option value="${esc(p.slug)}"${extras.entity===p.slug?" selected":""}>${esc(p.name)}</option>`).join("");
+  const pick=extras.entity||(_WS!=="hq"?_WS:"");
+  const projectOpts=_TREE.map(p=>`<option value="${esc(p.slug)}"${pick===p.slug?" selected":""}>${esc(p.name)}</option>`).join("");
   const typeOpts=["task","meeting","call","review","launch"].map(t=>`<option>${t}</option>`).join("");
   $("#main").innerHTML=`${pageHeader("New activity","Operations",`<button class="btn primary" id="na-save">Add activity</button>`)}
     <div class="scroll"><div class="fpage">
       ${flabel("Title")}${finput("title","",'placeholder="e.g. Record intro video" required')}
       ${flabel("Project")}<select name="entity">${projectOpts}</select>
       ${flabel("Date")}${finput("date",extras.date||"",'type="date"')}
+      ${flabel("Start time (optional)")}${finput("time","",'type="time"')}
+      ${flabel("End time")}${finput("time_end","",'type="time"')}
+      <p class="field-help">One calendar across every workspace. Bots can't book over a timed slot; you can, with a warning.</p>
       ${flabel("Type")}<select name="type">${typeOpts}</select>
     </div></div>`;
   document.getElementById("na-save").onclick=async()=>{
     const data=formVals($("#main"));
-    try{ await jpost("/api/activity/new",data); toast("Activity added ✓"); history.back(); }
+    try{
+      const out=await jpost("/api/activity/new",data);
+      const clash=(out.overlaps||[]).map(o=>`${o.time}-${o.time_end} ${o.title} (${o.entity})`).join(", ");
+      toast(clash?`Added ✓ · overlaps ${clash}`:"Activity added ✓"); history.back();
+    }
     catch(e){ toast("✗ "+e.message); }
   };
 }
@@ -2755,7 +3265,7 @@ function confirmPage(title, msg, deleteFn){
   bg.innerHTML=`<div class="popup" id="cd-popup">
     <button class="popup-close" data-x>×</button>
     <h3>${esc(title)}</h3>
-    <p style="font-size:13.5px;color:var(--ink2);line-height:1.55;margin:0 0 18px">${esc(msg)}</p>
+    <p class="lead">${esc(msg)}</p>
     <div class="pacts">
       <button class="btn danger-btn" id="cd-del" style="font-weight:600">Delete</button>
       <button class="btn" id="cd-cancel">Cancel</button>
@@ -2825,98 +3335,66 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const fileInput = document.getElementById("file-input");
   const attachEl  = document.getElementById("attachments");
   const appEl     = document.getElementById("app");
+  document.getElementById("nav-toggle").onclick = () => appEl.classList.add("nav-open");
+  document.getElementById("nav-scrim").onclick = closeNav;
 
-  // ── chat placement: right dock ⟷ bottom-left ⟷ hidden (persisted) ────────
+  // ── canvas pane: right of the chat, resizable, hideable (persisted) ────────
   const cssValue = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   const cssPx = (name, fallback) => parseInt(cssValue(name, ""), 10) || fallback;
-  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 300);
-  const CHAT_W_MAX = cssPx("--ui-shell-assistant-max", 1200);
-  const CENTER_MIN = cssPx("--ui-shell-center-min", 440);
-  const CHAT_W_DEFAULT = cssPx("--ui-shell-assistant-default", 360);
-  const CHAT_H_MIN = cssPx("--ui-shell-assistant-height-min", 220);
-  const CHAT_H_MAX = cssPx("--ui-shell-assistant-height-max", 720);
-  const CHAT_H_DEFAULT = cssPx("--ui-shell-assistant-height-default", 380);
-  const ASSISTANT_OVERLAY_BREAKPOINT = cssPx("--ui-breakpoint-assistant-overlay", 1440);
-  const UI_LAYOUT_VERSION = "precision-v2";
-  let chatPos = "right", chatHidden = false;
-  let chatW = CHAT_W_DEFAULT, chatH = CHAT_H_DEFAULT;
-  try {
-    chatPos = localStorage.getItem("chatPos") || "right";
-    const layoutIsCurrent = localStorage.getItem("uiLayoutVersion") === UI_LAYOUT_VERSION;
-    chatHidden = layoutIsCurrent ? localStorage.getItem("chatHidden") === "1" : window.innerWidth <= ASSISTANT_OVERLAY_BREAKPOINT;
-    const savedChatW = parseInt(localStorage.getItem("chatW"), 10) || CHAT_W_DEFAULT;
-    chatW = layoutIsCurrent
-      ? Math.min(CHAT_W_MAX, Math.max(CHAT_W_MIN, savedChatW)) : CHAT_W_DEFAULT;
-    chatH = Math.min(CHAT_H_MAX, Math.max(CHAT_H_MIN, parseInt(localStorage.getItem("chatH"), 10) || CHAT_H_DEFAULT));
-    localStorage.setItem("uiLayoutVersion", UI_LAYOUT_VERSION);
-  } catch {}
-  // Widest the chat can go right now: keep the center workspace >= CENTER_MIN.
-  // Chat + center width is constant in every layout, so measure both.
-  function chatWMax(){
+  const CANVAS_W_MIN = cssPx("--ui-shell-center-min", 440);
+  const CHAT_W_MIN = cssPx("--ui-shell-assistant-min", 320);
+  const CANVAS_W_DEFAULT = cssPx("--canvas-w", 540);
+  // At or below this width the canvas floats over the chat (see app.css).
+  const CANVAS_OVERLAY_BP = cssPx("--ui-breakpoint-canvas-overlay", 1280);
+  // Like a Slack canvas: closed until you need it (the panel button, a sidebar view, or a bot
+  // saving something). Only its width is remembered.
+  let canvasW = CANVAS_W_DEFAULT, canvasHidden = true;
+  try { canvasW = parseInt(localStorage.getItem("canvasW"), 10) || CANVAS_W_DEFAULT; } catch {}
+  // Widest the canvas can go right now: keep the chat column >= CHAT_W_MIN,
+  // or, as an overlay, leave a strip of chat visible.
+  function canvasWMax(){
+    if (window.innerWidth <= CANVAS_OVERLAY_BP) return Math.max(CANVAS_W_MIN, window.innerWidth - 40);
     const dock = document.getElementById("chat-dock");
-    const center = document.querySelector(".right-col");
+    const canvas = document.querySelector(".right-col");
     const shared = (dock ? dock.getBoundingClientRect().width : 0)
-                 + (center ? center.getBoundingClientRect().width : window.innerWidth);
-    return Math.max(CHAT_W_MIN, Math.min(CHAT_W_MAX, Math.floor(shared - CENTER_MIN)));
+                 + (canvas && !canvasHidden ? canvas.getBoundingClientRect().width : 0);
+    return Math.max(CANVAS_W_MIN, Math.floor(shared - CHAT_W_MIN));
   }
-  function applyChatSize(){
-    // chatW is the saved preference; render it clamped to the current window.
-    appEl.style.setProperty("--chat-w", Math.min(chatW, chatWMax()) + "px");
-    appEl.style.setProperty("--chat-h", chatH + "px");
+  function applyCanvas(){
+    appEl.classList.toggle("canvas-hidden", canvasHidden);
+    if (typeof highlight === "function") highlight();
+    appEl.style.setProperty("--canvas-w", Math.max(CANVAS_W_MIN, Math.min(canvasW, canvasWMax())) + "px");
+    document.getElementById("canvas-toggle").classList.toggle("on", !canvasHidden);
+    try { localStorage.setItem("canvasW", String(canvasW)); } catch {}
   }
-  function applyChat(){
-    appEl.classList.toggle("chat-bl", chatPos === "bl" && !chatHidden);
-    appEl.classList.toggle("chat-hidden", chatHidden);
-    applyChatSize();
-    const moveBtn = document.getElementById("chat-move");
-    if (moveBtn){
-      moveBtn.textContent = chatPos === "bl" ? "⇱" : "⇲";
-      moveBtn.title = chatPos === "bl" ? "Move chat to the right" : "Move chat to bottom-left";
-    }
-    try {
-      localStorage.setItem("chatPos", chatPos);
-      localStorage.setItem("chatHidden", chatHidden ? "1" : "");
-      localStorage.setItem("chatW", String(chatW));
-      localStorage.setItem("chatH", String(chatH));
-    } catch {}
-  }
-  (function bindChatResize(){
-    const handle = document.getElementById("chat-resize");
-    if (!handle) return;
-    let dragging = false, axis = "x", start = 0, startSize = 0;
-    const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+  function showCanvas(){ if (canvasHidden) { canvasHidden = false; applyCanvas(); } }
+  function hideCanvas(){ if (!canvasHidden) { canvasHidden = true; applyCanvas(); } }
+  (function bindCanvasResize(){
+    const handle = document.getElementById("canvas-resize");
+    let dragging = false, start = 0, startSize = 0;
     const onMove = e => {
       if (!dragging) return;
       const pt = e.touches ? e.touches[0] : e;
-      if (axis === "x") chatW = clamp(startSize + (start - pt.clientX), CHAT_W_MIN, chatWMax());
-      else chatH = clamp(startSize + (start - pt.clientY), CHAT_H_MIN, CHAT_H_MAX);
-      applyChatSize();
+      canvasW = Math.min(canvasWMax(), Math.max(CANVAS_W_MIN, startSize + (start - pt.clientX)));
+      applyCanvas();
       e.preventDefault();
     };
     const onEnd = () => {
       if (!dragging) return;
       dragging = false;
       handle.classList.remove("active");
-      document.body.classList.remove("chat-resizing", "chat-resize-v");
+      document.body.classList.remove("chat-resizing");
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onEnd);
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
-      try {
-        localStorage.setItem("chatW", String(chatW));
-        localStorage.setItem("chatH", String(chatH));
-      } catch {}
     };
     const onStart = e => {
-      if (chatHidden) return;
-      axis = chatPos === "bl" ? "y" : "x";
       const pt = e.touches ? e.touches[0] : e;
-      dragging = true;
-      start = axis === "x" ? pt.clientX : pt.clientY;
-      startSize = axis === "x" ? Math.min(chatW, chatWMax()) : chatH;
+      dragging = true; start = pt.clientX;
+      startSize = document.querySelector(".right-col").getBoundingClientRect().width;
       handle.classList.add("active");
       document.body.classList.add("chat-resizing");
-      if (axis === "y") document.body.classList.add("chat-resize-v");
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onEnd);
       window.addEventListener("touchmove", onMove, { passive: false });
@@ -2926,44 +3404,119 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     handle.addEventListener("mousedown", onStart);
     handle.addEventListener("touchstart", onStart, { passive: false });
   })();
-  applyChat();
-  window.addEventListener("resize", applyChatSize);
-  document.getElementById("chat-move").onclick   = () => { chatPos = chatPos === "bl" ? "right" : "bl"; chatHidden = false; applyChat(); };
-  document.getElementById("chat-hide").onclick   = () => { chatHidden = true; applyChat(); };
-  document.getElementById("chat-reopen").onclick = () => { chatHidden = false; applyChat(); };
+  applyCanvas();
+  window.addEventListener("resize", applyCanvas);
+  document.getElementById("canvas-toggle").onclick = () => { canvasHidden = !canvasHidden; applyCanvas(); };
+
+  // ── rooms (Slack channels + DMs) of the current workspace ────────────────
+  // A thread is a saved chat; each room remembers its last open thread and
+  // each workspace remembers its last open room. Room ids are "<ws>/<local>".
+  let activeRoomId = `${_WS}/general`;
+  let roomThreads = {}, wsRooms = {};
+  try {
+    roomThreads = JSON.parse(localStorage.getItem("roomThreads") || "{}") || {};
+    wsRooms = JSON.parse(localStorage.getItem("wsRooms") || "{}") || {};
+  } catch {}
+  activeRoomId = wsRooms[_WS] || `${_WS}/general`;
+  const roomTitleEl = document.getElementById("room-title");
+  const roomEditBtn = document.getElementById("room-edit");
+
+  function paintRoomHeader(){
+    const room = roomById(activeRoomId);
+    if (!room) { roomTitleEl.textContent = "# general"; return; }
+    const lead = botById(room.lead);
+    roomTitleEl.textContent = room.kind === "dm" ? room.name : `# ${room.name}`;
+    roomEditBtn.hidden = room.kind !== "topic";
+    input.placeholder = room.kind === "dm"
+      ? `Message ${room.name}…`
+      : `Message #${room.name} (untagged → ${lead?.name || "lead"}, @ to tag)`;
+  }
+  roomEditBtn.onclick = () => { const r = roomById(activeRoomId); if (r) { showCanvas(); navigate(`#/room/${r.name}/edit`); } };
+
+  function selectRoom(id){
+    if (busy) return busyNote();
+    if (_ROOMS.length && !roomById(id)) id = `${_WS}/general`;
+    activeRoomId = id;
+    wsRooms[_WS] = id;
+    try { localStorage.setItem("wsRooms", JSON.stringify(wsRooms)); } catch {}
+    chatListEl.hidden = true;
+    paintRoomHeader();
+    const thread = roomThreads[id];
+    let opened = Promise.resolve();
+    if (!activeChatId || activeChatId !== thread) opened = thread ? openChat(thread) : Promise.resolve(newChat());
+    highlight();
+    return opened;
+  }
+  // Jump to an approval's thread (any workspace); optionally answer it.
+  async function openThread(a, answer){
+    if (!a || busy) return busyNote();
+    roomThreads[a.room] = a.chat;
+    wsRooms[a.ws] = a.room;   // so entering the workspace lands on this thread
+    if (a.ws !== _WS) await window.Workspaces.switchTo(a.ws);
+    else await selectRoom(a.room);
+    // The room may be gone (bot switched off): never answer in another thread.
+    if (activeChatId !== a.chat) { statusEl.textContent = "That thread is no longer open here"; return; }
+    if (answer === "approved") send("Yes, approved.", { approval: "approved" });
+  }
+  window.ChatRooms = {
+    select: selectRoom,
+    openThread,
+    newThread: () => newThread(),
+    current: () => activeRoomId,
+    busy: () => busy,
+    showCanvas: () => showCanvas(),
+    hideCanvas: () => hideCanvas(),
+    // After a workspace switch: reopen that workspace's last room.
+    enterWorkspace: () => selectRoom(wsRooms[_WS] || `${_WS}/general`),
+    refresh: () => {
+      if (_ROOMS.length && !roomById(activeRoomId)) return selectRoom(wsRooms[_WS] || `${_WS}/general`);
+      paintRoomHeader();
+      if (!activeChatId && !history.length && !busy) showChat([]);   // welcome now knows the room
+    },
+  };
+
   // ── saved chats: each is its own claude session (server chat_store) ─────
   // Active chat id survives reloads; its transcript is loaded from the server.
   let activeChatId = null;
-  let activeChatProject = null;   // project the chat is bound to (see projectForTurn)
-  try { activeChatId = localStorage.getItem("chatActiveId") || null; } catch {}
+  let threadUsage = { tokens: 0, cost: 0 };   // running total of the open thread
   const chatListEl = document.getElementById("chat-list");
   const chatTitleEl = document.getElementById("chat-title");
 
   function setActiveChat(id, title, project){
     activeChatId = id || null;
-    activeChatProject = (id && project) || null;
-    chatTitleEl.textContent = (id && title) || "New chat";
+    if (!id) threadUsage = { tokens: 0, cost: 0 };
+    chatTitleEl.textContent = (id && title) || "New thread";
     chatTitleEl.title = chatTitleEl.textContent;
-    try {
-      if (activeChatId) localStorage.setItem("chatActiveId", activeChatId);
-      else localStorage.removeItem("chatActiveId");
-    } catch {}
+    if (activeChatId) roomThreads[activeRoomId] = activeChatId;
+    else delete roomThreads[activeRoomId];
+    try { localStorage.setItem("roomThreads", JSON.stringify(roomThreads)); } catch {}
   }
   function showChat(msgs){
     history.length = 0; stream.innerHTML = "";
     if (!msgs || !msgs.length) return showWelcome();
-    msgs.forEach(m => { history.push(m); addMsg(m.role, m.content); });
+    msgs.forEach(m => {
+      history.push(m);
+      const b = addMsg(m.role, m.content, m.bot, m.asked_by, m.ts);
+      if (m.role === "assistant") decorateReply(b.closest(".msg"), m);
+    });
+    stream.scrollTop = stream.scrollHeight;
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
+  // Bumped by every thread switch: a slow load drops out once you moved on.
+  let chatSeq = 0;
   async function openChat(id){
     if (busy) return busyNote();
+    const seq = ++chatSeq;
     const rec = await fetch(`/api/chats/${encodeURIComponent(id)}`).then(r => r.ok ? r.json() : null).catch(() => null);
+    if (seq !== chatSeq) return;
     if (!rec) { setActiveChat(null); showChat([]); return; }
     setActiveChat(rec.id, rec.title, rec.scope && rec.scope[0]); showChat(rec.messages);
+    threadUsage = { tokens: rec.tokens || 0, cost: rec.cost || 0 };
     statusEl.textContent = "Ready";
   }
   function newChat(){
     if (busy) return busyNote();
+    chatSeq++;
     setActiveChat(null); showChat([]); statusEl.textContent = "Ready";
     fetch("/api/chat-reset", { method: "POST" }).catch(() => {});
   }
@@ -2975,13 +3528,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return Math.floor(d / 86400) + "d";
   }
   async function renderChatList(){
-    const { chats = [] } = await fetch("/api/chats").then(r => r.json()).catch(() => ({}));
+    const { chats = [] } = await fetch(`/api/chats?room=${encodeURIComponent(activeRoomId)}`).then(r => r.json()).catch(() => ({}));
     chatListEl.innerHTML = chats.length ? chats.map(c =>
       `<div class="cl-row${c.id === activeChatId ? " active" : ""}" data-chat="${esc(c.id)}">
          <span class="cl-title">${esc(c.title || "New chat")}</span>
+         ${c.tokens || c.cost ? `<span class="cl-when">${esc(fmtUsage(c.tokens, c.cost))}</span>` : ""}
          <span class="cl-when">${relTime(c.updated)}</span>
-         <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat">✕</button>
-       </div>`).join("") : `<div class="cl-empty">No saved chats yet.</div>`;
+         <button class="cl-del" data-del="${esc(c.id)}" title="Delete chat" aria-label="Delete chat">${icon("x")}</button>
+       </div>`).join("") : `<div class="cl-empty">No threads in this channel yet.</div>`;
   }
   chatListEl.addEventListener("click", async e => {
     const del = e.target.closest("[data-del]");
@@ -2991,7 +3545,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       if (!del.classList.contains("armed")) {
         // Two-step delete: first click arms, second (within 3s) deletes.
         del.classList.add("armed"); del.textContent = "Delete?";
-        setTimeout(() => { del.classList.remove("armed"); del.textContent = "✕"; }, 3000);
+        setTimeout(() => { del.classList.remove("armed"); del.innerHTML = icon("x"); }, 3000);
         return;
       }
       await fetch(`/api/chats/${encodeURIComponent(del.dataset.del)}/delete`, { method: "POST" }).catch(() => {});
@@ -3013,7 +3567,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   document.addEventListener("keydown", e => {
     if (e.key === "Escape" && !chatListEl.hidden) chatListEl.hidden = true;
   });
-  document.getElementById("chat-new").onclick = () => { chatListEl.hidden = true; newChat(); };
+  function newThread(){ chatListEl.hidden = true; newChat(); }
+  document.getElementById("chat-new").onclick = newThread;
   // Pre-saved-chats builds kept one transcript in localStorage; drop it.
   try { localStorage.removeItem("chatHistory"); localStorage.removeItem("chatSessionId"); } catch {}
 
@@ -3065,7 +3620,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   function toggleTerminal(){
     const panel = document.getElementById("term-panel");
     const opening = panel.classList.toggle("open");
-    document.getElementById("term-chevron").textContent = opening ? "▾" : "▸";
     document.getElementById("term-close").textContent = opening ? "close" : "open ⌃`";
     if (opening && !term) initTerminal();
     // fit after the height transition settles, else xterm sizes to 0 rows
@@ -3098,7 +3652,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     try {
       const { turn_count } = await fetch("/api/chat-session").then(r => r.json());
       const n = turn_count || 0;
-      statusEl.textContent = (base || "Ready") + ` · turn ${n}`;
+      const usage = fmtUsage(threadUsage.tokens, threadUsage.cost);
+      statusEl.textContent = (base || "Ready") + ` · turn ${n}` + (usage ? ` · ${usage}` : "");
     } catch {
       if (base) statusEl.textContent = base;
     }
@@ -3110,7 +3665,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     renderAttachments();
   }
 
-  // ⊕ opens the manual picker (skills · web search · attach file); file attach
+  // The + button opens the manual picker (skills · web search · attach file); file attach
   // is reachable from inside it, plus paste & drag-drop still work directly.
   attachBtn.onclick = () => openPicker();
   fileInput.onchange = async e => { await addFiles(e.target.files); fileInput.value = ""; };
@@ -3157,7 +3712,14 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
         out.push({ type:"skill", slug:s.name, name:s.name, meta:(s.description||"").slice(0, 90) });
       return out;
     }
-    for (const p of _TREE) {
+    const members = roomById(activeRoomId)?.members || [];
+    const ranked = _BOTS.filter(b => b.active).sort((a, b) => members.includes(b.id) === members.includes(a.id) ? 0 : members.includes(a.id) ? -1 : 1);
+    for (const b of ranked)
+      out.push({ type:"bot", id:b.id, slug:b.handle, name:b.name, meta:"@" + b.handle });
+    // A company's chat only references that company (HQ sees every one).
+    const tree = _WS === "hq" ? _TREE : _TREE.filter(p => p.slug === _WS);
+    const ownProfiles = new Set(tree.flatMap(p => (p.profiles || []).map(x => x.slug)));
+    for (const p of tree) {
       out.push({ type:"project", slug:p.slug, osId:OSID.proj(p.slug), name:p.name, meta:(p.kind||p.type||"project") });
       for (const s of PROJECT_SECTIONS)
         out.push({
@@ -3173,7 +3735,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
           out.push({ type:"channel", slug:ch.slug, osId:OSID.chan(ch.slug), name:(PLAT_NAME[ch.platform]||ch.platform), meta:(ch.platform||"channel") });
       }
     }
-    for (const post of _POSTS) {
+    for (const post of _POSTS.filter(x => _WS === "hq" || ownProfiles.has(x.profile_slug))) {
       out.push({
         type:"post",
         slug:post.id,
@@ -3201,10 +3763,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       .slice(0, 8);
     if (!menuItems.length) return closeMenu();
     menuIdx = Math.min(menuIdx, menuItems.length - 1);
-    const ICON = { project:"▣", profile:"◐", channel:"▶", post:"✎", section:"◎", skill:"✦", tool:"🌐", action:"📎" };
+    const ICON = { project:"folder", profile:"users", channel:"hash", post:"doc", section:"layers", skill:"zap", tool:"globe", action:"clip" };
     menu.innerHTML = menuItems.map((c, i) =>
       `<div class="mi${i===menuIdx?" sel":""}" data-i="${i}">
-         <span class="mi-ic">${ICON[c.type]||"·"}</span><b>${esc(c.name)}</b>
+         <span class="mi-ic">${c.type === "bot" ? botAvatar(botById(c.id)) : icon(ICON[c.type] || "hash")}</span><b>${esc(c.name)}</b>
          <span class="mi-meta">${esc(c.type)} · ${esc(c.meta)}</span></div>`
     ).join("");
     menu.querySelectorAll(".mi").forEach(el =>
@@ -3221,19 +3783,20 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       closeMenu(); fileInput.click(); input.dispatchEvent(new Event("input"));
       return;
     }
-    // Skills/tools are routing tokens (/slug) read server-side — never inlined,
-    // so they are NOT tracked in mentions[]. Entities use @slug and ARE tracked.
+    // Skills/tools (/slug) and bots (@handle) are routing tokens read server-side,
+    // never inlined, so they are NOT tracked in mentions[]. Entities use @slug and ARE tracked.
     const sigil = (c.type === "skill" || c.type === "tool") ? "/" : "@";
     const token = sigil + (c.osId || c.slug);
+    const routing = c.type === "skill" || c.type === "tool" || c.type === "bot";
     input.value = input.value.slice(0, aq.start) + token + " " + input.value.slice(aq.end);
     const caret = aq.start + token.length + 1;
     input.setSelectionRange(caret, caret);
-    if (sigil === "@" && !mentions.some(m => m.token === token))
+    if (!routing && !mentions.some(m => m.token === token))
       mentions.push({ token, type:c.type, slug:mentionBare(c), osId:c.osId||null, name:c.name });
     closeMenu(); input.focus();
     input.dispatchEvent(new Event("input"));   // keep textarea autosize in sync
   }
-  // ⊕ button = manual picker: insert "/" at the caret and open the skill/tool menu.
+  // + button = manual picker: insert "/" at the caret and open the skill/tool menu.
   function openPicker(){
     const pos = input.selectionStart;
     const before = input.value.slice(0, pos);
@@ -3257,7 +3820,7 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   // ── chat ─────────────────────────────────────────────────────────────────
   const history = [];
   let busy = false;
-  if (activeChatId) openChat(activeChatId);   // restore last open saved chat
+  selectRoom(activeRoomId);   // restore last room + its open thread
   let chatAbort = null;   // AbortController for the in-flight /api/ask stream
 
   // ESC stops the current turn: abort the SSE stream client-side AND tell the
@@ -3274,11 +3837,72 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     else el.textContent = text;
   }
 
-  function addMsg(role, text){
+  // Sender line of a message row: avatar, bold name, a muted note, the time.
+  function paintSender(div, { avatar, name, note = "" }){
+    div.querySelector(":scope > .av").outerHTML = avatar;
+    div.querySelector(".mh-name").textContent = name;
+    div.querySelector(".mh-note").textContent = note;
+  }
+  function clock(ts){ return ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""; }
+
+  // askedBy: a teammate pulled this bot in ("asked by @cmo"); "user" = co-tagged.
+  function botLabel(div, bot, handoffFrom, askedBy){
+    const b = typeof bot === "string" ? botById(bot) : bot;
+    if (!b) return;
+    const from = handoffFrom ? botById(handoffFrom) : null;
+    const asker = askedBy && askedBy !== "user" ? botById(askedBy) : null;
+    paintSender(div, { avatar: botAvatar(b), name: b.name,
+      note: asker ? `asked by @${asker.handle}` : from ? `from @${from.handle}` : "" });
+    div.classList.toggle("consulted", !!asker);
+  }
+
+  // Under a bot reply: what it saved (one slim row each) and the approval it
+  // asks for. Token use sits in the time's tooltip.
+  function decorateReply(div, m){
+    const main = div.querySelector(".msg-main");
+    main.querySelector(".deliv-list")?.remove();
+    main.querySelector(".approval-bar")?.remove();
+    const usage = fmtUsage(m.tokens, m.cost);
+    div.querySelector(".mh time").title = usage ? `${usage} (tokens · estimated cost)` : "";
+    const botId = typeof m.bot === "object" ? m.bot?.id : m.bot;
+    if (m.deliverables?.length) {
+      const box = document.createElement("div");
+      box.className = "deliv-list";
+      box.innerHTML = m.deliverables.map((d, i) => `<div class="deliv-row">
+          <span class="deliv-ic">${icon(KIND_META[d.kind]?.[0] || "doc")}</span>
+          <span class="deliv-t"><b>${esc(d.label)}</b><small>${esc([KIND_META[d.kind]?.[2] || d.kind, d.profile && profileName(d.profile), delivChannels(d)].filter(Boolean).join(" · "))}</small></span>
+          ${d.status ? `<span class="tag">${esc(d.status)}</span>` : ""}
+          <button class="link-btn" data-deliv="${i}">Open in canvas</button></div>`).join("");
+      box.querySelectorAll("[data-deliv]").forEach(b => b.onclick = () =>
+        openDeliverable({ ...m.deliverables[+b.dataset.deliv], bot: botId }));
+      main.appendChild(box);
+    }
+    if (m.approval && _APPROVALS.some(a => a.id === (m.approval.id || m.approval))) {
+      const a = typeof m.approval === "object" ? m.approval : _APPROVALS.find(x => x.id === m.approval);
+      const bar = document.createElement("div");
+      bar.className = "approval-bar";
+      bar.innerHTML = `<span class="ap-sum">${esc(a.summary)}</span>
+        <button class="btn sm primary" data-ap="approved">Approve</button>
+        <button class="btn sm" data-ap="edit">Edit first</button>
+        <button class="btn sm ghost" data-ap="rejected">Skip</button>`;
+      bar.querySelectorAll("[data-ap]").forEach(b => b.onclick = () => {
+        if (b.dataset.ap === "edit") { input.value = "Change before saving: "; input.focus(); input.dispatchEvent(new Event("input")); return; }
+        bar.remove();
+        send(b.dataset.ap === "approved" ? "Yes, approved." : "No, skip it.", { approval: b.dataset.ap });
+      });
+      main.appendChild(bar);
+    }
+  }
+
+  // One left-aligned row per message. Returns the body element (.b), which
+  // streaming fills; the row is its closest(".msg").
+  function addMsg(role, text, bot, askedBy, ts){
     const div = document.createElement("div");
-    const uiRole = role === "user" ? "me" : "ai";
-    div.className = "msg " + uiRole;
-    div.innerHTML = `<div class="b"></div>`;
+    div.className = "msg " + (role === "user" ? "me" : "ai");
+    div.innerHTML = `<span class="av"></span><div class="msg-main"><div class="mh"><b class="mh-name"></b><span class="mh-note"></span><time></time></div><div class="b"></div></div>`;
+    div.querySelector("time").textContent = clock(ts);
+    if (role === "user") paintSender(div, { avatar: `<span class="av">Y</span>`, name: "You" });
+    else botLabel(div, bot || roomById(activeRoomId)?.lead || "cos", null, askedBy);
     const bubble = div.querySelector(".b");
     setMsgContent(bubble, role, text);
     stream.appendChild(div);
@@ -3286,9 +3910,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return bubble;
   }
 
-  // Tool activity for the in-flight turn collapses into ONE quiet line that
-  // sits ABOVE the answer (never a trailing stack of Bash/Read cards). It ticks
-  // live while working, then becomes a click-to-expand "N steps" summary.
+  // While a reply streams, one quiet "working… N steps" line sits under the
+  // bot's name; it goes away when the reply is complete.
   let stepLabels = [], stepEl = null, stepAnchor = null;
 
   function startTurnSteps(anchor){ stepLabels = []; stepEl = null; stepAnchor = anchor; }
@@ -3298,31 +3921,17 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     if (!stepEl){
       stepEl = document.createElement("div");
       stepEl.className = "tool-chip tool-summary";
-      stream.insertBefore(stepEl, stepAnchor);   // keep it above the free-text answer
+      stepAnchor.before(stepEl);   // above the answer text, inside its row
     }
     const n = stepLabels.length;
-    stepEl.textContent = `⚙ working… ${n} step${n > 1 ? "s" : ""}`;
+    stepEl.textContent = `working… ${n} step${n > 1 ? "s" : ""}`;
+    stepEl.title = stepLabels.join("  ·  ");
     stream.scrollTop = stream.scrollHeight;
   }
 
   function finalizeSteps(){
-    if (!stepEl) return;
-    const labels = stepLabels.slice();
-    let detail = null;
-    const paint = () => stepEl.textContent = detail
-      ? "⚙ hide steps"
-      : `⚙ ${labels.length} step${labels.length > 1 ? "s" : ""}`;
-    stepEl.onclick = () => {
-      if (detail) { detail.remove(); detail = null; }
-      else {
-        detail = document.createElement("div");
-        detail.className = "tool-detail";
-        detail.textContent = labels.join("  ·  ");
-        stepEl.after(detail);
-      }
-      paint();
-    };
-    paint();
+    if (stepEl) stepEl.remove();
+    stepEl = null; stepLabels = [];
   }
 
   // Token-lean context: inject heavy profile/post bodies only when the turn
@@ -3331,6 +3940,12 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   const CTX_ATTACH_CAP = 12000;
   const SKILL_TAG_RE = /(?:^|\s)\/([a-z][a-z0-9-]+)/;
   const WRITE_HINT_RE = /\b(save|commit|write|create|update|fill|populate|add|generate|draft|validate|assess|design|plan|build|launch|revise|brief|memo|intake|roadmap|experiment)\b/i;
+  // Marker lines the server strips (core/approvals.py MARKER_RE, server.py
+  // _CONSULT_RE), hidden while a reply streams. Same shapes, so prose that
+  // merely starts with "Approval" or "Consult" stays visible.
+  const APPROVAL_LINE_RE = /^[ \t>*_-]*APPROVAL:.*$/gm;
+  const CONSULT_LINE_RE = /^[ \t>*_-]*CONSULT[*_ \t]+@[a-z][a-z0-9-]*[*_ \t]*:.*$/gim;
+  const hideMarkers = text => text.replace(APPROVAL_LINE_RE, "").replace(CONSULT_LINE_RE, "").trimEnd();
   const CONTINUATION_RE = /\b(yes|yep|yeah|ok|okay|sure|go ahead|save|commit|do it|approved|looks good|next tab|proceed|continue|save all)\b/i;
   const CTX_PORTFOLIO_KW = /\b(all posts|other posts|how many posts|list posts|what posts|calendar|timeline|projects?|profiles?|portfolio)\b/i;
 
@@ -3405,62 +4020,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return [...new Set(out)];
   }
 
-  function projectForTurn(text){
-    // Prefer an explicitly referenced project/entity, then the current view.
-    // Send only its slug; the server resolves any path from project.md and
-    // never trusts a client-supplied folder. Sending unlinked projects lets the
-    // server stop code requests cleanly instead of inspecting myOS by mistake.
-    const project = slug => {
-      const p = _TREE.find(x => x.slug === slug);
-      return p?.slug || null;
-    };
-    for (const m of mentions) {
-      if (!text.includes(m.token)) continue;
-      if (m.type === "project") {
-        const slug = project(m.slug);
-        if (slug) return slug;
-      }
-      const ref = IdReg.resolve(m.osId || "")?.ref || {};
-      const slug = project(ref.project);
-      if (slug) return slug;
-    }
-    for (const id of pastedCanonicalIds(text)) {
-      const slug = project(IdReg.resolve(id)?.ref?.project);
-      if (slug) return slug;
-    }
-    // A saved chat stays with the project it started in; browsing elsewhere
-    // does not move it. Only an explicit reference above switches projects.
-    if (activeChatProject) {
-      const slug = project(activeChatProject);
-      if (slug) return slug;
-    }
-    // Ongoing unbound chat: the open tab must not bind it to a project either.
-    if (history.length > 1) return null;
-    if (STATE.project) {
-      const slug = project(STATE.project);
-      if (slug) return slug;
-    }
-    const profile = CURRENT_PROFILE_SLUG || STATE.profile;
-    if (profile) {
-      const parent = _TREE.find(p => p.profiles.some(x => x.slug === profile));
-      const slug = project(parent?.slug);
-      if (slug) return slug;
-    }
-    if (STATE.channelGuidelines) {
-      const parent = _TREE.find(p => p.profiles.some(pr =>
-        pr.channels.some(ch => ch.slug === STATE.channelGuidelines)));
-      const slug = project(parent?.slug);
-      if (slug) return slug;
-    }
-    const path = (location.hash || "").replace(/^#/, "").replace(/\?.*$/, "");
-    const projectMatch = path.match(/^\/project\/([^/]+)/);
-    if (projectMatch) return project(projectMatch[1]);
-    const productMatch = path.match(/^\/product\/([^/]+)/);
-    if (productMatch) {
-      const parent = _TREE.find(p => p.products.some(x => x.slug === productMatch[1]));
-      return project(parent?.slug);
-    }
-    return null;
+  function projectForTurn(){
+    // The workspace decides, never the open canvas view or an @mention: a
+    // company's rooms are bound to it (the server enforces this too) and HQ
+    // binds none. Send only the slug; the server resolves any folder itself.
+    return _WS !== "hq" && _TREE.some(p => p.slug === _WS) ? _WS : null;
   }
 
   async function buildContext(text){
@@ -3468,6 +4032,11 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     const crumbs = document.querySelector(".crumbs");
     let ctx = "";
     const refs = mentions.filter(m => text.includes(m.token));
+    const viewProj = canvasProject(true);
+    const foreignView = _WS !== "hq" && viewProj && viewProj.slug !== _WS;
+    if (foreignView) {   // isolation: another company's page stays out of this company's chat
+      return "## Screen (background only)\nUser has a page from another workspace open. Ignore it.\n";
+    }
     const viewPrimary = viewIsPrimary(text, refs);
     if (viewPrimary) {
       if (crumbs) ctx += "Current view: " + crumbs.textContent + "\n";
@@ -3629,33 +4198,52 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     return ctx;
   }
 
-  async function send(){
-    const text = input.value.trim();
+  async function send(override, extra){
+    const text = (typeof override === "string" ? override : input.value).trim();
     if (!text || busy) return;
     busy = true;
-    input.value = "";
-    input.style.height = "56px";
+    if (typeof override !== "string") input.value = "";
+    const hadPending = _APPROVALS.some(a => a.chat === activeChatId);
+    stream.querySelectorAll(".approval-bar").forEach(el => el.remove());   // any reply answers it
+    input.style.height = "";
     statusEl.textContent = "thinking…";
     sendBtn.disabled = true;
 
     const fileNote = attachedFiles.length ? ` [+${attachedFiles.length} file${attachedFiles.length>1?"s":""}]` : "";
     history.push({ role: "user", content: text });
-    const userEl = addMsg("user", text + fileNote).parentElement;
+    const userEl = addMsg("user", text + fileNote, null, null, Date.now() / 1000).closest(".msg");
 
     const projectSlug = projectForTurn(text);
     const ctx = await buildContext(text);
     attachedFiles = []; renderAttachments();
     mentions = [];
 
-    const bubble = addMsg("assistant", ""); bubble.innerHTML = ""; let full = "";
-    startTurnSteps(bubble.parentElement);   // steps line lives just above this answer
+    // One message per bot this turn: the lead, teammates it pulls in, its follow-up.
+    const replies = [];
+    let bubble, full = "", turnMeta;
+    const startReply = info => {
+      if (bubble) {
+        finalizeSteps();
+        if (full) history.push({ role: "assistant", content: full });
+        decorateReply(bubble.closest(".msg"), turnMeta);
+        bubble.closest(".msg").classList.remove("streaming");
+      }
+      bubble = addMsg("assistant", "", null, null, Date.now() / 1000); bubble.innerHTML = ""; full = ""; turnMeta = {};
+      bubble.closest(".msg").classList.add("streaming");   // typing dots until text arrives
+      replies.push({ bubble, meta: turnMeta });
+      startTurnSteps(bubble);
+      if (info) { botLabel(bubble.closest(".msg"), info, null, info.asked_by || null); turnMeta.bot = info.id; }
+    };
+    startReply(null);
+    const replyAt = i => (Number.isInteger(i) && replies[i]) || replies[replies.length - 1];
     let pendingBreak = false;
 
     chatAbort = new AbortController();
     try {
-      const payload = { messages: [{ role: "user", content: text }], context: ctx };
+      const payload = { messages: [{ role: "user", content: text }], context: ctx, ...(extra || {}) };
       if (projectSlug) payload.project_slug = projectSlug;
       if (activeChatId) payload.chat_id = activeChatId;
+      payload.room_id = activeRoomId;
       const resp = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3685,25 +4273,38 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
             if (obj.chat_id) {
               // Server started a different chat (project scope changed): old one stays saved.
               if (activeChatId && obj.chat_id !== activeChatId) {
-                // Show only what the new chat holds; the old chat is still in ☰.
+                // Show only what the new chat holds; the old chat is still in Threads.
                 while (stream.firstChild && stream.firstChild !== userEl) stream.removeChild(stream.firstChild);
                 history.splice(0, history.length - 1);
                 const note = document.createElement("div");
                 note.className = "tool-chip";
-                note.textContent = `↺ New chat for ${obj.project || "all projects"}. Previous chat saved in ☰`;
+                note.textContent = `↺ New chat for ${obj.project || "all projects"}. Previous chat saved in Threads`;
                 stream.insertBefore(note, userEl);
               }
               setActiveChat(obj.chat_id, obj.title, obj.project);
             }
-            if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); return; }
+            if (obj.bot) { botLabel(bubble.closest(".msg"), obj.bot, obj.bot.handoff_from); turnMeta.bot = obj.bot.id; }
+            if (obj.msg_start) { startReply(obj.msg_start); pendingBreak = false; }
+            if (obj.deliverables) replyAt(obj.msg).meta.deliverables = obj.deliverables;
+            if (obj.usage) {
+              turnMeta.tokens = obj.usage.tokens; turnMeta.cost = obj.usage.cost;
+              threadUsage.tokens += obj.usage.tokens || 0; threadUsage.cost += obj.usage.cost || 0;
+            }
+            if (obj.clean !== undefined) {
+              const r = replyAt(obj.msg);
+              r.bubble.innerHTML = formatChatText(obj.clean);
+              if (r.bubble === bubble) full = obj.clean;
+            }
+            if (obj.approval) { _APPROVALS.unshift(obj.approval); replyAt(obj.msg).meta.approval = obj.approval; }
+            if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); reader.cancel().catch(() => {}); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
               // one on a fresh line so thoughts don't run together ("week.14").
               if (pendingBreak && full && !full.endsWith("\n")) full += "\n";
               pendingBreak = false;
-              full += obj.delta; bubble.innerHTML = formatChatText(full); stream.scrollTop = stream.scrollHeight;
+              full += obj.delta; bubble.innerHTML = formatChatText(hideMarkers(full)); stream.scrollTop = stream.scrollHeight;
             }
-            if (obj.tool)  { addStep("⚙ " + obj.tool); pendingBreak = true; }
+            if (obj.tool)  { addStep(obj.tool); pendingBreak = true; }
           } catch {}
         }
       }
@@ -3721,9 +4322,15 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       }
     } finally {
       chatAbort = null;
-      finalizeSteps();                // turn the live steps line into a quiet summary
+      finalizeSteps();                // the reply is complete: the steps line goes
       busy = false; sendBtn.disabled = false; input.focus();
       refreshViews().catch(()=>{});   // act directly → show result
+      replies.forEach(r => { const row = r.bubble.closest(".msg"); row.classList.remove("streaming"); decorateReply(row, r.meta); });
+      // You approved and the teammate saved it: show you the result.
+      const saved = replies.flatMap(r => r.meta.deliverables || []);
+      if (extra?.approval === "approved" && saved.length)
+        openDeliverable({ ...saved[0], bot: replies.find(r => r.meta.deliverables?.length)?.meta.bot });
+      if (hadPending || replies.some(r => r.meta.approval)) renderRail().catch(() => {});   // inbox count
     }
   }
 
@@ -3742,13 +4349,23 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
   });
 
   function showWelcome(){
-    addMsg("assistant", "I can update posts, projects, experiments, and plans. Ask for a change or choose a starting point.");
-    const cmds = [
-      ["Draft post",    "/content-brief "],
-      ["Plan content",  "/content-plan "],
-      ["Design test",   "/experiment-design "],
-      ["Weekly review", "/weekly-review "],
-    ];
+    const room = roomById(activeRoomId);
+    const lead = botById(room?.lead || "cos");
+    const wsName = wsById(_WS)?.name || "HQ";
+    const hello = room?.kind === "dm"
+      ? `Hey, ${lead?.name || "I"} here. What do you need?`
+      : _WS === "hq"
+        ? `Morning. I keep the view across all your companies. Want the weekly review, or something specific?`
+        : `Hi, ${lead?.name || "Chief of Staff"} for ${wsName}. Tell me what you need, I'll handle it or pull in the right person.`;
+    addMsg("assistant", hello, lead?.id);
+    const SUGS = {
+      cos: ["Weekly review", "/weekly-review "], product: ["Design a test", "@product /experiment-design "],
+      cmo: ["Positioning", "@cmo /positioning "], gtm: ["Launch plan", "@gtm /launch-plan "],
+      social: ["Plan content", "@social /content-plan "], research: ["Competitors", "@research /competitor-scan "],
+      cto: ["How the app works", "@cto "],
+    };
+    const ids = room?.members?.length ? room.members : Object.keys(SUGS);
+    const cmds = ids.map(id => SUGS[id]).filter(Boolean).slice(0, 4);
     const wrap = document.createElement("div");
     wrap.className = "sugs";
     cmds.forEach(([label, cmd]) => {
@@ -3762,7 +4379,6 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     stream.appendChild(wrap);
     stream.scrollTop = stream.scrollHeight;
   }
-  showWelcome();
 })();
 
 boot();

@@ -886,6 +886,9 @@ def normalize_local_folder(value) -> str:
     # and every sibling app when passed to Claude as an allowed directory.
     if workspace_root.is_relative_to(resolved):
         raise ActionError("local folder cannot contain the myOS workspace")
+    # Claude's config holds every bot session's transcript, all workspaces.
+    if resolved.is_relative_to(home / ".claude"):
+        raise ActionError("local folder cannot be inside the Claude config folder")
     return str(resolved)
 
 
@@ -1111,7 +1114,65 @@ def mark_activity_done(title: str, entity_slug: str) -> dict:
     return {"title": title, "done": True}
 
 
-def create_activity(fields: dict) -> dict:
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+DEFAULT_ACTIVITY_MINUTES = 60
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _hhmm(minutes: int) -> str:
+    minutes = min(minutes, 23 * 60 + 59)
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def timed_activities() -> list[dict]:
+    """Open timed activities across ALL workspaces: the CEO has one calendar."""
+    path = ROOT / "portfolio" / "activities.md"
+    out = []
+    if not path.exists():
+        return out
+    for _sec, checked, title, f in _parse_activities(path.read_text(encoding="utf-8")):
+        if checked or not f.get("date") or not f.get("time"):
+            continue
+        out.append({"id": f.get("id"), "title": title, "entity": f.get("entity"),
+                    "date": f["date"], "time": f["time"],
+                    "time_end": f.get("time_end") or _hhmm(_minutes(f["time"]) + DEFAULT_ACTIVITY_MINUTES)})
+    return out
+
+
+def find_overlaps(date: str, time: str, time_end: str) -> list[dict]:
+    """Open timed activities (any workspace) that intersect date time-time_end."""
+    start, end = _minutes(time), _minutes(time_end)
+    return [a for a in timed_activities()
+            if a["date"] == date and _minutes(a["time"]) < end and start < _minutes(a["time_end"])]
+
+
+def _validate_times(date: str, date_end: str, time: str, time_end: str) -> tuple[str, str]:
+    if not time and not time_end:
+        return "", ""
+    if not time:
+        raise ActionError("time_end needs a start time")
+    if not date:
+        raise ActionError("a timed activity needs a date")
+    if date_end and date_end != date:
+        raise ActionError("a timed activity is single-day (drop date_end or the times)")
+    for t in (time, time_end):
+        if t and not _TIME_RE.match(t):
+            raise ActionError(f"time must be HH:MM (24h), got {t!r}")
+    if not time_end:
+        time_end = _hhmm(_minutes(time) + DEFAULT_ACTIVITY_MINUTES)
+    if _minutes(time_end) <= _minutes(time):
+        raise ActionError("time_end must be after time")
+    return time, time_end
+
+
+def create_activity(fields: dict, allow_overlap: bool = False) -> dict:
+    """Append an activity. Timed ones may not overlap any open timed activity
+    in any workspace unless `allow_overlap` (the user's own manual booking);
+    bots (osctl) never pass it."""
     entity = (fields.get("entity") or "").strip()
     title = (fields.get("title") or "").strip()
     if not title:
@@ -1123,6 +1184,13 @@ def create_activity(fields: dict) -> dict:
     path = portfolio / "activities.md"
     date = (fields.get("date") or "").strip()
     date_end = (fields.get("date_end") or "").strip()
+    time, time_end = _validate_times(date, date_end, (fields.get("time") or "").strip(),
+                                     (fields.get("time_end") or "").strip())
+    overlaps = find_overlaps(date, time, time_end) if time else []
+    if overlaps and not allow_overlap:
+        clash = ", ".join(f"{o['time']}-{o['time_end']}" for o in overlaps)  # no names: workspaces stay private
+        raise ActionError(f"{date} {time}-{time_end} overlaps booked time: {clash}. "
+                          "Pick a free slot (osctl get-busy) or ask the user.")
     type_ = (fields.get("type") or "task").strip()
     priority = (fields.get("priority") or "").strip()
     existing_ids: set[str] = set()
@@ -1136,6 +1204,8 @@ def create_activity(fields: dict) -> dict:
         parts.append(f"date: {date}")
     if date_end:
         parts.append(f"date_end: {date_end}")
+    if time:
+        parts += [f"time: {time}", f"time_end: {time_end}"]
     if type_:
         parts.append(f"type: {type_}")
     if priority in {"primary", "secondary", "experiment"}:
@@ -1147,7 +1217,11 @@ def create_activity(fields: dict) -> dict:
     else:
         path.write_text(f"## Activities\n{line}", encoding="utf-8")
     reindex()
-    return {"id": act_id, "title": title, "entity": entity}
+    out = {"id": act_id, "title": title, "entity": entity}
+    if overlaps:
+        out["overlaps"] = [{"title": o["title"], "entity": o["entity"], "time": o["time"],
+                            "time_end": o["time_end"]} for o in overlaps]
+    return out
 
 
 def _parse_activities(text: str):

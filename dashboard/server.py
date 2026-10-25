@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,10 @@ import fileops           # noqa: E402
 import chat_session      # noqa: E402
 import chat_store        # noqa: E402
 import tokensave_bridge  # noqa: E402
+import deliverables      # noqa: E402
+from core import bots    # noqa: E402
+from core import rooms   # noqa: E402
+from core import approvals  # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
 from ai_rules import CHAT_RAIL  # noqa: E402
@@ -64,6 +69,8 @@ MAX_JSON_BYTES = 10 * 1024 * 1024
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 MAX_WS_PAYLOAD = 1024 * 1024
 UPLOAD_EXTENSIONS = frozenset({"png", "jpg", "jpeg", "gif", "webp"})
+VENDOR_TYPES = {".css": "text/css", ".js": "application/javascript",
+                ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
 RAIL = CHAT_RAIL
 
@@ -149,7 +156,7 @@ _ARTIFACT_ROUTES = {
 def _app_html_bytes() -> bytes:
     """Serve app.html with cache-busted asset URLs (mtime) so UI updates land."""
     html = APP_HTML.read_text(encoding="utf-8")
-    for name in ("ui-tokens.css", "app.css", "app.js", "os-ids.js", "post-copy.js", "logo.svg"):
+    for name in ("ui-tokens.css", "app.css", "app.js", "os-ids.js", "post-copy.js", "content-view.js", "logo.svg"):
         v = int((HERE / name).stat().st_mtime)
         html = html.replace(f"/{name}\"", f"/{name}?v={v}\"")
     return html.encode("utf-8")
@@ -259,11 +266,13 @@ def linked_workspace_prompt(project_slug, workspace_dir, *, graph_context="",
     )
 
 
-def state_snapshot(projects):
+def state_snapshot(projects, only=None):
     """COMPACT OS index for the chat agent — projects/profiles/channels plus
     per-entity counts, NOT full content. Bounded in size as content grows (the
     old version enumerated every post/memo/activity every turn). The agent pulls
-    detail on demand via osctl get-posts / get-project / read-file."""
+    detail on demand via osctl get-posts / get-project / read-file. `only` =
+    the workspace's project slug: list just that one (ids still numbered
+    from every project so they stay stable)."""
     lines = ["## Current myOS state",
              "(index only — fetch detail with osctl get-posts / get-project / read-file)"]
     if not projects:
@@ -292,6 +301,8 @@ def state_snapshot(projects):
 
     for p in projects:
         slug = p["slug"]
+        if only and slug != only:
+            continue
         pr_id = reg.get(f"proj:{slug}") or slug
         head = f"\n### {slug} id={pr_id} ({p.get('kind') or p.get('type')}"
         if p.get("priority"):
@@ -393,14 +404,82 @@ def _explicit_skill(text):
     return None
 
 
-def _suggest_skill(text):
-    """Keyword hint for untagged turns — does not activate skill or Sonnet."""
+def _suggest_skill(text, among=None):
+    """Keyword hint for untagged turns — does not activate skill or Sonnet.
+    `among` checks those skills first (a tagged bot's own), then all."""
     if not text:
         return None
-    for name, rx in _COMPILED_ROUTES:
+    routes = _COMPILED_ROUTES
+    if among:
+        routes = ([r for r in routes if r[0] in among]
+                  + [r for r in routes if r[0] not in among])
+    for name, rx in routes:
         if rx.search(text):
             return name
     return None
+
+
+def _route_dm(team, user_msg, session, bot):
+    """A DM always answers as its own bot: every turn is addressed to it, as if
+    @-tagged. An explicit /skill runs here even when another bot owns it; only
+    the DM bot's own skills match by wording, so no keyword or @mention of a
+    teammate can take the conversation over."""
+    bot = team.resolve(bot)
+    tagged_skill = _explicit_skill(user_msg)
+    if tagged_skill:
+        return bot, tagged_skill, True, None
+    if _continuation_allowed(session, user_msg):
+        return bot, None, False, None
+    own = team.skills_of(bot)
+    hit = _suggest_skill(user_msg, among=own)
+    if hit in own:
+        return bot, hit, True, None
+    if len(own) == 1:
+        return bot, own[0], True, None
+    if _WRITE_TURN_RE.search(user_msg or ""):
+        b = team.get(bot)
+        skill = b.default_skill if b.default_skill in own else (own[0] if own else None)
+        return bot, skill, bool(skill), None
+    return bot, None, False, None
+
+
+def _route_bot(team, user_msg, session, default_bot=bots.ROOT_BOT, dm=None):
+    """Pick (bot, skill, explicit, handoff_from) for one turn.
+
+    explicit /skill → its owner bot. @bot → that bot; the skill its wording
+    matches (if another bot owns it, hand off to that owner); a write with no
+    match uses the bot's default skill; a single-skill bot always uses it.
+    Untagged → whoever spoke last in this chat, else the room's
+    lead (`default_bot`); no skill: the write gate and Haiku policy stay
+    exactly as before. A DM passes `dm` (its bot) and is routed by _route_dm.
+    """
+    if dm:
+        return _route_dm(team, user_msg, session, dm)
+    tagged_skill = _explicit_skill(user_msg)
+    mentioned = team.mentioned(user_msg)
+    if tagged_skill:
+        bot = team.owner(tagged_skill)
+        return bot, tagged_skill, True, (mentioned if mentioned and mentioned != bot else None)
+    if mentioned:
+        own = team.skills_of(mentioned)
+        hit = _suggest_skill(user_msg, among=own)
+        if hit:
+            owner = team.owner(hit)
+            return owner, hit, True, (mentioned if owner != mentioned else None)
+        if len(own) == 1:
+            return mentioned, own[0], True, None
+        if (_WRITE_TURN_RE.search(user_msg or "")
+                and not _continuation_allowed(session, user_msg)):
+            b = team.get(mentioned)
+            skill = b.default_skill if b.default_skill in own else (own[0] if own else None)
+            return mentioned, skill, bool(skill), None
+        return mentioned, None, False, None
+    if _continuation_allowed(session, user_msg):
+        return team.owner(session._last_skill), None, False, None
+    last_bot = team.get(getattr(session, "_last_bot", None) or "")
+    if last_bot and last_bot.active:
+        return last_bot.id, None, False, None
+    return team.resolve(default_bot), None, False, None
 
 
 def _route_skill(text):
@@ -522,13 +601,57 @@ def _pick_model(skill, web, user_msg="", session=None, *, explicit=False):
     return chat_session.CHAT_MODEL
 
 
-def _tag_gate_message(suggest):
+def _tag_gate_message(suggest, team=None):
     skill = f"/{suggest}" if suggest else "/workspace or the skill for your task"
+    who = ""
+    if suggest and team is not None:
+        owner = team.get(team.owner(suggest))
+        if owner:
+            who = f"@{owner.handle} ({owner.name}) or "
     return (
-        f"Tag {skill} first (type / or tap ⊕ in the composer). "
-        "Writes and GTM playbooks run on Sonnet only after you tag. "
-        "Untagged turns stay on Haiku for reads and routing chat only."
+        f"That's a save, so tag who should do it: {who}{skill} (type @ or / in the box). "
+        "Untagged messages are for questions only; tagging puts the right teammate "
+        "and the stronger model on it."
     )
+
+
+def _bot_block(team, bot_id, session, project_slug=None, handoff_from=None, fresh=False,
+               members=None, readonly=False):
+    """Persona for the speaking bot. Full card (job, team, memory) when the
+    session is fresh or the speaker changed; a one-line marker otherwise."""
+    b = team.get(bot_id) if team else None
+    if not b:
+        return ""
+    lines = []
+    if fresh or getattr(session, "_last_bot", None) != bot_id:
+        lines.append(f"## Speaking as @{b.handle}: {b.name}\n{b.body}")
+        ws = getattr(team, "ws", bots.HQ)
+        lines.append("Workspace: HQ, the holding's CEO office (sees every company)." if ws == bots.HQ
+                     else f"Workspace: {ws}. You work only for this company; other workspaces "
+                          "are invisible except as busy time in the shared calendar.")
+        if b.covering:
+            names = ", ".join(team.get(c).name for c in b.covering)
+            lines.append(f"Also covering for (switched off): {names}.")
+        peers = [o for o in team.ordered() if o.active and o.id != bot_id
+                 and (members is None or o.id in members)]
+        if peers:
+            lines.append("In this channel (tag the owner for work outside your skills):\n"
+                         + "\n".join(team.roster_line(o.id) for o in peers))
+        mem = bots.read_memory(bot_id, project_slug or None, ROOT)
+        where = project_slug or "HQ"
+        lines.append(f"Your memory ({where}):\n{mem}" if mem
+                     else f"Your memory ({where}): empty")
+        scope = f" --project {project_slug}" if project_slug else ""
+        if not readonly:
+            lines.append("When the user states a lasting decision or preference, save one line: "
+                         f"`remember --bot {b.id}{scope} --text \"...\"`. Never secrets.")
+    else:
+        lines.append(f"(speaking as @{b.handle})")
+    if handoff_from and team.get(handoff_from):
+        h = team.get(handoff_from)
+        lines.append(f"Handoff: user tagged @{h.handle}; this is your skill, so you own it. "
+                     f"Open with one short line that you are taking it from @{h.handle}.")
+    return "\n".join(lines)
 
 
 _SKILL_CONTINUATION = (
@@ -544,26 +667,32 @@ _RESUME_NOTE = (
 # Skills fully covered by CHAT_RAIL — inject stub only (avoids ~1k+ duplicate tok/turn).
 _RAIL_COVERED_SKILL_STUBS: dict[str, str] = {
     "workspace": (
-        "Tab map + write gate are in system prompt. Fill tabs: turn 1 = routing plan "
-        "(sec01–sec06, one-line bullets, no osctl). Turn 2+ = one tab per osctl commit. "
-        "Other intents: route per workspace skill table (venture-intake, product-build, etc.)."
+        "You route for the team (rules in system prompt). Work out what the user needs. "
+        "A teammate owns it → @mention them and say why in one line. Yours → do it. "
+        "\"Set everything up\" → list the deliverables to make (one line each), get approval, "
+        "then save one per turn."
     ),
 }
 
 
 def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=None,
-                        explicit=False, workspace=None):
-    """Assemble one chat turn. Snapshot + full skill body only on fresh session."""
+                        explicit=False, workspace=None, bot=None, suggest_owner=None,
+                        only_project=None):
+    """Assemble one chat turn. Snapshot + full skill body only on fresh session.
+    `bot` = the persona block from _bot_block (speaker, team, memory)."""
     parts = []
     fresh = session.is_fresh() if hasattr(session, "is_fresh") else not getattr(session, "_started", False)
 
     if fresh:
         try:
-            parts.append(state_snapshot(projects))
+            parts.append(state_snapshot(projects, only=only_project))
         except Exception:  # noqa: BLE001
             pass
     else:
         parts.append(_RESUME_NOTE)
+
+    if bot:
+        parts.append(bot)
 
     if workspace:
         parts.append(workspace)
@@ -582,7 +711,8 @@ def compose_turn_prompt(*, user_msg, context, skill, session, projects, suggest=
         parts.append(
             f"## Skill hint (not active)\n"
             f"Wording suggests `{suggest}` — user did not tag. "
-            f"Before any osctl write: tell them to add `/{suggest}` (⊕ picker). "
+            f"Before any osctl write: tell them to tag "
+            f"{'`@' + suggest_owner + '` or ' if suggest_owner else ''}`/{suggest}`. "
             "Reads ok; no commits this turn unless they tagged or this is a continuation."
         )
 
@@ -624,6 +754,139 @@ def _skills_index():
         out.append({"name": fm.get("name", d.name),
                     "description": fm.get("description", "")})
     return out
+
+
+def _chat_workspace(rec):
+    """Workspace a saved thread belongs to (None: no record yet)."""
+    if not rec:
+        return None
+    ws, _ = rooms.split_id(rec.get("room"))
+    if ws:
+        return ws
+    room = rec.get("room") or ""
+    if room.startswith("p-"):
+        return room[2:]
+    scope = rec.get("scope")
+    return scope[0] if scope else bots.HQ
+
+
+# --------------------------------------------------------------------------- #
+# Teammates pulling each other in (Slack-style). The lead ends a message with
+# `CONSULT @handle: question`; that teammate answers once in its own fresh,
+# read-only session and the lead continues. Co-tagged bots add their view
+# after the lead. At most MAX_TEAMMATES extra runs per message, no chains.
+# --------------------------------------------------------------------------- #
+MAX_TEAMMATES = 2
+_CONSULT_RE = re.compile(r"^[ \t>*_-]*CONSULT[*_ \t]+@([a-z][a-z0-9-]*)[*_ \t]*:[ \t]*(.+?)[ \t*_]*$",
+                         re.M | re.I)
+_EXTRA = {"sess": None}  # the teammate run in flight (Stop kills it too)
+
+
+def _bot_info(team, bot_id):
+    b = team.get(bot_id)
+    return {"id": b.id, "name": b.name, "handle": b.handle, "icon": b.icon}
+
+
+class _RunFailed(Exception):
+    """A bot run already sent its error to the client, which stops reading
+    there: the turn ends, no teammate or follow-up spends more tokens."""
+
+
+def _extract_consults(text, team):
+    """(text without CONSULT lines, [(bot_id, question)] for active teammates)."""
+    handles = {b.handle: b.id for b in team.bots.values() if b.active}
+    asks = [(handles[h.lower()], q.strip()) for h, q in _CONSULT_RE.findall(text or "")
+            if h.lower() in handles]
+    return _CONSULT_RE.sub("", text or "").rstrip(), asks
+
+
+def _plan_teammates(team, lead, handoff_from, user_msg, asks):
+    """[(bot_id, question, asked_by)]: the lead's consults, then co-tagged bots."""
+    out, seen = [], {lead}
+    for b2, q in asks:
+        if b2 not in seen:
+            out.append((b2, q, lead))
+            seen.add(b2)
+    for b2 in team.mentioned_all(user_msg):
+        if b2 not in seen and b2 != handoff_from:
+            out.append((b2, user_msg, None))
+            seen.add(b2)
+    return out[:MAX_TEAMMATES]
+
+
+def _teammate_prompt(team, bot_id, asked_by, question, lead_said, projects, project_slug, skill):
+    parts = []
+    try:
+        parts.append(state_snapshot(projects, only=project_slug))
+    except Exception:  # noqa: BLE001
+        pass
+    parts.append(_bot_block(team, bot_id, None, project_slug, fresh=True, readonly=True))
+    if skill:
+        body = _load_skill_body(skill)
+        if body:
+            parts.append(f"## Active skill: {skill}\n{body}")
+    lead = team.get(asked_by) if asked_by else None
+    ask = (f"## You were asked\n@{lead.handle} ({lead.name}) asks you: {question}\n" if lead
+           else f"## You were tagged\nThe user asked the team: {question}\n")
+    if not lead and lead_said:
+        ask += f"Your teammate already answered: {lead_said[:800]}\nAdd only what's new from your side.\n"
+    ask += ("Reply in 1-6 short lines, facts first. You are read-only right now: say what you'd "
+            "save and let them decide. Don't consult anyone.")
+    parts.append(ask)
+    return "\n\n".join(parts)
+
+
+def _followup_prompt(team, answers):
+    lines = [f"@{team.get(b).handle} ({team.get(b).name}): {text.strip() or '(no answer)'}"
+             for b, text in answers]
+    return ("## Your teammates answered\n" + "\n".join(lines)
+            + "\n\nContinue for the user in a few short lines. Don't consult again this turn.")
+
+
+def _resolve_workspace(ws, projects):
+    """(workspace id, project record) — HQ when missing or unknown."""
+    record = next((p for p in projects if p.get("slug") == ws), None) if ws and ws != bots.HQ else None
+    return (record["slug"], record) if record else (bots.HQ, None)
+
+
+def _workspace_deny_dirs(ws, projects):
+    """Folders a company's bots may not Read/Grep: other companies, plus the
+    stores that hold every workspace at once (chats, team, calendar, index),
+    and other companies' linked app folders.
+    HQ is the holding's CEO office and sees everything."""
+    if ws == bots.HQ:
+        return ()
+    others = [p for p in projects if p.get("slug") != ws]
+    dirs = [ROOT / "projects" / p["slug"] for p in others]
+    dirs += [Path(p["local_folder"]) for p in others if p.get("local_folder")]  # their app code
+    dirs += [ROOT / "chats", ROOT / "team", ROOT / "portfolio", ROOT / "database"]
+    return tuple(str(d) for d in dirs)
+
+
+def _costs(ws, projects, days=30):
+    """Estimated spend + tokens per bot (and total) in a workspace over `days`;
+    HQ covers every workspace. Read from the saved threads' reply metadata."""
+    since = time.time() - days * 86400
+    spaces = {w["id"] for w in _workspaces(projects)}
+    per_bot, total = {}, {"cost": 0.0, "tokens": 0, "turns": 0}
+    for rec in chat_store.records():
+        if ws != bots.HQ and rooms.split_id(rooms.room_of_chat(rec, set(), spaces))[0] != ws:
+            continue
+        for m in rec.get("messages") or []:
+            if m.get("role") != "assistant" or (m.get("ts") or 0) < since:
+                continue
+            row = per_bot.setdefault(m.get("bot") or bots.ROOT_BOT, {"cost": 0.0, "tokens": 0, "turns": 0})
+            for agg in (row, total):
+                agg["cost"] += float(m.get("cost") or 0)
+                agg["tokens"] += int(m.get("tokens") or 0)
+                agg["turns"] += 1
+    return {"days": days, "bots": per_bot, "total": total}
+
+
+def _workspaces(projects):
+    return ([{"id": bots.HQ, "name": "HQ", "kind": "hq"}]
+            + [{"id": p["slug"], "name": p.get("name") or p["slug"], "kind": p.get("kind") or "venture"}
+               for p in projects])
 
 
 _CHAT = None
@@ -773,13 +1036,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "no user message"})
         user_msg = messages[-1]["content"]
 
-        # Per-turn routing: explicit @/skill tags only (keyword → hint, not Sonnet).
+        # Per-turn routing: explicit @bot or /skill tags only (keyword → hint, not Sonnet).
         context = (body.get("context") or "").strip()
-        explicit = _explicit_skill(user_msg)
-        suggest = _suggest_skill(user_msg) if not explicit else None
-        skill = explicit
         projects = db.tree()
-        project_slug = str(body.get("project_slug") or "").strip()
+        ws, project_record = _resolve_workspace(
+            rooms.split_id(body.get("room_id"))[0] or str(body.get("project_slug") or "").strip(),
+            projects)
+        team = bots.team(ROOT, ws, project_record)
+        room = (rooms.get_room(str(body.get("room_id") or ""), team, ROOT)
+                or rooms.get_room(f"{ws}/general", team, ROOT))
+        # A company's rooms are bound to it; HQ (the holding) binds none.
+        project_slug = ws if project_record else ""
         project_record = next(
             (p for p in projects if p.get("slug") == project_slug), None,
         )
@@ -788,7 +1055,22 @@ class Handler(BaseHTTPRequestHandler):
             if project_record else None
         )
         chat_id = body.get("chat_id") or None
+        if chat_id and _chat_workspace(chat_store.load(chat_id)) not in (None, ws):
+            chat_id = None  # a thread never leaves its workspace: start a fresh one here
         sess = get_chat_session(project_scope, chat_id, new=not chat_id)
+        if chat_id:
+            answer = body.get("approval")
+            approvals.resolve_chat(chat_id, answer if answer in ("approved", "rejected") else "answered", ROOT)
+        sess.workspace = ws
+        sess.deny_dirs = _workspace_deny_dirs(ws, projects)
+        bot_id, skill, routed, handoff_from = _route_bot(
+            team, user_msg, sess,
+            default_bot=(room or {}).get("lead") or bots.ROOT_BOT,
+            dm=(room or {}).get("lead") if (room or {}).get("kind") == "dm" else None)
+        explicit = skill if routed else None
+        suggest = _suggest_skill(user_msg) if not explicit else None
+        # Only a turn that may write (tagged skill, or its continuation) can ask for approval.
+        may_write = bool(explicit) or _continuation_allowed(sess, user_msg)
 
         if (_WRITE_TURN_RE.search(user_msg or "")
                 and not explicit
@@ -798,7 +1080,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Cache-Control", "no-cache")
             self.send_header("X-Accel-Buffering", "no")
             self.end_headers()
-            gate = _tag_gate_message(suggest)
+            gate = _tag_gate_message(suggest, team)
             self.wfile.write(f"data: {json.dumps({'delta': gate})}\n\n".encode())
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
@@ -911,14 +1193,21 @@ class Handler(BaseHTTPRequestHandler):
             suggest=suggest,
             explicit=bool(explicit),
             workspace=workspace,
+            bot=_bot_block(team, bot_id, sess, project_slug if project_record else None,
+                           handoff_from, fresh=sess.is_fresh(),
+                           members=(room["members"] if room and room["kind"] == "topic" else None)),
+            only_project=(project_slug or None),
+            suggest_owner=(team.get(team.owner(suggest)).handle if suggest else None),
         )
         sess.note_skill(skill, explicit=bool(explicit))
+        if hasattr(sess, "note_bot"):
+            sess.note_bot(bot_id)
 
         ctx_len = len((body.get("context") or "").strip())
         fresh = sess.is_fresh()
         self.log_message(
-            "chat turn prompt=%d ctx=%d skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s fresh=%s turn=%d",
-            len(text), ctx_len, skill or "-", bool(explicit), model, with_web,
+            "chat turn prompt=%d ctx=%d bot=%s skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s fresh=%s turn=%d",
+            len(text), ctx_len, bot_id, skill or "-", bool(explicit), model, with_web,
             bool(workspace_dir), bool(graph_context), file_search_mode, fresh,
             sess._turn_count,
         )
@@ -933,7 +1222,54 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode())
             self.wfile.flush()
 
-        reply = []
+        # This turn's replies in order: the lead, then any teammates it pulled in
+        # (or that were co-tagged), then the lead's follow-up.
+        msgs = [{"bot": bot_id, "content": ""}]
+        # What the team hands over this turn = files of its company that change.
+        files_before = deliverables.snapshot(ROOT, ws) if project_record else None
+        web_domains = chat_session.user_web_domains(user_msg)
+
+        def run(s_, prompt_, model_, web_, msg, **kw):
+            """Stream one bot run into `msg` (content + usage)."""
+            parts, fin, failed = [], {}, False
+            for kind, payload in s_.ask(prompt_, with_web=web_, model=model_,
+                                        web_domains=web_domains, **kw):
+                if kind == "delta":
+                    parts.append(payload)
+                    msg["content"] = "".join(parts)
+                    emit({"delta": payload})
+                elif kind == "tool":
+                    emit({"tool": payload})
+                elif kind == "error":
+                    emit({"error": payload})
+                    failed = True
+                elif kind == "done":
+                    fin = payload or {}
+            msg.update(tokens=fin.get("tokens") or None, cost=fin.get("cost"), model=model_)
+            if msg["tokens"] or msg["cost"]:
+                emit({"usage": {"tokens": msg["tokens"], "cost": msg["cost"], "model": model_}})
+            if failed:
+                raise _RunFailed
+            return msg["content"]
+
+        def run_teammate(b2, question, asked_by, msg):
+            """A teammate answers once, read-only, in its own fresh session."""
+            c = chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL)
+            c.workspace, c.deny_dirs, c.readonly = ws, sess.deny_dirs, True
+            own = team.skills_of(b2)
+            c_skill = _suggest_skill(question, among=own)
+            c_skill = c_skill if c_skill in own else None
+            c_web = _needs_web(question, c_skill)
+            c_model = (chat_session.ESCALATED_MODEL if (c_skill or c_web)
+                       else chat_session.CHAT_MODEL)
+            prompt = _teammate_prompt(team, b2, asked_by, question, msgs[0]["content"],
+                                      projects, project_slug or None, c_skill)
+            _EXTRA["sess"] = c
+            try:
+                return run(c, prompt, c_model, c_web, msg)
+            finally:
+                _EXTRA["sess"] = None
+
         try:
             # Tell the client which saved chat this turn belongs to (a scope
             # change or first turn may have started a new one).
@@ -942,28 +1278,68 @@ class Handler(BaseHTTPRequestHandler):
                 emit({"chat_id": sess.session_id,
                       "title": (saved or {}).get("title") or chat_store.title_from(user_msg),
                       "project": project_scope[0] if project_scope else None})
-            for kind, payload in sess.ask(
-                    text, with_web=with_web, model=model,
-                    workspace_dir=(workspace_dir if file_search_mode else None),
-                    file_search_mode=file_search_mode,
-                    web_domains=chat_session.user_web_domains(user_msg)):
-                if kind == "delta":
-                    reply.append(payload)
-                    emit({"delta": payload})
-                elif kind == "tool":
-                    emit({"tool": payload})
-                elif kind == "error":
-                    emit({"error": payload})
-                # "done" → fall through to [DONE]
+            emit({"bot": {**_bot_info(team, bot_id), "skill": skill, "handoff_from": handoff_from}})
+            lead_text = run(sess, text, model, with_web, msgs[0],
+                            workspace_dir=(workspace_dir if file_search_mode else None),
+                            file_search_mode=file_search_mode)
+            lead_text, asks = _extract_consults(lead_text, team)
+            if asks:
+                msgs[0]["content"] = lead_text
+                emit({"clean": lead_text, "msg": 0})
+            answers = []
+            for b2, question, asked_by in _plan_teammates(team, bot_id, handoff_from, user_msg, asks):
+                emit({"msg_start": {**_bot_info(team, b2), "asked_by": asked_by,
+                                    "question": question if asked_by else None}})
+                m2 = {"bot": b2, "content": "", "asked_by": asked_by or "user"}
+                msgs.append(m2)
+                answers.append((b2, run_teammate(b2, question, asked_by, m2)))
+            if asks and answers:
+                emit({"msg_start": {**_bot_info(team, bot_id), "followup": True}})
+                m3 = {"bot": bot_id, "content": ""}
+                msgs.append(m3)
+                run(sess, _followup_prompt(team, answers), model, with_web, m3)
+            last = len(msgs) - 1
+            if files_before is not None:
+                handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
+                if handed:
+                    msgs[last]["deliverables"] = handed
+                    emit({"deliverables": handed, "msg": last})
+            # The lead may ask for approval in its first reply or its follow-up:
+            # every marker line goes, the last one asked counts.
+            asked = None
+            for i, m in enumerate(msgs):
+                if m["bot"] != bot_id or m.get("asked_by"):
+                    continue
+                clean, summary = approvals.extract(m["content"])
+                if summary:
+                    m["content"] = clean
+                    emit({"clean": clean, "msg": i})
+                    asked = (i, summary)
+            # A chat-only turn's stray marker gets no buttons.
+            if asked and may_write and isinstance(getattr(sess, "session_id", None), str):
+                i, summary = asked
+                rec = approvals.add(ROOT, ws=ws, room=(room or {}).get("id"), chat=sess.session_id,
+                                    bot=bot_id, summary=summary)
+                msgs[i]["approval"] = rec["id"]
+                emit({"approval": rec, "msg": i})
+            for m in msgs[1:]:  # a teammate never asks for approval or consults on its own
+                m["content"] = _extract_consults(approvals.extract(m["content"])[0], team)[0]
         except (BrokenPipeError, ConnectionResetError):
             pass  # client stopped/closed; still save what streamed so far
+        except _RunFailed:
+            pass  # the error is already on screen; save what streamed so far
         except Exception:  # noqa: BLE001
             traceback.print_exc()
             emit({"error": "internal error"})
         finally:
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
-                    chat_store.record_turn(sess, project_scope, user_msg, "".join(reply))
+                    head = msgs[0]
+                    chat_store.record_turn(
+                        sess, project_scope, user_msg, head["content"], bot=bot_id,
+                        room=(room or {}).get("id"),
+                        meta={k: v for k, v in head.items() if k not in ("bot", "content")},
+                        extra=[m for m in msgs[1:] if m.get("content")])
                 except (OSError, ValueError):
                     traceback.print_exc()
             try:
@@ -1083,7 +1459,7 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
             return
 
-        if path in ("/ui-tokens.css", "/app.css", "/app.js", "/os-ids.js", "/post-copy.js", "/logo.svg"):
+        if path in ("/ui-tokens.css", "/app.css", "/app.js", "/os-ids.js", "/post-copy.js", "/content-view.js", "/logo.svg"):
             f = HERE / path.lstrip("/")
             ctype = (
                 "text/css" if path.endswith(".css")
@@ -1102,8 +1478,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/vendor/"):
             f = (HERE / path.lstrip("/")).resolve()
             if f.is_file() and f.is_relative_to((HERE / "vendor").resolve()):
-                ctype = "text/css" if f.suffix == ".css" else "application/javascript"
-                return self._send(200, f.read_bytes(), ctype)
+                return self._send(200, f.read_bytes(), VENDOR_TYPES.get(f.suffix, "application/javascript"))
             return self._send(404, {"error": "not found"})
 
         if not path.startswith("/api/"):
@@ -1119,7 +1494,15 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(200, {"session_id": None, "turn_count": 0, "fresh": True})
                 return self._send(200, _CHAT.session_meta())
             if path == "/api/chats":
-                return self._send(200, {"chats": chat_store.list_meta()})
+                chats = chat_store.list_meta()
+                room = (parse_qs(urlparse(self.path).query).get("room") or [None])[0]
+                if room:
+                    projects = db.tree()
+                    ws, record = _resolve_workspace(rooms.split_id(room)[0], projects)
+                    ids = {r["id"] for r in rooms.list_rooms(bots.team(ROOT, ws, record), ws, ROOT)}
+                    spaces = {w["id"] for w in _workspaces(projects)}
+                    chats = [c for c in chats if rooms.room_of_chat(c, ids, spaces) == room]
+                return self._send(200, {"chats": chats})
             if path.startswith("/api/chats/"):
                 rec = chat_store.load(path[len("/api/chats/"):])
                 if rec is None:
@@ -1133,6 +1516,32 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, db.posts())
             if path == "/api/skills-index":
                 return self._send(200, _skills_index())
+            if path == "/api/workspaces":
+                return self._send(200, {"workspaces": _workspaces(db.tree())})
+            if path == "/api/files":
+                ws, record = _resolve_workspace(
+                    (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
+                files = deliverables.list_files(ROOT, ws, db.tree(), db.posts()) if record else []
+                return self._send(200, {"ws": ws, "files": files})
+            if path in ("/api/approvals", "/api/costs", "/api/memory"):
+                qs = parse_qs(urlparse(self.path).query)
+                ws, record = _resolve_workspace((qs.get("ws") or [None])[0], db.tree())
+                if path == "/api/approvals":
+                    return self._send(200, {"ws": ws, "approvals": approvals.pending(ROOT, ws)})
+                if path == "/api/costs":
+                    return self._send(200, {"ws": ws, **_costs(ws, db.tree())})
+                bot_id = (qs.get("bot") or [""])[0]
+                if bot_id not in bots.load_defs():
+                    return self._send(400, {"error": f"unknown bot: {bot_id}"})
+                text = bots.read_memory(bot_id, record and ws, ROOT, tail=0)
+                return self._send(200, {"ws": ws, "bot": bot_id, "lines": text.splitlines() if text else []})
+            if path in ("/api/bots", "/api/rooms"):
+                ws, record = _resolve_workspace(
+                    (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
+                team = bots.team(ROOT, ws, record)
+                if path == "/api/bots":
+                    return self._send(200, {"ws": ws, "bots": team.to_api()})
+                return self._send(200, {"ws": ws, "rooms": rooms.list_rooms(team, ws, ROOT)})
             if path == "/api/schemas":
                 return self._send(200, schemas_for_api())
             if path == "/api/id-catalog":
@@ -1440,7 +1849,8 @@ class Handler(BaseHTTPRequestHandler):
                 slug = (body.get("slug") or fileops._slugify(body.get("platform", ""))).strip()
                 return self._send(200, {"ok": True, **fileops.create_channel(prof, slug, body.get("platform",""), body.get("handle",""))})
             if path == "/api/activity/new":
-                return self._send(200, {"ok": True, **fileops.create_activity(body)})
+                # Your own booking: overlaps are allowed but reported (bots are refused).
+                return self._send(200, {"ok": True, **fileops.create_activity(body, allow_overlap=True)})
             if path == "/api/activity/done":
                 return self._send(200, {"ok": True, **fileops.mark_activity_done(body.get("title",""), body.get("entity",""))})
             if path == "/api/milestone/new":
@@ -1453,6 +1863,42 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, {"ok": True, **fileops.delete_milestone(ms_id)})
             if path == "/api/ask":
                 return self._handle_ask(body)
+            if path in ("/api/memory", "/api/memory/delete"):
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                bot_id, project = str(body.get("bot") or ""), (ws if record else None)
+                if path == "/api/memory":
+                    bots.remember(bot_id, body.get("text"), project, ROOT)
+                elif not bots.forget(bot_id, body.get("line"), project, ROOT):
+                    raise ValueError("memory line not found")
+                text = bots.read_memory(bot_id, project, ROOT, tail=0)
+                return self._send(200, {"lines": text.splitlines() if text else []})
+            if path == "/api/approvals/dismiss":
+                approvals.resolve_chat(str(body.get("chat") or ""), "rejected", ROOT)
+                return self._send(200, {"ok": True})
+            if path in ("/api/rooms", "/api/rooms/delete"):
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                if path == "/api/rooms/delete":
+                    rooms.delete_topic(ws, str(body.get("name") or ""), ROOT)
+                    return self._send(200, {"ok": True})
+                members = body.get("members") or []
+                if not isinstance(members, list):
+                    raise ValueError("members must be a list")
+                old = body.get("replace") or None
+                room_id = rooms.save_topic(ws, body.get("name"), members, body.get("lead"), ROOT,
+                                           replace=old)
+                if old and room_id != f"{ws}/t-{old}":
+                    for rec in chat_store.records():  # renamed: its threads follow it
+                        if rec.get("room") == f"{ws}/t-{old}":
+                            rec["room"] = room_id
+                            chat_store.save(rec)
+                    approvals.move_room(f"{ws}/t-{old}", room_id, ROOT)
+                return self._send(200, {"id": room_id, "rooms": rooms.list_rooms(
+                    bots.team(ROOT, ws, record), ws, ROOT)})
+            if path.startswith("/api/bots/") and path.endswith("/active"):
+                bot_id = path[len("/api/bots/"):-len("/active")]
+                ws, record = _resolve_workspace(body.get("ws"), db.tree())
+                team = bots.set_active(bot_id, bool(body.get("active")), ROOT, ws, record)
+                return self._send(200, {"ws": ws, "bots": team.to_api()})
             if path == "/api/upload-temp":
                 encoded = body.get("data", "")
                 if not isinstance(encoded, str):
@@ -1477,6 +1923,8 @@ class Handler(BaseHTTPRequestHandler):
                 # message resumes the same context. Unlike chat-reset.
                 if _CHAT is not None:
                     _CHAT.close()
+                if _EXTRA["sess"] is not None:
+                    _EXTRA["sess"].close()
                 return self._send(200, {"ok": True})
             if path == "/api/chat-reset":
                 # New chat: drop the active session; saved chats are untouched.

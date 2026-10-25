@@ -48,6 +48,8 @@ Never write content files directly. All mutations go through osctl:
 | Post brief (NL) | `update-brief --id <post-id> --instruction "<user's words>"` |
 | Post brief (auto) | `generate-brief --id <post-id>` |
 | Revise slot/draft | `revise-post --id <post-id> --instruction "..."` |
+| Bot memory (per project, or HQ) | `remember --bot <bot-id> [--project <slug>] --text "..."` · `get-memory --bot <bot-id> [--project <slug>]` |
+| Calendar activity (one calendar across workspaces) | `create-activity --entity <slug> --title "..." --date YYYY-MM-DD [--time HH:MM --time-end HH:MM]` (timed ones may not overlap: `get-busy --from <date>` first) |
 | Content calendar | `generate-plan --profile <slug> --period "YYYY-MM-DD to YYYY-MM-DD"` (unscheduled by default — add `--dates` ONLY if the user explicitly asks posts to be dated/scheduled now) |
 
 Banned: `set-brief`, `patch-brief`, direct edits to `briefs/*.json`, `brief-specs/*.md`, or `voices/*.md`.

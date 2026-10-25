@@ -162,6 +162,12 @@ class SSE(unittest.TestCase):
         }, tree)
         self.assertIsNone(seen["workspace_dir"])
         self.assertNotIn("Linked app workspace", seen["text"])
+        self.assertIn("Workspace: HQ", seen["text"])  # unknown project → HQ, no folder
+        seen = _captured({
+            "messages": [{"role": "user", "content": "inspect the app"}],
+            "room_id": "acme/general",
+        }, tree)
+        self.assertIsNone(seen["workspace_dir"])
         self.assertIn("App workspace unavailable", seen["text"])
         self.assertIn("Do not inspect the myOS source tree", seen["text"])
 
@@ -473,7 +479,7 @@ class SkillRouting(unittest.TestCase):
         with mock.patch.object(server, "get_chat_session", return_value=S()):
             h._handle_ask({"messages": [{"role": "user", "content": "fill all the tabs"}]})
         out = sink.getvalue().decode()
-        self.assertIn("Tag /workspace", out)
+        self.assertIn("tag who should do it: @cos (Chief of Staff) or /workspace", out)
         self.assertIn("[DONE]", out)
         self.assertNotIn("Active skill", out)
 

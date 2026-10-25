@@ -14,13 +14,12 @@ class TestProfileFilterPersistence(unittest.TestCase):
         self.assertIn("const PROFILE_FILTER = {};", source)
         self.assertRegex(
             source,
-            r'let FILTER\s*=\s*PROFILE_FILTER\[slug\]\s*\|\|\s*"scheduled";',
+            r'let FILTER\s*=\s*PROFILE_FILTER\[slug\]\s*\|\|\s*"all";',
         )
         self.assertIn('PROFILE_FILTER[slug] = FILTER;', source)
-        self.assertIn(
-            'class="chip${FILTER==="unscheduled"?" on":""}" data-f="unscheduled"',
-            source,
-        )
+        # every bucket has a chip, Ready included; Unscheduled stays
+        self.assertIn('["ready", "Ready"]', source)
+        self.assertIn('["unscheduled", "Unscheduled"]', source)
         self.assertNotIn('let FILTER = "scheduled";', source)
 
 
