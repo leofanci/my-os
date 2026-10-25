@@ -851,11 +851,14 @@ def _resolve_workspace(ws, projects):
 
 def _workspace_deny_dirs(ws, projects):
     """Folders a company's bots may not Read/Grep: other companies, plus the
-    stores that hold every workspace at once (chats, team, calendar, index).
+    stores that hold every workspace at once (chats, team, calendar, index),
+    and other companies' linked app folders.
     HQ is the holding's CEO office and sees everything."""
     if ws == bots.HQ:
         return ()
-    dirs = [ROOT / "projects" / p["slug"] for p in projects if p.get("slug") != ws]
+    others = [p for p in projects if p.get("slug") != ws]
+    dirs = [ROOT / "projects" / p["slug"] for p in others]
+    dirs += [Path(p["local_folder"]) for p in others if p.get("local_folder")]  # their app code
     dirs += [ROOT / "chats", ROOT / "team", ROOT / "portfolio", ROOT / "database"]
     return tuple(str(d) for d in dirs)
 

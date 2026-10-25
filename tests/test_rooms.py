@@ -145,6 +145,11 @@ class WorkspaceTurns(unittest.TestCase):
         self.assertIn(str(self.root / "chats"), denied)
         self.assertIn("SNAPSHOT only=acme", seen["text"])
 
+    def test_other_companies_linked_folders_are_denied(self):
+        self.tree[1]["local_folder"] = "/tmp/demo-app"
+        denied = self.ask("acme/general")["sess"].deny_dirs
+        self.assertIn("/tmp/demo-app", denied)
+
     def test_hq_sees_every_company(self):
         seen = self.ask("hq/general")
         self.assertIsNone(seen["scope"])
@@ -264,6 +269,14 @@ class SharedCalendar(unittest.TestCase):
                    "--date", "2026-11-03", "--time", "10:00")
         busy = self.osctl("demo", "get-busy", "--from", "2026-11-03")["busy"]
         self.assertEqual((busy[0]["title"], busy[0]["entity"]), ("Shoot", "profile-b"))
+
+    def test_only_hq_links_a_local_folder(self):
+        # A bot re-pointing its own project at ~/.claude (or a sibling app) would
+        # get that folder as --add-dir on later turns.
+        r = self.osctl("acme", "update-project", "--slug", "acme", "--local-folder", self.tmp.name)
+        self.assertFalse(r["ok"])
+        self.assertIn("HQ", r["error"])
+        self.assertTrue(self.osctl("acme", "update-project", "--slug", "acme", "--status", "active")["ok"])
 
     def test_owner_map_is_built_once_per_call(self):
         with mock.patch.object(osctl, "build_id_registry", wraps=osctl.build_id_registry) as reg:

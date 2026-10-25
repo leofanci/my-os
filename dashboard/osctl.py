@@ -85,6 +85,9 @@ def _guard(args, ws):
     """Refuse anything that reaches outside workspace `ws`."""
     if args.cmd in _BLOCKED_IN_WORKSPACE:
         raise fileops.ActionError(f"{args.cmd} is only available in HQ")
+    if getattr(args, "local_folder", None) is not None:
+        # A linked folder becomes the bot's --add-dir: only the user links one.
+        raise fileops.ActionError("linking a local folder is only available in HQ")
     if args.cmd in ("remember", "get-memory") and not args.project:
         args.project = ws  # a company's bot keeps memory in its company, never in HQ
     own = _owners()

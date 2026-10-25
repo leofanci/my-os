@@ -120,6 +120,15 @@ class WebAndSecretPolicy(unittest.TestCase):
         self.assertIn("Read(//tmp/app/**/.env)", denied)
         self.assertIn("Read(**/.auth-token)", denied)  # dashboard login token
 
+    def test_session_transcripts_and_server_log_are_never_readable(self):
+        # Every workspace's transcripts live in ~/.claude/projects; server.log
+        # lists their ids. Bare Read must not reach either.
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        cmd = sess._base_cmd()
+        denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--strict-mcp-config")]
+        self.assertIn(f"Read(/{Path.home() / '.claude'}/**)", denied)
+        self.assertIn(f"Read(/{Path('.').resolve() / 'dashboard' / 'server.log'})", denied)
+
 
 if __name__ == "__main__":
     unittest.main()

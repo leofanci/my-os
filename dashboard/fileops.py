@@ -886,6 +886,9 @@ def normalize_local_folder(value) -> str:
     # and every sibling app when passed to Claude as an allowed directory.
     if workspace_root.is_relative_to(resolved):
         raise ActionError("local folder cannot contain the myOS workspace")
+    # Claude's config holds every bot session's transcript, all workspaces.
+    if resolved.is_relative_to(home / ".claude"):
+        raise ActionError("local folder cannot be inside the Claude config folder")
     return str(resolved)
 
 

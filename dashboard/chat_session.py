@@ -19,6 +19,7 @@ import os
 import re
 import subprocess
 import uuid
+from pathlib import Path
 
 
 def parse_event(obj):
@@ -96,6 +97,13 @@ SECRET_FILE_GLOBS = [
     "credentials*.json", "secrets.*", "id_rsa*", "id_ed25519*",
     ".auth-token",  # dashboard login token (server.TOKEN_FILE)
 ]
+
+
+def private_read_rules(repo_dir):
+    """Read denies for every turn: Claude's config keeps each bot session's
+    transcript (all workspaces), and server.log lists their ids."""
+    return [f"Read(/{Path.home() / '.claude'}/**)",
+            f"Read(/{Path(repo_dir).resolve() / 'dashboard' / 'server.log'})"]
 # Tools loaded EVERY turn. Skills are NOT loaded via the Skill tool — that costs
 # ~4k tok of discovery (35 descriptions, incl. useless built-ins) just to let the
 # model pick one. Instead the server routes to the ONE relevant skill and injects
@@ -192,6 +200,7 @@ class ChatSession:
                          + (WEB_ALLOWED_TOOLS if with_web else [])
                          + (web_fetch_rules(web_domains) if with_web else []))
         denied = [f"Read(**/{g})" for g in SECRET_FILE_GLOBS]
+        denied += private_read_rules(self.repo_dir)
         if workspace_dir and file_search_mode:
             denied += [f"Read(/{workspace_dir}/**/{g})" for g in SECRET_FILE_GLOBS]
         denied += [f"Read(/{d}/**)" for d in self.deny_dirs]

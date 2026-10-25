@@ -1,5 +1,6 @@
 import json, sqlite3, tempfile, unittest
 from pathlib import Path
+from unittest import mock
 import index
 from tests.test_index_projects import write
 import dashboard.fileops as fileops
@@ -75,6 +76,15 @@ class CrudTest(unittest.TestCase):
             fileops.normalize_local_folder(Path.home())
         with self.assertRaisesRegex(fileops.ActionError, "specific app directory"):
             fileops.normalize_local_folder(self.root)
+
+    def test_project_local_folder_rejects_claude_config(self):
+        # ~/.claude holds every bot session's transcript.
+        home = self.root / "home"
+        (home / ".claude" / "projects").mkdir(parents=True)
+        with mock.patch.object(Path, "home", return_value=home):
+            for path in (home / ".claude", home / ".claude" / "projects"):
+                with self.assertRaisesRegex(fileops.ActionError, "Claude"):
+                    fileops.normalize_local_folder(path)
 
     def test_project_local_folder_rejects_slug_path_traversal(self):
         with self.assertRaises(fileops.ActionError):
