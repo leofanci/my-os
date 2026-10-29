@@ -95,8 +95,11 @@ folder (separate license).
 
 ### 1. Secret and state store: `team/integrations.json`
 
-Gitignored, written atomically with mode `0600` (reuse `bots._atomic_write`
-pattern, then `chmod`). Shape:
+Gitignored, written atomically with mode `0600` (reuse `bots._atomic_write`:
+`tempfile.mkstemp` already creates the temp file `0600` and `os.replace` keeps
+that mode, so there is no world-readable window and no `chmod` step). Writes
+go through one module lock (the relay thread may create a session while the UI
+saves a grant). Shape:
 
 ```json
 {
@@ -116,11 +119,15 @@ pattern, then `chmod`). Shape:
 - `composio_user_id` is a random id generated on first use. Never the user's
   email or name (nothing personal is sent to Composio as an id).
 - Grants are per workspace (`hq` or a project slug) and per bot id, values are
-  Composio toolkit slugs. Missing grants for HQ `cos` fall back to the default
-  above; everything else defaults to none.
-- Add `integrations.json` to `SECRET_FILE_GLOBS` in `chat_session.py` and add an
-  explicit `Read` deny for `team/**` on every turn (company bots are already
-  denied `team/`; HQ bots must be too for this file).
+  Composio toolkit slugs. A *missing* grant for HQ `cos` falls back to the
+  default above; an explicit `[]` means none (the user switched it off).
+  Everything else defaults to none.
+- Add `integrations.json` to `SECRET_FILE_GLOBS` in `chat_session.py`, which
+  turns into `Read(**/integrations.json)` on every turn, HQ included. No
+  blanket `team/**` deny for HQ: HQ "sees everything" by design
+  (`_workspace_deny_dirs` returns `()` for HQ) and company bots already have
+  `team/` in their deny dirs. Test: an HQ turn's `--disallowedTools` contains
+  the integrations rule.
 - API responses never return `api_key`; only `{"configured": true, "saved": ts}`.
 
 ### 2. Composio client: `core/composio.py`
@@ -129,13 +136,29 @@ Thin stdlib wrapper around Composio's REST API (base
 host `backend.composio.dev`, path `/api/v3.1`, header `x-api-key`), as OpenMausBot
 uses it:
 
-- `ensure_session(person)` → create or reuse a Tool Router session
-  (`POST /tool_router/session` with `user_id`), store `session_id` + `mcp_url`.
-  Reject an `mcp_url` whose host is not Composio's.
+- `ensure_session(person)` → create or reuse a session
+  (`POST /tool_router/session`), store `session_id` + `mcp_url`. Reject an
+  `mcp_url` whose host is not Composio's. The session is locked down at
+  Composio too, not only by our relay (defense in depth):
+  `{"user_id": ..., "toolkits": {"enable": [<curated toolkits>]},
+  "manage_connections": {"enable": false}, "workbench": {"enable": false}}`
+  (plus `auth_configs` only when a user-owned one is set). Disabling the
+  workbench removes `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL`
+  server-side. If the session is gone (401/404) or the curated list changes,
+  create a new one (or `PATCH /tool_router/session/{id}`) and store it.
 - `connect_link(person, toolkit)` → start an OAuth connection, return the
-  redirect URL for the browser.
-- `connections(person)` → which curated toolkits are connected.
-- `execute(person, slug, arguments)` → run one approved tool call.
+  redirect URL for the browser (docs list
+  `POST /tool_router/session/{id}/link`; verify body).
+- `connections(person)` → which curated toolkits are connected
+  (`GET /tool_router/session/{id}/toolkits`).
+- `execute(person, slug, arguments)` → run one approved tool call. **Never
+  retried** (timeout, 5xx, connection error): a retry can send an email
+  twice. Composio's own SDK dropped execute retries in Oct 2026 for the same
+  reason.
+- HTTP: one `urllib` opener with redirects **disabled** (stdlib redirect
+  handling copies custom headers, so a redirect would carry `x-api-key` to
+  another host) and a fixed timeout. Error text logged or returned never
+  includes request headers.
 
 The builder must verify exact endpoint paths and payloads against Composio's
 current docs (they changed in 2026) and pin what works in tests with recorded
@@ -149,21 +172,36 @@ entry pointing back at the dashboard:
 ```
 --mcp-config '{"mcpServers":{"apps":{"type":"http",
   "url":"http://127.0.0.1:<port>/api/internal/apps/mcp",
-  "headers":{"Authorization":"Bearer <turn-token>"}}}}'
+  "headers":{"Authorization":"Bearer ${MYOS_APPS_TOKEN}"}}}}'
 --allowedTools mcp__apps
 ```
 
-(passed as an inline JSON string, no temp file).
+The token itself is **not** in argv: `ps` shows every process's arguments to
+every local user, while another user cannot read this process's environment.
+It goes in the child env as `MYOS_APPS_TOKEN` (added next to
+`MYOS_WORKSPACE` in `ChatSession.ask`). The builder verifies Claude Code
+expands `${VAR}` inside an inline `--mcp-config`; if it does not, write the
+config to a `0600` file under `team/` (`mkstemp`) and delete it in the turn's
+`finally`.
 
 - **Turn token**: `secrets.token_hex(32)`, kept in server memory, bound to
-  `{ws, bot, chat, person}`, revoked when the turn's process exits (and after a
+  `{ws, bot, chat, person}`. Its life is the **chat request**, not one
+  process: a turn can run the lead, then a lead follow-up (a second
+  `claude -p --resume` after teammate consults). Mint it before the lead run,
+  pass it to both lead runs, revoke it in the `_handle_ask` `finally` (plus a
   hard max age, e.g. 30 min). It only unlocks this relay with this bot's
-  filters, so a bot reading it from its own process gains nothing. The route
-  accepts only a valid turn token (no cookie path), compared with
-  `hmac.compare_digest`.
+  filters, so a bot reading it from its own process gains nothing. Compared
+  with `hmac.compare_digest`.
+- **Routing**: `do_POST` rejects every request without the dashboard cookie
+  before looking at the path (`dashboard/server.py:1613`), and the bot's MCP
+  client has no cookie. The relay path is matched **before** that check, still
+  requires `_valid_host()`, accepts only the turn token, and is the only path
+  exempted. A request with a cookie but no valid token is refused.
 - The relay forwards MCP JSON-RPC to the person's session `mcp_url`, adding
   `x-api-key`. It must handle Composio's streamable-HTTP responses (plain JSON
-  or `text/event-stream`) and the `mcp-session-id` header.
+  or `text/event-stream`) and the `mcp-session-id` header. It forwards
+  `initialize`, `notifications/*`, `tools/list` (filtered) and `tools/call`
+  (gated); any other method is refused.
 - **tools/list filter**: only expose `COMPOSIO_SEARCH_TOOLS`,
   `COMPOSIO_GET_TOOL_SCHEMAS`, `COMPOSIO_MULTI_EXECUTE_TOOL`. Hide everything
   else, in particular `COMPOSIO_MANAGE_CONNECTIONS`,
@@ -180,13 +218,23 @@ entry pointing back at the dashboard:
   - hidden/unknown meta tool → refuse.
   A call that mixes reads and writes: reads run, writes queue; the reply text
   says which.
-- **Read rule** (deliberately narrow, Rakazo-style): the action part of the
-  slug (after the toolkit prefix) starts with one of `GET LIST FETCH SEARCH READ
-  FIND RETRIEVE LOOKUP VIEW CHECK COUNT`, or the slug is in a small known-reads
-  set for noun-first names (`GOOGLECALENDAR_EVENTS_LIST`, `GOOGLECALENDAR_EVENTS_GET`,
-  `GOOGLECALENDAR_LIST_CALENDARS`, ...). Everything else is a write, including
-  creating Gmail drafts, labels, updates and deletes. Unlike OpenMausBot, drafts
-  are not exempt.
+  The relay never forwards the bot's original body. It **rebuilds** the
+  multi-execute call from the read entries only, with only the known fields
+  (`tools: [{tool_slug, arguments}]` plus whatever Composio requires), so
+  extras such as `sync_response_to_workbench` never reach Composio.
+- **Read rule** (deliberately narrow, Rakazo-style): split the action part of
+  the slug (after the toolkit prefix) on `_`. It is a read only if its
+  **first word** is one of `GET LIST FETCH SEARCH READ FIND RETRIEVE LOOKUP
+  VIEW CHECK COUNT` (whole-word match, so `FINDANDREPLACE` is not a read)
+  **and** no word anywhere is a write verb (`SEND REPLY FORWARD CREATE ADD
+  INSERT UPDATE PATCH MODIFY EDIT REPLACE MOVE COPY DELETE REMOVE TRASH
+  SHARE INVITE ACCEPT DECLINE SET APPLY MARK ARCHIVE UPLOAD`), or the slug is
+  in a small known-reads set for noun-first names
+  (`GOOGLECALENDAR_EVENTS_LIST`, `GOOGLECALENDAR_EVENTS_GET`,
+  `GOOGLECALENDAR_LIST_CALENDARS`, ...). Everything else is a write,
+  including creating Gmail drafts, labels, updates and deletes. Unlike
+  OpenMausBot, drafts are not exempt. The toolkit of a slug is the curated
+  toolkit whose `UPPER(slug) + "_"` it starts with; no match → refuse.
 
 ### 4. Held actions in the approvals inbox
 
@@ -206,18 +254,27 @@ Extend `core/approvals.py` with a second kind:
 - The relay returns to the bot: `Held for approval (<id>): <title>. It has not
   run. Tell the user it is waiting in Approvals.` The turn continues; nothing
   blocks.
-- **Approve** (explicit click only) → server calls `composio.execute` with the
-  stored action, records the result, posts a short result line into the same
-  thread (`Sent.` / the error). **No** → status `rejected`, nothing runs.
-  **Edit** → the user edits the arguments in the card (for an email: to,
-  subject, body), then approves.
+- **Approve** (explicit click only) → under the approvals lock, flip
+  `pending` → `running` (any other status: refuse, so a double click or a
+  second tab cannot send twice), then call `composio.execute` once with the
+  stored action, set `done` or `failed`, record the result, and post a short
+  result line into the same thread (`Sent.` / the error). A timeout or
+  connection error is `failed` with "may or may not have gone out, check the
+  app" and is never retried automatically. **No** → status `rejected`,
+  nothing runs. **Edit** → the user edits the arguments in the card (for an
+  email: to, subject, body); the server rebuilds the preview from the edited
+  arguments, then the user approves.
+- Rows with no `kind` are the existing chat approvals (`kind: "chat"`); old
+  files keep working unchanged.
 - `app_action` rows are **not** touched by the existing rules for chat
-  approvals: a new user message in the thread must not resolve them
-  (`resolve_chat`), and a newer one must not supersede an older one (several
-  replies can be pending at once). Pending app actions expire after 7 days
-  (`expired`).
-- Housekeeping: add `expired` to `approvals.STATUSES`; the `KEEP` trim must
-  never drop a pending `app_action`; guard `approvals.json` writes with a lock
+  approvals: `resolve_chat` skips them (it runs on every new user message in
+  the thread *and* behind `/api/approvals/dismiss`), and `add` supersedes only
+  pending chat rows, never an `app_action` (several replies can be pending at
+  once). Pending app actions expire after 7 days (`expired`), checked lazily
+  on load.
+- Housekeeping: `approvals.STATUSES` gains `running`, `done`, `failed`,
+  `expired`; the `KEEP` trim must never drop a pending or running
+  `app_action`; guard every `approvals.json` read-modify-write with one lock
   (the relay thread now writes it too); re-check the grant and connection at
   Approve time, not only at hold time.
 - Approve/No/Edit endpoints use the normal dashboard auth
@@ -231,11 +288,18 @@ Token-lean, same spirit as `_needs_web` (`dashboard/server.py:490`):
 - Key configured, the person has a session, and the turn's **lead bot** has a
   non-empty grant in this workspace, **and** either the message tags `@apps`
   (or `/apps`) or matches an app-intent pattern for one of the granted
-  toolkits: mail/email/inbox/reply/gmail for Gmail; "google calendar", or a
-  meeting/event with other people, for Google Calendar (plain calendar words
-  stay on the myOS calendar, see the calendar split above); drive/google doc
-  for Drive.
+  toolkits: for Gmail, mailbox phrases only (inbox, gmail, unread, "my
+  email(s)/mail", "reply to <someone/this email/thread>"), not bare
+  "email"/"reply", which also mean content work such as newsletter copy; for
+  Google Calendar, "google calendar", or a meeting/event with other people
+  (plain calendar words stay on the myOS calendar, see the calendar split
+  above); for Drive, drive/google doc.
+- An explicit `/skill` tag wins over app intent (it is a content turn).
 - Otherwise no `--mcp-config` (today's behavior).
+- App turns use `ESCALATED_MODEL`, like web turns. `_pick_model` would
+  otherwise give an untagged "summarize my inbox" to Haiku, and this is
+  exactly the turn that needs multi-step tool use and the best resistance to
+  instructions planted in email text.
 - "Lead bot" = the routed `bot_id` of the turn. Consulted teammates
   (`run_teammate`) never get app tools; only the lead's process does, so an
   `app_action` always records the lead bot. (Builder-check call.)
@@ -271,7 +335,11 @@ builder's call within these needs:
   connected app. Shows "Needs approval for anything except reading" once.
 - **Approval card for `app_action`**: preview fields, Approve / Edit / No,
   then the result line. Appears in the existing approvals inbox and in the
-  thread.
+  thread. Its buttons call the id endpoints in section 7, never "send a chat
+  message" like chat approvals do. Today `app.js` removes every
+  `.approval-bar` when the user sends anything (`app.js:4207`) and the inbox
+  "No" posts `/api/approvals/dismiss` by thread (`app.js:1100`); both must
+  skip `app_action` cards, which stay until clicked or expired.
 - No key configured → integrations UI shows the setup state; nothing about apps
   appears elsewhere and chat behaves exactly as today.
 
@@ -288,14 +356,23 @@ builder's call within these needs:
 
 - Unit tests (`tests/`, unittest, existing style) with a fake Composio server
   or patched `urllib` responses: session reuse, untrusted `mcp_url` rejection,
-  tools/list filtering, read/write classification table, toolkit-grant refusal,
-  mixed multi-execute, held action creation, approve → execute, reject → no
-  call, new chat message does not resolve an `app_action`, token revocation,
-  relay refuses cookie-only and bad tokens, key never present in any API
-  response, `_base_cmd` adds `--mcp-config` only under the section 5 rule and
-  drops web tools on app turns.
+  tools/list filtering, read/write classification table (including
+  `FINDANDREPLACE`-style and write-verb-inside names), toolkit-grant refusal,
+  mixed multi-execute (forwarded body holds only read entries and known
+  fields), held action creation, approve → execute exactly once (double
+  approve refused while `running`), execute timeout → `failed` with no retry,
+  reject → no call, new chat message and `/api/approvals/dismiss` do not
+  resolve an `app_action`, a chat `APPROVAL:` does not supersede it, rows
+  without `kind` still work, token revocation after the follow-up run,
+  relay refuses cookie-only and bad tokens and is reachable without a cookie,
+  token absent from argv, redirects not followed, session created with the
+  locked-down config, key never present in any API response, `_base_cmd` adds
+  `--mcp-config` only under the section 5 rule, drops web tools on app turns,
+  and app turns pick `ESCALATED_MODEL`.
 - Fixtures use generic slugs only (`demo`, `acme`, `profile-a`) and fake
-  addresses on `example.test`. Run `tests/test_no_usage_data.py`.
+  addresses on `example.com` (the guard's `GENERIC_EMAIL_DOMAINS` allows only
+  `example.com/.net/.org/.invalid`; `example.test` would fail it). Run
+  `tests/test_no_usage_data.py`.
 - One manual live check by the user with their own key: connect Gmail, ask
   `@cos` to summarize the inbox, ask for a reply, approve it, confirm it sent.
 
@@ -309,7 +386,10 @@ builder's call within these needs:
 
 ## Left to the builder
 
-- Exact Composio endpoint shapes (verify against current docs).
+- Exact Composio endpoint shapes (verify against current docs), including the
+  session lockdown fields and the `/link` body.
+- Whether Claude Code expands `${MYOS_APPS_TOKEN}` in an inline
+  `--mcp-config` (else the `0600` temp-file fallback in section 3).
 - UI placement and copy within section 6.
 - Exact app-intent regex and the known-reads list beyond the examples.
 - Module split inside `dashboard/` (e.g. `dashboard/apps_relay.py`) and how the
