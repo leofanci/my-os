@@ -44,6 +44,8 @@ import deliverables      # noqa: E402
 from core import bots    # noqa: E402
 from core import rooms   # noqa: E402
 from core import approvals  # noqa: E402
+from core import app_rules, composio, integrations  # noqa: E402
+import apps_relay        # noqa: E402
 import ws                # noqa: E402
 import terminal_session  # noqa: E402
 from ai_rules import CHAT_RAIL  # noqa: E402
@@ -934,6 +936,100 @@ def get_chat_session(project_scope=None, chat_id=None, new=False):
     return _CHAT
 
 
+# ── Connected apps (Composio). The relay is the only route a bot can reach;
+# everything else here is the user's own dashboard, under normal auth.
+APPS_RELAY_PATH = "/api/internal/apps/mcp"
+# Shown first in the Integrations panel; the rest of the catalog is searchable.
+PINNED = [
+    {"group": "Work", "apps": ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets",
+                               "slack", "notion"]},
+    {"group": "Social", "apps": ["linkedin", "instagram", "facebook", "youtube", "reddit", "pinterest",
+                                 "tiktok", "threads", "twitter"]},
+    {"group": "Product & data", "apps": ["supabase", "posthog", "google_analytics", "google_search_console"]},
+    {"group": "Marketing & sales", "apps": ["mailchimp", "beehiiv", "canva", "calendly", "googleads",
+                                            "hubspot", "apollo"]},
+    {"group": "Local & prospecting", "apps": ["google_maps"]},
+]
+CATALOG_LIMIT = 50
+
+
+class _AppRefused(Exception):
+    """An Approve that must not run (status 409)."""
+
+
+def _grants_view():
+    view = {ws: dict(bots_) for ws, bots_ in integrations.all_grants(ROOT).items()}
+    for ws, defaults in integrations.DEFAULT_GRANTS.items():
+        for bot, apps in defaults.items():
+            view.setdefault(ws, {}).setdefault(bot, dict(apps))
+    return view
+
+
+def _integrations_view():
+    view = {**integrations.public(ROOT), "pinned": PINNED, "connected": [], "grants": _grants_view()}
+    if view["configured"]:
+        try:
+            view["connected"] = sorted(composio.connections(bots.CEO, ROOT))
+        except composio.ComposioError:
+            view["offline"] = True
+    return view
+
+
+def _catalog_search(q):
+    q = (q or "").strip().lower()
+    try:
+        apps = composio.catalog(ROOT)
+    except composio.ComposioError:
+        pinned = [s for g in PINNED for s in g["apps"]]
+        return {"apps": [{"slug": s, "name": s, "logo": None, "auth": None}
+                         for s in pinned if q in s][:CATALOG_LIMIT], "offline": True}
+    hits = [a for a in apps if q in a["slug"].lower() or q in (a.get("name") or "").lower()]
+    return {"apps": hits[:CATALOG_LIMIT]}
+
+
+def _approve_app_action(aid, arguments=None):
+    """Run one held app action, exactly once, after re-checking it may still run."""
+    rec = approvals.get(aid, ROOT)
+    if not rec or rec.get("kind") != approvals.APP:
+        raise LookupError("no such app action")
+    if rec.get("status") != "pending":
+        raise _AppRefused(f"already {rec.get('status')}")
+    if arguments is not None:
+        rec = approvals.edit_arguments(aid, arguments, ROOT)
+    action = rec["action"]
+    if not integrations.api_key(ROOT):
+        raise _AppRefused("Composio is not configured")
+    try:
+        catalog = [a["slug"] for a in composio.catalog(ROOT)]
+        connected = composio.connections(rec["person"], ROOT)
+    except composio.ComposioError as e:
+        raise _AppRefused(str(e)) from None
+    verdict, toolkit = app_rules.decide(action["slug"], integrations.grant(rec["ws"], rec["bot"], ROOT), catalog)
+    if verdict != "hold":
+        raise _AppRefused(f"{rec['bot']} may no longer do this")
+    if toolkit not in connected:
+        raise _AppRefused(f"{toolkit} is not connected")
+    try:
+        approvals.claim(aid, ROOT)
+    except ValueError as e:
+        raise _AppRefused(str(e)) from None
+    try:
+        out = composio.execute(rec["person"], action["slug"], action["arguments"], ROOT)
+        if isinstance(out, dict) and out.get("successful") is False:
+            status, line = "failed", f"Failed: {out.get('error') or 'the app refused it'}"
+        else:
+            sent = any(w in action["slug"] for w in ("_SEND", "_REPLY"))
+            status, line = "done", "Sent." if sent else "Done."
+    except composio.ComposioError as e:
+        # A network error or 5xx may have run it: never claim either way.
+        status = "failed"
+        line = approvals.STALE_NOTE if e.status is None or e.status >= 500 else f"Failed: {e}"
+    rec = approvals.finish(aid, status, line, ROOT)
+    if rec.get("chat"):
+        chat_store.append_note(rec["chat"], rec["bot"], line)
+    return rec
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "myOS/1.0"
 
@@ -1028,6 +1124,48 @@ class Handler(BaseHTTPRequestHandler):
         # Request lines can carry the login ?token=; never persist it to server.log.
         line = _TOKEN_IN_LOG.sub(r"\1<redacted>", fmt % args)
         sys.stderr.write("  [dash] " + line + "\n")
+
+    def _send_rpc(self, code, reply, mcp_session_id=None):
+        payload = b"" if reply is None else json.dumps(reply).encode()
+        self.send_response(code)
+        if payload:
+            self.send_header("Content-Type", "application/json")
+        if mcp_session_id:
+            self.send_header("mcp-session-id", mcp_session_id)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def _handle_apps_relay(self):
+        """A bot's MCP call: turn token only (no cookie path), gated in apps_relay."""
+        auth = self.headers.get("Authorization", "")
+        ctx = apps_relay.TOKENS.lookup(auth[7:]) if auth.startswith("Bearer ") else None
+        if not self._valid_host() or ctx is None:
+            return self._send(403, {"error": "forbidden"})
+        try:
+            frame = self._read_json()
+        except ValueError:
+            return self._send_rpc(400, {"jsonrpc": "2.0", "id": None,
+                                        "error": {"code": -32700, "message": "parse error"}})
+        try:
+            reply, sid = apps_relay.handle(frame, ctx, self.headers.get("mcp-session-id"),
+                                           apps_relay.ComposioUpstream(ctx["person"], ROOT), ROOT)
+        except composio.ComposioError as e:
+            rid = frame.get("id") if isinstance(frame, dict) else None
+            return self._send_rpc(200, {"jsonrpc": "2.0", "id": rid,
+                                        "error": {"code": -32000, "message": f"Connected apps unavailable: {e}"}})
+        return self._send_rpc(202 if reply is None else 200, reply, sid)
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if path == APPS_RELAY_PATH:
+            return self._send(405, {"error": "method not allowed"})
+        if not self._authorized(require_origin=True):
+            return self._send(403, {"error": "forbidden"})
+        if path == "/api/integrations/key":
+            integrations.remove_key(ROOT)
+            return self._send(200, integrations.public(ROOT))
+        return self._send(404, {"error": "unknown endpoint"})
 
     # -- AI chat (drives a persistent guard-railed ChatSession via SSE) --- #
     def _handle_ask(self, body):
@@ -1483,6 +1621,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if not path.startswith("/api/"):
             return self._send(404, {"error": "not found"})
+        if path == APPS_RELAY_PATH:
+            return self._send(405, {"error": "method not allowed"})  # no server-sent stream
         if not self._authorized():
             return self._send(403, {"error": "forbidden"})
         if not db.db_exists():
@@ -1523,6 +1663,11 @@ class Handler(BaseHTTPRequestHandler):
                     (parse_qs(urlparse(self.path).query).get("ws") or [None])[0], db.tree())
                 files = deliverables.list_files(ROOT, ws, db.tree(), db.posts()) if record else []
                 return self._send(200, {"ws": ws, "files": files})
+            if path == "/api/integrations":
+                return self._send(200, _integrations_view())
+            if path == "/api/integrations/catalog":
+                return self._send(200, _catalog_search(
+                    (parse_qs(urlparse(self.path).query).get("q") or [""])[0]))
             if path in ("/api/approvals", "/api/costs", "/api/memory"):
                 qs = parse_qs(urlparse(self.path).query)
                 ws, record = _resolve_workspace((qs.get("ws") or [None])[0], db.tree())
@@ -1610,6 +1755,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global _CHAT, _CHAT_SCOPE
         path = urlparse(self.path).path
+        if path == APPS_RELAY_PATH:  # the only route without the dashboard cookie
+            return self._handle_apps_relay()
         if not self._authorized():
             return self._send(403, {"error": "forbidden"})
         try:
@@ -1872,6 +2019,40 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError("memory line not found")
                 text = bots.read_memory(bot_id, project, ROOT, tail=0)
                 return self._send(200, {"lines": text.splitlines() if text else []})
+            if path.startswith("/api/integrations/") or (
+                    path.startswith("/api/approvals/") and path.endswith(("/approve", "/reject"))):
+                if not self._authorized(require_origin=True):
+                    return self._send(403, {"error": "forbidden"})
+                if path == "/api/integrations/key":
+                    integrations.set_key(body.get("api_key"), ROOT)
+                    return self._send(200, integrations.public(ROOT))
+                if path == "/api/integrations/connect":
+                    toolkit = str(body.get("toolkit") or "")
+                    if toolkit in app_rules.BLOCKED_TOOLKITS or not re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", toolkit):
+                        raise ValueError(f"{toolkit or 'that app'} cannot be connected")
+                    try:
+                        return self._send(200, {"url": composio.connect_link(bots.CEO, toolkit, ROOT)})
+                    except composio.ComposioError as e:
+                        return self._send(502, {"ok": False, "error": str(e)})
+                if path == "/api/integrations/grants":
+                    ws, _ = _resolve_workspace(body.get("ws"), db.tree())
+                    bot_id = str(body.get("bot") or "")
+                    if bot_id not in bots.load_defs():
+                        raise ValueError(f"unknown bot: {bot_id}")
+                    return self._send(200, {"ws": ws, "bot": bot_id,
+                                            "apps": integrations.set_grant(ws, bot_id, body.get("apps"), ROOT)})
+                if path.startswith("/api/approvals/"):
+                    aid = path[len("/api/approvals/"):].rsplit("/", 1)[0]
+                    try:
+                        if path.endswith("/reject"):
+                            return self._send(200, approvals.reject(aid, ROOT))
+                        args = body.get("arguments")
+                        return self._send(200, _approve_app_action(aid, args if isinstance(args, dict) else None))
+                    except LookupError as e:
+                        return self._send(404, {"ok": False, "error": str(e)})
+                    except (_AppRefused, ValueError) as e:
+                        return self._send(409, {"ok": False, "error": str(e)})
+                return self._send(404, {"error": "unknown endpoint"})
             if path == "/api/approvals/dismiss":
                 approvals.resolve_chat(str(body.get("chat") or ""), "rejected", ROOT)
                 return self._send(200, {"ok": True})
