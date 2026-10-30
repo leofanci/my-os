@@ -24,8 +24,12 @@ folder (separate license).
 - One Composio account (the user's own API key) powers every app connection.
 - The key never leaves the dashboard server process: not in a bot's prompt,
   transcript, tool config, chat, log, or any tracked file.
-- Each bot gets apps per workspace (a "grant"). Default: HQ `cos` gets Gmail and
-  Google Calendar; every other bot gets nothing until switched on.
+- The whole Composio catalog is available (like OpenMausBot), minus a short
+  blocklist (section 3). A pinned GTM set (section 6) sits at the top of the
+  list; everything else is searchable below it.
+- Each bot gets apps per workspace (a "grant"), each app either **read** or
+  **read + write**. Default: HQ `cos` gets Gmail and Google Calendar
+  (read + write); every other bot gets nothing until switched on.
 - Reads (search, list, get, fetch) run immediately. Every other app action is
   held in the approvals inbox and runs only on an explicit Approve click,
   enforced by server code, not by asking the model nicely.
@@ -41,8 +45,12 @@ folder (separate license).
 - Human teammates, logins, invites. Separate project; only the data shape is
   prepared here.
 - A hosted relay that lets people use apps without their own key.
-- Apps beyond the curated three (Gmail, Google Calendar, Google Drive). The
-  architecture must allow more by adding a slug to a list.
+- Tailored approval cards beyond Gmail, Google Calendar and Drive. Every
+  other app gets the generic card (section 4); tailored cards are added per
+  app later.
+- Wiring social publishing into the myOS content pipeline (posting an
+  approved calendar post to its channel). Round 1 only makes the apps
+  reachable; the link is a later round.
 - Multiple accounts per app (work + personal Gmail).
 
 ## Anti-goals (failure even if it "works")
@@ -78,6 +86,9 @@ folder (separate license).
   Teammates (later) use the user's Composio project as separate Composio users
   and never see the key.
 - Approval before anything goes out.
+- **Full catalog, not a curated few** (like OpenMausBot), with every social
+  network and Supabase pinned; the rest of the pinned set was picked from
+  Composio's catalog for GTM work (section 6).
 - Composio first; invites/teammates next, as their own project.
 - **Calendar split:** the myOS calendar (`create-activity` / `get-busy` via
   osctl) stays the main calendar for work items. Google Calendar is used only
@@ -108,8 +119,8 @@ saves a grant). Shape:
     "ceo": {"composio_user_id": "myos-3f9c...", "session_id": "...", "mcp_url": "<composio session mcp url>"}
   },
   "grants": {
-    "hq": {"cos": ["gmail", "googlecalendar"]},
-    "acme": {"social": ["googledrive"]}
+    "hq": {"cos": {"gmail": "write", "googlecalendar": "write"}},
+    "acme": {"social": {"googledrive": "read", "instagram": "write"}}
   }
 }
 ```
@@ -118,10 +129,14 @@ saves a grant). Shape:
   (`core/bots.CEO`). Teammates later add rows; nothing else changes.
 - `composio_user_id` is a random id generated on first use. Never the user's
   email or name (nothing personal is sent to Composio as an id).
-- Grants are per workspace (`hq` or a project slug) and per bot id, values are
-  Composio toolkit slugs. A *missing* grant for HQ `cos` falls back to the
-  default above; an explicit `[]` means none (the user switched it off).
-  Everything else defaults to none.
+- Grants are per workspace (`hq` or a project slug) and per bot id: a map of
+  Composio toolkit slug → `"read"` or `"write"` (OpenMausBot's
+  `connectorScopes` idea). `read`: anything that is not a read is refused
+  outright, not even held. `write`: reads run, everything else is held for
+  approval (section 4); `write` never means "runs without asking". A
+  *missing* grant for HQ `cos` falls back to the default above; an explicit
+  `{}` means none (the user switched it off). Everything else defaults to
+  none. A blocklisted toolkit can never be granted.
 - Add `integrations.json` to `SECRET_FILE_GLOBS` in `chat_session.py`, which
   turns into `Read(**/integrations.json)` on every turn, HQ included. No
   blanket `team/**` deny for HQ: HQ "sees everything" by design
@@ -140,16 +155,25 @@ uses it:
   (`POST /tool_router/session`), store `session_id` + `mcp_url`. Reject an
   `mcp_url` whose host is not Composio's. The session is locked down at
   Composio too, not only by our relay (defense in depth):
-  `{"user_id": ..., "toolkits": {"enable": [<curated toolkits>]},
+  `{"user_id": ..., "toolkits": {"disable": [<BLOCKED_TOOLKITS>]},
   "manage_connections": {"enable": false}, "workbench": {"enable": false}}`
   (plus `auth_configs` only when a user-owned one is set). Disabling the
   workbench removes `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL`
-  server-side. If the session is gone (401/404) or the curated list changes,
+  server-side. If the session is gone (401/404) or the blocklist changes,
   create a new one (or `PATCH /tool_router/session/{id}`) and store it.
-- `connect_link(person, toolkit)` → start an OAuth connection, return the
-  redirect URL for the browser (docs list
-  `POST /tool_router/session/{id}/link`; verify body).
-- `connections(person)` → which curated toolkits are connected
+  Connections belong to the Composio user, not the session, so recreating it
+  keeps every connection.
+- `catalog()` → the Composio toolkit list (`GET /toolkits`, paginated, sorted
+  by usage, as OpenMausBot reads it), cached in memory for an hour, blocklist
+  removed. Each entry keeps `slug`, `name`, logo, and its auth kind (managed
+  OAuth / own OAuth app needed / API key). If Composio cannot be reached, the
+  panel falls back to the pinned list.
+- `connect_link(person, toolkit)` → start a connection, return the redirect
+  URL for the browser (docs list `POST /tool_router/session/{id}/link`;
+  verify body). Composio's hosted connect page also collects API keys for
+  key-based apps (PostHog, Beehiiv); the builder verifies this, else the
+  panel asks for the key and sends it straight to Composio, never storing it.
+- `connections(person)` → which toolkits are connected
   (`GET /tool_router/session/{id}/toolkits`).
 - `execute(person, slug, arguments)` → run one approved tool call. **Never
   retried** (timeout, 5xx, connection error): a retry can send an email
@@ -212,9 +236,13 @@ config to a `0600` file under `team/` (`mkstemp`) and delete it in the turn's
 - **tools/call gate**: unpack the call into individual app tool slugs (a
   multi-execute carries a list of `{tool_slug, arguments}`, see OpenMausBot
   `shared/outbound.ts` `connectorCallsIn`). For each slug:
-  - toolkit (slug prefix, e.g. `GMAIL_`) not in this bot's grant → refuse.
+  - toolkit (slug prefix, e.g. `GMAIL_`) not in this bot's grant, or
+    blocklisted → refuse.
+  - a read on a toolkit whose reads spend money (`PAID_READ_TOOLKITS`, e.g.
+    `apollo` enrichment) → treated as a write.
   - a read → forward now.
-  - anything else → do not forward; queue it (section 4).
+  - anything else on a `read` grant → refuse.
+  - anything else on a `write` grant → do not forward; queue it (section 4).
   - hidden/unknown meta tool → refuse.
   A call that mixes reads and writes: reads run, writes queue; the reply text
   says which.
@@ -233,8 +261,23 @@ config to a `0600` file under `team/` (`mkstemp`) and delete it in the turn's
   (`GOOGLECALENDAR_EVENTS_LIST`, `GOOGLECALENDAR_EVENTS_GET`,
   `GOOGLECALENDAR_LIST_CALENDARS`, ...). Everything else is a write,
   including creating Gmail drafts, labels, updates and deletes. Unlike
-  OpenMausBot, drafts are not exempt. The toolkit of a slug is the curated
-  toolkit whose `UPPER(slug) + "_"` it starts with; no match → refuse.
+  OpenMausBot, drafts are not exempt, and neither is anything else that is
+  not a send (OpenMausBot runs updates, deletes and even calendar events with
+  attendees without a card). Supabase `EXECUTE_...QUERY` is always held,
+  card showing the full SQL. The toolkit of a slug is the **longest** catalog
+  toolkit slug whose `UPPER(slug) + "_"` it starts with (slugs can contain
+  underscores, e.g. `google_search_console`, as OpenMausBot handles it); no
+  match → refuse.
+- **Blocklist** (`BLOCKED_TOOLKITS`): toolkits whose "reads" reach arbitrary
+  hosts or run code, so an injected email could make a bot "read"
+  `attacker.example/?d=<mail>` with no card: web search/scrape/fetch
+  (`composio_search`, `firecrawl`, `tavily`, `exa`, `serpapi`,
+  `perplexityai`, browser toolkits), code runners (`codeinterpreter`), the
+  meta `composio` toolkit, and `googlesuper` (bundles every Google app and
+  would bypass per-app grants). Hidden from the panel, disabled in the
+  session, refused by the relay. The builder sweeps the catalog's
+  search/scraping/browser/code categories when writing the list. OpenMausBot
+  has no such list; with the full catalog open we need one.
 
 ### 4. Held actions in the approvals inbox
 
@@ -250,7 +293,11 @@ Extend `core/approvals.py` with a second kind:
 - The **preview is built by the server from the real arguments**, never from
   the bot's words. An email can carry injected instructions; the card must
   show exactly what will happen (recipients, subject, full body, attachments,
-  event times, etc.). Unknown slugs show the raw arguments as formatted JSON.
+  event times, etc.). Tailored cards this round: Gmail, Google Calendar,
+  Drive. Every other app gets the generic card: the tool's name in words
+  (`INSTAGRAM_CREATE_CAROUSEL_CONTAINER` → "Instagram: create carousel
+  container") plus every argument as a labeled field, long text in full,
+  nested values as formatted JSON. Nothing is truncated or summarized.
 - The relay returns to the bot: `Held for approval (<id>): <title>. It has not
   run. Tell the user it is waiting in Approvals.` The turn continues; nothing
   blocks.
@@ -293,7 +340,10 @@ Token-lean, same spirit as `_needs_web` (`dashboard/server.py:490`):
   "email"/"reply", which also mean content work such as newsletter copy; for
   Google Calendar, "google calendar", or a meeting/event with other people
   (plain calendar words stay on the myOS calendar, see the calendar split
-  above); for Drive, drive/google doc.
+  above); for Drive, drive/google doc. Every other app triggers only on
+  `@apps` or a possessive "my <app>" phrase ("my instagram stats", "check my
+  supabase"). A bare app name never does: "write a LinkedIn post" is content
+  work for the myOS pipeline, not an app call.
 - An explicit `/skill` tag wins over app intent (it is a content turn).
 - Otherwise no `--mcp-config` (today's behavior).
 - App turns use `ESCALATED_MODEL`, like web turns. `_pick_model` would
@@ -328,11 +378,23 @@ builder's call within these needs:
 
 - **Integrations panel** (HQ level, reached from settings): Composio key field
   (write-only: after saving shows "Configured · saved <date>" + Replace /
-  Remove), link to Composio sign-up, and the curated app list with status
-  (Connected / Connect). Connect opens Composio's OAuth link in a new tab and
-  the panel polls status until connected or 5 minutes pass.
-- **Grants**: in each bot's profile/team view, per workspace, a toggle per
-  connected app. Shows "Needs approval for anything except reading" once.
+  Remove), link to Composio sign-up, then the app list with status
+  (Connected / Connect / Needs setup). Pinned on top, in groups (all checked
+  on Composio's toolkit pages, Oct 2026):
+  - **Work:** Gmail, Google Calendar, Drive, Docs, Sheets, Slack, Notion.
+  - **Social:** LinkedIn, Instagram, Facebook, YouTube, Reddit, Pinterest
+    (one-click managed sign-in); TikTok, Threads, X (need the user's own
+    developer app, shown as "Needs setup" with a how-to link). Bluesky is
+    not on Composio.
+  - **Product & data:** Supabase, PostHog (API key), Google Analytics,
+    Google Search Console.
+  - **Marketing & sales:** Mailchimp, Beehiiv (API key), Canva, Calendly,
+    Google Ads, HubSpot, Apollo (reads spend credits, so always held).
+  Below: search over the rest of the catalog. Connect opens Composio's link
+  in a new tab and the panel polls status until connected or 5 minutes pass.
+- **Grants**: in each bot's profile/team view, per workspace, a three-way
+  control per connected app: Off / Read / Read + write. Shows once: "Read +
+  write still asks you before anything that is not a read."
 - **Approval card for `app_action`**: preview fields, Approve / Edit / No,
   then the result line. Appears in the existing approvals inbox and in the
   thread. Its buttons call the id endpoints in section 7, never "send a chat
@@ -345,10 +407,11 @@ builder's call within these needs:
 
 ### 7. API surface (all under normal dashboard auth except the relay)
 
-- `GET /api/integrations` → `{configured, saved, apps: [{toolkit, name, connected}], grants}`
+- `GET /api/integrations` → `{configured, saved, pinned: [...], connected: [...], grants}`
+- `GET /api/integrations/catalog?q=` → `{apps: [{toolkit, name, logo, auth, connected}]}` (blocklist removed)
 - `POST /api/integrations/key` `{api_key}` / `DELETE` → save / remove
-- `POST /api/integrations/connect` `{toolkit}` → `{url}`
-- `POST /api/integrations/grants` `{ws, bot, toolkits: [...]}`
+- `POST /api/integrations/connect` `{toolkit}` → `{url}` (blocklisted → 400)
+- `POST /api/integrations/grants` `{ws, bot, apps: {<toolkit>: "read"|"write"}}` (blocklisted → 400)
 - `POST /api/approvals/<id>/approve` `{arguments?}` · `/reject`
 - `POST /api/internal/apps/mcp` → relay (turn token only)
 
@@ -358,6 +421,9 @@ builder's call within these needs:
   or patched `urllib` responses: session reuse, untrusted `mcp_url` rejection,
   tools/list filtering, read/write classification table (including
   `FINDANDREPLACE`-style and write-verb-inside names), toolkit-grant refusal,
+  `read` grant refuses a write outright, blocklisted toolkit refused at
+  connect, grant and relay, paid-read toolkit held, longest-prefix toolkit
+  match (`GOOGLE_SEARCH_CONSOLE_*`), generic card shows every argument,
   mixed multi-execute (forwarded body holds only read entries and known
   fields), held action creation, approve → execute exactly once (double
   approve refused while `running`), execute timeout → `failed` with no retry,
@@ -383,6 +449,9 @@ builder's call within these needs:
   routine's thread.
 - **Teammates**: `people` rows + per-person sessions already exist; invites and
   logins decide who `person` is for a turn. Today every turn is `ceo`.
+- **Social publishing**: an approved post in the content calendar becomes one
+  held `app_action` for its channel's app (Instagram carousel, LinkedIn post,
+  ...), with a tailored card per platform.
 
 ## Left to the builder
 
@@ -392,6 +461,8 @@ builder's call within these needs:
   `--mcp-config` (else the `0600` temp-file fallback in section 3).
 - UI placement and copy within section 6.
 - Exact app-intent regex and the known-reads list beyond the examples.
+- The full `BLOCKED_TOOLKITS` and `PAID_READ_TOOLKITS` lists, from a sweep of
+  the catalog.
 - Module split inside `dashboard/` (e.g. `dashboard/apps_relay.py`) and how the
   turn token registry is threaded through `ChatSession`.
 
