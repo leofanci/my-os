@@ -994,10 +994,13 @@ def _grants_view():
 
 
 def _integrations_view():
-    view = {**integrations.public(ROOT), "pinned": PINNED, "connected": [], "grants": _grants_view()}
+    view = {**integrations.public(ROOT), "pinned": PINNED, "connected": [], "grants": _grants_view(),
+            "apps_meta": {}}
     if view["configured"]:
         try:
             view["connected"] = sorted(composio.connections(bots.CEO, ROOT))
+            pinned = {s for g in PINNED for s in g["apps"]} | set(view["connected"])
+            view["apps_meta"] = {a["slug"]: a for a in composio.catalog(ROOT) if a["slug"] in pinned}
         except composio.ComposioError:
             view["offline"] = True
     return view
@@ -1450,6 +1453,7 @@ class Handler(BaseHTTPRequestHandler):
         # The turn token lives for this request: the lead and its follow-up run
         # get it, a consulted teammate never does; revoked in the finally below.
         apps_kw = {}
+        turn_started = time.time()
         if app_turn:
             apps_kw = {"apps_token": apps_relay.TOKENS.mint(
                            {"ws": ws, "bot": bot_id, "chat": getattr(sess, "session_id", None),
@@ -1484,6 +1488,12 @@ class Handler(BaseHTTPRequestHandler):
                 msgs.append(m3)
                 run(sess, _followup_prompt(team, answers), model, with_web, m3, **apps_kw)
             last = len(msgs) - 1
+            if apps_kw:  # what the relay held this turn: cards in the thread
+                held = [r for r in approvals.pending(ROOT, ws)
+                        if r.get("kind") == approvals.APP and r.get("chat") == getattr(sess, "session_id", None)
+                        and (r.get("created") or 0) >= turn_started]
+                if held:
+                    emit({"app_actions": held, "msg": last})
             if files_before is not None:
                 handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
                 if handed:

@@ -92,7 +92,7 @@ PUBLIC_NETWORK_HOSTS = {
     # dashboard/vendor/fonts/OFL.txt.
     b"polyformproject.org", b"example.com", b"www.sourcelair.com", b"scripts.sil.org",
     # Composio REST API (connected apps, core/composio.py): a public vendor host.
-    b"backend.composio.dev",
+    b"backend.composio.dev", b"composio.dev",  # + sign-up link in the Integrations panel
 }
 
 

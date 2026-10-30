@@ -201,6 +201,7 @@ const ROUTES = [
   [/^\/operations$/,                            ()       => { setState("operations"); renderOperations(); }],
   [/^\/team$/,                                  ()       => { setState("team"); renderTeam(); }],
   [/^\/approvals$/,                             ()       => { setState("approvals"); renderApprovals(); }],
+  [/^\/integrations$/,                          ()       => { setState("integrations"); renderIntegrations(); }],
   [/^\/files$/,                                 ()       => { setState("files"); renderFiles(); }],
   [/^\/room\/new$/,                              ()       => renderRoomForm(null)],
   [/^\/room\/([a-z0-9-]+)\/edit$/,                ([n])    => renderRoomForm(n)],
@@ -521,6 +522,7 @@ async function renderRail(){
         ${w.id !== "hq" ? `<a data-view="files">${icon("folder")}<span class="rail-name">Files</span></a>` : ""}
         <a data-view="content">${icon("layers")}<span class="rail-name">Content</span></a>
         <a data-view="team">${icon("users")}<span class="rail-name">Team</span><span class="count">${_BOTS.filter(b => b.active).length}</span></a>
+        ${w.id === "hq" ? `<a data-view="integrations">${icon("zap")}<span class="rail-name">Integrations</span></a>` : ""}
       </nav>
       ${section("channels", "Channels", channels.map(roomRow).join(""),
         `<button class="add-btn" id="new-room-btn" title="New channel" aria-label="New channel">${icon("plus")}</button>`)}
@@ -572,7 +574,7 @@ const KIND_META = {
   roadmap: ["map", "Roadmap", "Roadmap"], plan: ["route", "Go-to-market", "Go-to-market plan"],
   content: ["calendar", "Content", "Content plan"], brief: ["compose", "Post briefs", "Post brief"], voice: ["mic", "Voice", "Voice"],
 };
-const VIEW_LABEL = { content: "Content", files: "Files", team: "Team", approvals: "Approvals", calendar: "Calendar", needs: "Today", operations: "Operations" };
+const VIEW_LABEL = { content: "Content", files: "Files", team: "Team", approvals: "Approvals", integrations: "Integrations", calendar: "Calendar", needs: "Today", operations: "Operations" };
 const profileName = slug => _TREE.flatMap(p => p.profiles).find(x => x.slug === slug)?.name || slug;
 // "Instagram, TikTok": the channels of a deliverable's profile.
 const delivChannels = d => (_TREE.flatMap(p => p.profiles).find(x => x.slug === d.profile)?.channels || [])
@@ -945,6 +947,7 @@ async function refreshViews(){
   if (v === "operations") return renderOperations();
   if (v === "team") return renderTeam();
   if (v === "approvals") return renderApprovals();
+  if (v === "integrations") return renderIntegrations();
   if (v === "files") return renderFiles();
   if (v === "section") return renderProjectSection(STATE.project, STATE.section);
   if (v === "profile") return onProfileList(STATE.profile) ? renderProfile(STATE.profile) : undefined;
@@ -1030,6 +1033,7 @@ async function renderOperations(){
 async function renderTeam(){
   const stillOn = routeGuard();
   let costs = { bots: {}, total: {}, days: 30 };
+  let integ = { configured: false, connected: [] };
   const draw = () => {
     const depth = b => { let d = 0, cur = b; while (cur && cur.reports_to !== "ceo" && d < 5) { cur = botById(cur.reports_to); d++; } return d; };
     const rows = _BOTS.map(b => {
@@ -1048,14 +1052,29 @@ async function renderTeam(){
           <small class="team-usage">${(() => { const c = costs.bots[b.id]; return c && c.turns ? `${c.turns} ${c.turns === 1 ? "reply" : "replies"} · ${fmtUsage(c.tokens, c.cost)} (est., ${costs.days}d)` : `no replies in ${costs.days}d`; })()}
             · <a class="mem-toggle" data-mem="${esc(b.id)}">Memory</a></small>
           <div class="mem-box" hidden></div>
+          ${integ.configured && integ.connected.length && _WS ? `<div class="app-grants">${integ.connected.map(slug => {
+            const scope = integ.grants?.[_WS]?.[b.id]?.[slug];
+            return `<label>${esc(integ.apps_meta?.[slug]?.name || slug)} <select data-grant-bot="${esc(b.id)}" data-grant-app="${esc(slug)}">
+              ${["", "read", "write"].map(s => `<option value="${s}"${(scope || "") === s ? " selected" : ""}>${grantLabel(s || undefined)}</option>`).join("")}</select></label>`;
+          }).join("")}</div>` : ""}
         </div>
         ${b.recommended && !b.active ? `<span class="tag">recommended</span>` : ""}
         ${b.locked ? `<span class="tag">always on</span>` : `<button class="go" data-bot-toggle="${esc(b.id)}" data-on="${b.active ? 1 : 0}">${b.active ? "Switch off" : "Switch on"}</button>`}
       </div>`;
     }).join("");
     const t = costs.total || {};
-    $("#team-list").innerHTML = `<div class="team-total">${t.turns ? `Last ${costs.days} days: ${t.turns} ${t.turns === 1 ? "reply" : "replies"} · ${fmtUsage(t.tokens, t.cost)} (est.)` : ""}</div><div class="rowc">${rows}</div>`;
+    const grantHelp = integ.configured && integ.connected.length ? `<div class="help">Connected apps per bot. Read + write still asks you before anything that is not a read.</div>` : "";
+    $("#team-list").innerHTML = grantHelp + `<div class="team-total">${t.turns ? `Last ${costs.days} days: ${t.turns} ${t.turns === 1 ? "reply" : "replies"} · ${fmtUsage(t.tokens, t.cost)} (est.)` : ""}</div><div class="rowc">${rows}</div>`;
     $("#team-list").querySelectorAll("[data-mem]").forEach(a => a.onclick = () => toggleMemory(a.closest(".team-row"), a.dataset.mem));
+    $("#team-list").querySelectorAll("[data-grant-bot]").forEach(sel => sel.onchange = async () => {
+      const bot = sel.dataset.grantBot;
+      const apps = { ...(integ.grants?.[_WS]?.[bot] || {}) };
+      if (sel.value) apps[sel.dataset.grantApp] = sel.value; else delete apps[sel.dataset.grantApp];
+      try {
+        const r = await jpost("/api/integrations/grants", { ws: _WS, bot, apps });
+        ((integ.grants ||= {})[_WS] ||= {})[bot] = r.apps;
+      } catch (e) { toast("✗ " + e.message); draw(); }
+    });
     $("#team-list").querySelectorAll("[data-bot-toggle]").forEach(btn => btn.onclick = async () => {
       try {
         const d = await jpost(`/api/bots/${btn.dataset.botToggle}/active`, { ws: _WS, active: btn.dataset.on !== "1" });
@@ -1068,6 +1087,7 @@ async function renderTeam(){
     <div class="scroll"><div class="help">Who works in this workspace. Switched-off bots leave the sidebar and their skills go to their manager. Each workspace has its own team and memory. Tag a teammate with @handle in chat.</div><div id="team-list"></div></div>`;
   if (!_BOTS.length) _BOTS = (await api(`/api/bots?ws=${encodeURIComponent(_WS)}`).catch(() => ({}))).bots || [];
   costs = await api(`/api/costs?ws=${encodeURIComponent(_WS)}`).catch(() => costs);
+  integ = await api("/api/integrations").catch(() => integ);
   if (stillOn()) draw();
 }
 
@@ -1082,6 +1102,12 @@ async function renderApprovals(){
     const b = botById(a.bot) || { id: a.bot, name: a.bot };
     const room = (a.room || "").split("/")[1] || "general";
     const where = `${wsById(a.ws)?.name || a.ws} · ${room.startsWith("dm-") ? "DM" : "#" + room.replace(/^t-/, "")}`;
+    if (isAppAction(a)) return `<div class="post approval-row app-row" data-app-id="${esc(a.id)}">
+      ${botAvatar(b)}
+      <div class="t"><small>${esc(b.name)} · ${esc(where)} · ${relAge(a.created)}</small>
+        <div class="approval-bar app-card">${appCardHtml(a)}</div></div>
+      <button class="go" data-ap-go="${esc(a.id)}">Open</button>
+    </div>`;
     return `<div class="post approval-row">
       ${botAvatar(b)}
       <div class="t">${esc(a.summary)}<small>${esc(b.name)} · ${esc(where)} · ${relAge(a.created)}</small></div>
@@ -1092,14 +1118,143 @@ async function renderApprovals(){
   }).join("") : `<div class="empty">Nothing waiting on you.</div>`;
   $("#main").innerHTML = `
     <div class="topbar"><div><div class="crumbs">${esc(_WS === "hq" ? "Every workspace" : wsById(_WS)?.name || "")}</div><h1 class="title">Approvals</h1></div></div>
-    <div class="scroll"><div class="help">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it.</div><div class="rowc">${rows}</div></div>`;
+    <div class="scroll"><div class="help">Saves your bots proposed and are waiting on. Approve sends "yes" in that thread; the bot then writes it. App actions (an email, a post, an event) run only when you approve them here or in the thread.</div><div class="rowc">${rows}</div></div>`;
   const find = id => items.find(a => a.id === id);
   $("#main").querySelectorAll("[data-ap-go]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apGo)));
   $("#main").querySelectorAll("[data-ap-ok]").forEach(b => b.onclick = () => window.ChatRooms?.openThread(find(b.dataset.apOk), "approved"));
   $("#main").querySelectorAll("[data-ap-no]").forEach(b => b.onclick = async () => {
-    try { await jpost("/api/approvals/dismiss", { chat: find(b.dataset.apNo).chat }); await renderRail(); renderApprovals(); }
+    const a = find(b.dataset.apNo);
+    if (isAppAction(a)) return;  // app actions answer only through their own card
+    try { await jpost("/api/approvals/dismiss", { chat: a.chat }); await renderRail(); renderApprovals(); }
     catch (e) { toast("✗ " + e.message); }
   });
+  $("#main").querySelectorAll("[data-app-id]").forEach(row =>
+    wireAppCard(row.querySelector(".app-card"), find(row.dataset.appId)));
+}
+
+// ── Connected apps: held app actions (cards) and the Integrations panel.
+function isAppAction(a){
+  return !!a && a.kind === "app_action";
+}
+function grantLabel(scope){
+  return scope === "write" ? "Read + write" : scope === "read" ? "Read" : "Off";
+}
+function appStatusLabel(app, connected){
+  return connected ? "Connected" : app && app.auth === "own_app" ? "Needs setup" : "Connect";
+}
+function appCardHtml(a){
+  const p = a.preview || { title: a.action?.slug || "App action", fields: [] };
+  return `<div class="app-card-h"><b>${esc(p.title)}</b><small>Not run yet. It runs only when you approve.</small></div>
+    <dl class="app-fields">${(p.fields || []).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("")}</dl>
+    <div class="app-btns"><button class="btn sm primary" data-app="approve">Approve</button>
+      <button class="btn sm" data-app="edit">Edit</button>
+      <button class="btn sm ghost" data-app="reject">No</button></div>`;
+}
+function wireAppCard(el, a){
+  if (!el || !a) return;
+  const lock = on => el.querySelectorAll("button").forEach(b => b.disabled = on);
+  const answer = async (verb, body) => {
+    lock(true);
+    try {
+      const r = await jpost(`/api/approvals/${encodeURIComponent(a.id)}/${verb}`, body || {});
+      _APPROVALS = _APPROVALS.filter(x => x.id !== a.id);
+      el.innerHTML = `<div class="app-result">${esc(r.status === "rejected" ? "Not sent." : r.result || r.status)}</div>`;
+      renderRail().catch(() => {});
+    } catch (e) { toast("✗ " + e.message); lock(false); }
+  };
+  el.querySelector('[data-app="approve"]').onclick = () => answer("approve");
+  el.querySelector('[data-app="reject"]').onclick = () => answer("reject");
+  el.querySelector('[data-app="edit"]').onclick = e => {
+    const args = a.action?.arguments || {};
+    const form = document.createElement("form");
+    form.className = "app-edit";
+    form.innerHTML = Object.entries(args).map(([k, v]) => {
+      const field = typeof v !== "string"
+        ? `<textarea data-k="${esc(k)}" data-json="1" rows="4">${esc(JSON.stringify(v, null, 2))}</textarea>`
+        : v.length > 80 || v.includes("\n") ? `<textarea data-k="${esc(k)}" rows="6">${esc(v)}</textarea>`
+        : `<input data-k="${esc(k)}" value="${esc(v)}">`;
+      return `<label><span>${esc(k)}</span>${field}</label>`;
+    }).join("") + `<button class="btn sm primary" type="submit">Approve edited</button>`;
+    form.onsubmit = ev => {
+      ev.preventDefault();
+      const out = {};
+      try { form.querySelectorAll("[data-k]").forEach(f => out[f.dataset.k] = f.dataset.json ? JSON.parse(f.value) : f.value); }
+      catch { return toast("✗ One field is not valid JSON"); }
+      answer("approve", { arguments: out });
+    };
+    el.querySelector(".app-fields").replaceWith(form);
+    e.currentTarget.remove();
+  };
+}
+
+async function renderIntegrations(){
+  const stillOn = routeGuard();
+  $("#main").innerHTML = `
+    <div class="topbar"><div><div class="crumbs">HQ · settings</div><h1 class="title">Integrations</h1></div></div>
+    <div class="scroll"><div class="help">Connect your own apps through your Composio account. Bots read freely; anything else waits for your Approve. Switch apps on per bot in Team.</div><div id="integ"></div></div>`;
+  if (_WS !== "hq") { $("#integ").innerHTML = `<div class="empty">Integrations live in HQ.</div>`; return; }
+  let polls = 0, replacing = false;
+  const draw = async () => {
+    const d = await api("/api/integrations").catch(e => ({ error: e.message }));
+    if (!stillOn()) return;
+    const box = $("#integ");
+    if (d.error) { box.innerHTML = `<div class="empty">${esc(d.error)}</div>`; return; }
+    const keyForm = `<form class="integ-key"><input name="k" type="password" autocomplete="off" placeholder="Composio API key" aria-label="Composio API key">
+      <button class="btn sm primary" type="submit">Save</button>
+      <a class="link-btn" href="https://composio.dev" target="_blank" rel="noopener">Get a free key</a></form>`;
+    const keyRow = d.configured && !replacing
+      ? `<div class="post integ-keyrow"><div class="t"><b>Composio</b><small>Configured · saved ${esc(new Date((d.saved || 0) * 1000).toLocaleDateString())}${d.offline ? " · can't reach Composio right now" : ""}</small></div>
+          <button class="go" data-key="replace">Replace</button><button class="more" data-key="remove">Remove</button></div>`
+      : keyForm;
+    const connected = new Set(d.connected || []);
+    const appRow = (slug, meta) => {
+      const m = meta || d.apps_meta?.[slug] || { slug, name: slug };
+      const on = connected.has(slug);
+      return `<div class="integ-row"><span class="t"><b>${esc(m.name || slug)}</b>${slug === "google_maps" ? `<small>Google bills Maps per request.</small>` : ""}</span>
+        ${on || m.auth === "own_app" ? `<span class="tag">${esc(appStatusLabel(m, on))}</span>` : ""}
+        ${on ? "" : `<button class="btn sm" data-connect="${esc(slug)}">${m.auth === "own_app" ? "Set up" : "Connect"}</button>`}</div>`;
+    };
+    box.innerHTML = keyRow + (d.configured ? `
+      ${(d.pinned || []).map(g => `<section class="integ-group"><h3>${esc(g.group)}</h3>${g.apps.map(s => appRow(s)).join("")}</section>`).join("")}
+      <section class="integ-group"><h3>All apps</h3><input class="integ-q" type="search" placeholder="Search Composio apps" aria-label="Search Composio apps"><div class="integ-hits"></div></section>` : "");
+    const keyEl = box.querySelector(".integ-key");
+    if (keyEl) keyEl.onsubmit = async e => {
+      e.preventDefault();
+      try { await jpost("/api/integrations/key", { api_key: keyEl.k.value }); keyEl.k.value = ""; replacing = false; draw(); }
+      catch (err) { toast("✗ " + err.message); }
+    };
+    box.querySelector('[data-key="replace"]')?.addEventListener("click", () => { replacing = true; draw(); });
+    box.querySelector('[data-key="remove"]')?.addEventListener("click", async () => {
+      try { await api("/api/integrations/key", { method: "DELETE" }); draw(); } catch (err) { toast("✗ " + err.message); }
+    });
+    const wireConnect = root => root.querySelectorAll("[data-connect]").forEach(b => b.onclick = async () => {
+      try {
+        const { url } = await jpost("/api/integrations/connect", { toolkit: b.dataset.connect });
+        window.open(url, "_blank", "noopener");
+        b.textContent = "Waiting…"; b.disabled = true;
+        polls = 0;
+        const tick = async () => {
+          if (!stillOn() || ++polls > 100) return;  // 3 s × 100 = 5 min
+          const s = await api("/api/integrations").catch(() => null);
+          if (s?.connected?.includes(b.dataset.connect)) return draw();
+          setTimeout(tick, 3000);
+        };
+        setTimeout(tick, 3000);
+      } catch (err) { toast("✗ " + err.message); }
+    });
+    wireConnect(box);
+    const q = box.querySelector(".integ-q");
+    if (q) {
+      let timer;
+      q.oninput = () => { clearTimeout(timer); timer = setTimeout(async () => {
+        const r = await api(`/api/integrations/catalog?q=${encodeURIComponent(q.value)}`).catch(() => ({ apps: [] }));
+        const hits = box.querySelector(".integ-hits");
+        hits.innerHTML = r.apps.map(a => appRow(a.slug, a)).join("") || `<div class="empty">No app matches.</div>`;
+        wireConnect(hits);
+      }, 250); };
+    }
+  };
+  draw();
 }
 
 async function toggleMemory(row, botId){
@@ -3499,7 +3654,19 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const b = addMsg(m.role, m.content, m.bot, m.asked_by, m.ts);
       if (m.role === "assistant") decorateReply(b.closest(".msg"), m);
     });
+    renderAppCards();
     stream.scrollTop = stream.scrollHeight;
+  }
+  // Held app actions of this thread, at its end, until answered.
+  function renderAppCards(){
+    stream.querySelectorAll(".app-card").forEach(el => el.remove());
+    _APPROVALS.filter(a => isAppAction(a) && a.chat && a.chat === activeChatId).forEach(a => {
+      const el = document.createElement("div");
+      el.className = "approval-bar app-card";
+      el.innerHTML = appCardHtml(a);
+      wireAppCard(el, a);
+      stream.appendChild(el);
+    });
   }
   function busyNote(){ statusEl.textContent = "Reply in progress · Esc to stop"; }
   // Bumped by every thread switch: a slow load drops out once you moved on.
@@ -4204,7 +4371,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
     busy = true;
     if (typeof override !== "string") input.value = "";
     const hadPending = _APPROVALS.some(a => a.chat === activeChatId);
-    stream.querySelectorAll(".approval-bar").forEach(el => el.remove());   // any reply answers it
+    let heldThisTurn = false;
+    stream.querySelectorAll(".approval-bar:not(.app-card)").forEach(el => el.remove());   // any reply answers it; app cards stay
     input.style.height = "";
     statusEl.textContent = "thinking…";
     sendBtn.disabled = true;
@@ -4296,6 +4464,10 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
               if (r.bubble === bubble) full = obj.clean;
             }
             if (obj.approval) { _APPROVALS.unshift(obj.approval); replyAt(obj.msg).meta.approval = obj.approval; }
+            if (obj.app_actions) {
+              obj.app_actions.forEach(a => { if (!_APPROVALS.some(x => x.id === a.id)) _APPROVALS.unshift(a); });
+              heldThisTurn = true;
+            }
             if (obj.error) { bubble.innerHTML = formatChatText("Error: " + obj.error); reader.cancel().catch(() => {}); return; }
             if (obj.delta) {
               // A tool call ran between two narration segments — start the next
@@ -4330,7 +4502,8 @@ async function renderConfirmDeleteChannel(channelSlug, profileSlug){
       const saved = replies.flatMap(r => r.meta.deliverables || []);
       if (extra?.approval === "approved" && saved.length)
         openDeliverable({ ...saved[0], bot: replies.find(r => r.meta.deliverables?.length)?.meta.bot });
-      if (hadPending || replies.some(r => r.meta.approval)) renderRail().catch(() => {});   // inbox count
+      if (hadPending || heldThisTurn || replies.some(r => r.meta.approval)) renderRail().catch(() => {});   // inbox count
+      renderAppCards();
     }
   }
 

@@ -695,3 +695,23 @@ summary.pf-head::-webkit-details-marker{display:none}
 @media (prefers-reduced-motion:reduce){
   *{transition:none!important;animation:none!important}
 }
+
+/* Connected apps: held app action cards, per-bot grants, Integrations panel */
+.approval-bar.app-card{flex-direction:column;align-items:stretch}
+.app-card-h small{display:block;color:var(--ui-color-text-muted);font-size:var(--ui-type-caption)}
+.app-fields{display:grid;grid-template-columns:max-content 1fr;gap:var(--ui-space-1) var(--ui-space-3);margin:0;font-size:var(--ui-type-control)}
+.app-fields dt{color:var(--ui-color-text-muted)}
+.app-fields dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.app-btns{display:flex;gap:var(--ui-space-1-5)}
+.app-edit{display:grid;gap:var(--ui-space-2)}
+.app-edit label{display:grid;gap:var(--ui-space-1);font-size:var(--ui-type-label);color:var(--ui-color-text-muted)}
+.app-edit input,.app-edit textarea{font:inherit;color:var(--ui-color-text-secondary)}
+.app-result{font-size:var(--ui-type-control)}
+.app-row .t{flex:1}
+.app-grants{display:flex;flex-wrap:wrap;gap:var(--ui-space-1-5) var(--ui-space-3);margin-top:var(--ui-space-1-5);font-size:var(--ui-type-label)}
+.integ-group h3{margin:var(--ui-space-3) 0 var(--ui-space-1-5);font-size:var(--ui-type-label);color:var(--ui-color-text-muted)}
+.integ-row{display:flex;align-items:center;gap:var(--ui-space-2);padding:var(--ui-space-1-5) 0;border-bottom:1px solid var(--ui-color-border)}
+.integ-row .t{flex:1}
+.integ-row .t small{display:block;color:var(--ui-color-text-muted);font-size:var(--ui-type-caption)}
+.integ-key{display:flex;flex-wrap:wrap;gap:var(--ui-space-2);align-items:center}
+.integ-q{width:100%;max-width:360px}

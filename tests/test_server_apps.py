@@ -244,8 +244,9 @@ class Turn(Base):
         super().setUp()
         integrations.set_key("ak_x", self.root)
 
-    def run_turn(self, text, replies=(), apps_used=False):
+    def run_turn(self, text, replies=(), apps_used=False, hold=False):
         seen = []
+        self_root = self.root
         replies = list(replies)
 
         def make(who):
@@ -273,6 +274,10 @@ class Turn(Base):
 
                 def ask(self, prompt, **kw):
                     seen.append({"who": who, **kw})
+                    if kw.get("apps_token") and hold:  # what the relay does mid-turn
+                        approvals.add_app_action(self_root, ws="hq", room="hq/general", chat=CHAT, bot="cos",
+                                                 person="ceo", toolkit="gmail", slug="GMAIL_SEND_EMAIL",
+                                                 arguments={"recipient_email": "a@example.com"})
                     yield ("delta", replies.pop(0) if replies else "ok")
                     yield ("done", {})
             return S
@@ -320,6 +325,13 @@ class Turn(Base):
         self.assertEqual(seen[0]["apps_token"], seen[2]["apps_token"])
         self.assertNotIn("apps_token", seen[1])
         self.assertIs(seen[1]["with_web"], False)
+
+    def test_held_actions_streamed_to_thread(self):
+        _, _, out = self.run_turn("reply to the thread in my inbox", hold=True)
+        events = [json.loads(line[6:]) for line in out.splitlines() if line.startswith("data: {")]
+        held = [e["app_actions"] for e in events if "app_actions" in e]
+        self.assertEqual(len(held), 1)
+        self.assertEqual(held[0][0]["action"]["slug"], "GMAIL_SEND_EMAIL")
 
     def test_apps_used_keeps_web_off(self):
         seen, _, _ = self.run_turn("@web find competitor pricing", apps_used=True)
