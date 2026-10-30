@@ -259,7 +259,11 @@ config to a `0600` file under `team/` (`mkstemp`) and delete it in the turn's
   SHARE INVITE ACCEPT DECLINE SET APPLY MARK ARCHIVE UPLOAD`), or the slug is
   in a small known-reads set for noun-first names
   (`GOOGLECALENDAR_EVENTS_LIST`, `GOOGLECALENDAR_EVENTS_GET`,
-  `GOOGLECALENDAR_LIST_CALENDARS`, ...). Everything else is a write,
+  `GOOGLECALENDAR_LIST_CALENDARS`, ...; and Google Maps' lookups, which
+  are noun- or verb-first without a read verb: autocomplete, geocode,
+  reverse geocode, nearby search, text search, place details/photo,
+  route, route matrix, time zone, map tiles, embed, aerial video; its
+  `CREATE_TILES_SESSION` stays a write). Everything else is a write,
   including creating Gmail drafts, labels, updates and deletes. Unlike
   OpenMausBot, drafts are not exempt, and neither is anything else that is
   not a send (OpenMausBot runs updates, deletes and even calendar events with
@@ -390,6 +394,8 @@ builder's call within these needs:
     Google Search Console.
   - **Marketing & sales:** Mailchimp, Beehiiv (API key), Canva, Calendly,
     Google Ads, HubSpot, Apollo (reads spend credits, so always held).
+  - **Local & prospecting:** Google Maps (place search, nearby search, place
+    details with phone/website, geocoding, routes).
   Below: search over the rest of the catalog. Connect opens Composio's link
   in a new tab and the panel polls status until connected or 5 minutes pass.
 - **Grants**: in each bot's profile/team view, per workspace, a three-way
@@ -463,6 +469,10 @@ builder's call within these needs:
 - Exact app-intent regex and the known-reads list beyond the examples.
 - The full `BLOCKED_TOOLKITS` and `PAID_READ_TOOLKITS` lists, from a sweep of
   the catalog.
+- Exact Google Maps tool slugs for the known-reads set (from the catalog).
+  Maps lookups are billed by Google per request; on an API-key connection
+  the cost lands on the user's Google Cloud bill. The Integrations panel
+  says so next to Maps.
 - Module split inside `dashboard/` (e.g. `dashboard/apps_relay.py`) and how the
   turn token registry is threaded through `ChatSession`.
 
