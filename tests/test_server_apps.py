@@ -216,5 +216,116 @@ class Approve(Base):
         self.assertEqual((data["status"], data["result"]), ("failed", "Failed: bad to"))
 
 
+CHAT = "11111111-2222-3333-4444-555555555555"
+
+
+class NeedsApps(unittest.TestCase):
+    def test_needs_apps_table(self):
+        gm, gc, dr = {"gmail": "write"}, {"googlecalendar": "write"}, {"googledrive": "read"}
+        cases = [
+            ("summarize my inbox", gm, False, True),
+            ("any unread from the bank?", gm, False, True),
+            ("write an email newsletter", gm, False, False),
+            ("add to my calendar tomorrow", gc, False, False),
+            ("set a meeting with Ana on google calendar", gc, False, True),
+            ("write a LinkedIn post", {"linkedin": "write"}, False, False),
+            ("check my instagram stats", {"instagram": "read"}, False, True),
+            ("how is my google search console doing", {"google_search_console": "read"}, False, True),
+            ("@apps list files", dr, False, True),
+            ("summarize my inbox", {}, False, False),
+            ("summarize my inbox", gm, True, False),
+        ]
+        for text, grant, explicit, want in cases:
+            self.assertIs(server._needs_apps(text, grant, explicit), want, text)
+
+
+class Turn(Base):
+    def setUp(self):
+        super().setUp()
+        integrations.set_key("ak_x", self.root)
+
+    def run_turn(self, text, replies=(), apps_used=False):
+        seen = []
+        replies = list(replies)
+
+        def make(who):
+            class S:
+                _started = False
+                _turn_count = 0
+                _last_skill = None
+                _skill_explicit = False
+                session_id = CHAT
+
+                def __init__(self, *a, **k):
+                    self.apps_used = apps_used
+
+                def is_fresh(self):
+                    return not self._started
+
+                def note_skill(self, *a, **k):
+                    pass
+
+                def note_bot(self, *a):
+                    pass
+
+                def close(self):
+                    pass
+
+                def ask(self, prompt, **kw):
+                    seen.append({"who": who, **kw})
+                    yield ("delta", replies.pop(0) if replies else "ok")
+                    yield ("done", {})
+            return S
+        lead = make("lead")()
+        sink = io.BytesIO()
+        h = server.Handler.__new__(server.Handler)
+        h.wfile = sink
+        h.send_response = h.send_header = h.end_headers = lambda *a, **k: None
+        h.log_message = lambda *a: None
+        h.server = SimpleNamespace(server_address=("127.0.0.1", PORT))
+        with mock.patch.object(server, "get_chat_session", return_value=lead), \
+                mock.patch.object(server.db, "tree", return_value=[]), \
+                mock.patch.object(server.chat_session, "ChatSession", make("mate")):
+            h._handle_ask({"messages": [{"role": "user", "content": text}]})
+        return seen, lead, sink.getvalue().decode()
+
+    def test_app_turn_flags(self):
+        seen, lead, out = self.run_turn("draft a reply to the thread in my inbox")
+        self.assertNotIn("tag who should do it", out)
+        kw = seen[0]
+        self.assertEqual(kw["model"], server.chat_session.ESCALATED_MODEL)
+        self.assertIs(kw["with_web"], False)
+        self.assertEqual(kw["apps_port"], PORT)
+        self.assertEqual(len(kw["apps_token"]), 64)
+        self.assertTrue(lead.apps_used)
+
+    def test_no_key_no_apps(self):
+        integrations.remove_key(self.root)
+        seen, lead, _ = self.run_turn("summarize my inbox")
+        self.assertNotIn("apps_token", seen[0])
+        self.assertFalse(lead.apps_used)
+
+    def test_ordinary_turn_unchanged(self):
+        seen, _, _ = self.run_turn("what is on the roadmap?")
+        self.assertNotIn("apps_token", seen[0])
+
+    def test_token_revoked_after_request(self):
+        seen, _, _ = self.run_turn("summarize my inbox")
+        self.assertIsNone(server.apps_relay.TOKENS.lookup(seen[0]["apps_token"]))
+
+    def test_followup_gets_same_token_teammate_none(self):
+        server.bots.set_active("cmo", True, root=self.root)
+        seen, _, _ = self.run_turn("summarize my inbox", replies=["CONSULT @cmo: tone?", "advice", "final"])
+        self.assertEqual([s["who"] for s in seen], ["lead", "mate", "lead"])
+        self.assertEqual(seen[0]["apps_token"], seen[2]["apps_token"])
+        self.assertNotIn("apps_token", seen[1])
+        self.assertIs(seen[1]["with_web"], False)
+
+    def test_apps_used_keeps_web_off(self):
+        seen, _, _ = self.run_turn("@web find competitor pricing", apps_used=True)
+        self.assertIs(seen[0]["with_web"], False)
+        self.assertNotIn("apps_token", seen[0])
+
+
 if __name__ == "__main__":
     unittest.main()

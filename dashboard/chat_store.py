@@ -122,6 +122,7 @@ def record_turn(sess, scope, user_msg, reply, bot=None, room=None, meta=None, ex
         "last_skill": sess._last_skill,
         "skill_explicit": sess._skill_explicit,
         "last_bot": getattr(sess, "_last_bot", None),
+        "apps_used": bool(getattr(sess, "apps_used", False)),
     })
     if room and not rec.get("room"):
         rec["room"] = room

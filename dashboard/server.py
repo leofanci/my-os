@@ -498,6 +498,34 @@ def _needs_web(text, skill=None):
     return False
 
 
+# Connected apps (Composio) mount only when the lead bot has a grant here and the
+# message is about one of its apps. Gmail/Calendar/Drive have intent words; any
+# other app needs `@apps` or "my <app>": a bare name ("a LinkedIn post") is
+# content work for the myOS pipeline. Plain calendar words stay on the myOS calendar.
+_GMAIL_INTENT_RE = re.compile(
+    r"\b(?:inbox|gmail|unread)\b|\bmy (?:e-?mails?|mail)\b|\breply to (?:him|her|them|this|that|the)\b", re.I)
+_GCAL_INTENT_RE = re.compile(r"\bgoogle calendar\b|\b(?:invite|meeting|call) with\b", re.I)
+_DRIVE_INTENT_RE = re.compile(r"\b(?:google )?drive\b|\bgoogle docs?\b", re.I)
+_APP_INTENT = {"gmail": _GMAIL_INTENT_RE, "googlecalendar": _GCAL_INTENT_RE, "googledrive": _DRIVE_INTENT_RE}
+
+
+def _needs_apps(text, grant, explicit_skill=False):
+    """Pure string classifier, like _needs_web: no model call, no network."""
+    if explicit_skill or not grant:
+        return False
+    text = text or ""
+    if "apps" in _MENTION_RE.findall(text.lower()):
+        return True
+    for slug in grant:
+        rx = _APP_INTENT.get(slug)
+        if rx is not None:
+            if rx.search(text):
+                return True
+        elif re.search(rf"\bmy {re.escape(slug.replace('_', ' '))}\b", text, re.I):
+            return True
+    return False
+
+
 # Linked app access is activated only for code/app questions. The browser may
 # send the active project slug on every turn, but an ordinary GTM question must
 # not pay for Glob/Grep schemas or expose the linked directory to that process.
@@ -938,7 +966,7 @@ def get_chat_session(project_scope=None, chat_id=None, new=False):
 
 # ── Connected apps (Composio). The relay is the only route a bot can reach;
 # everything else here is the user's own dashboard, under normal auth.
-APPS_RELAY_PATH = "/api/internal/apps/mcp"
+APPS_RELAY_PATH = chat_session.APPS_MCP_PATH
 # Shown first in the Integrations panel; the rest of the catalog is searchable.
 PINNED = [
     {"group": "Work", "apps": ["gmail", "googlecalendar", "googledrive", "googledocs", "googlesheets",
@@ -1209,8 +1237,17 @@ class Handler(BaseHTTPRequestHandler):
         suggest = _suggest_skill(user_msg) if not explicit else None
         # Only a turn that may write (tagged skill, or its continuation) can ask for approval.
         may_write = bool(explicit) or _continuation_allowed(sess, user_msg)
+        # An app request is not a content write: decided before the write gate, and
+        # its only approval path is the held app action (no skill, no APPROVAL line).
+        app_grant = integrations.grant(ws, bot_id, ROOT) if integrations.api_key(ROOT) else {}
+        app_turn = _needs_apps(user_msg, app_grant, bool(_explicit_skill(user_msg)))
+        if app_turn:
+            skill = explicit = suggest = None
+            may_write = False
+            sess.apps_used = True
 
         if (_WRITE_TURN_RE.search(user_msg or "")
+                and not app_turn
                 and not explicit
                 and not _continuation_allowed(sess, user_msg)):
             self.send_response(200)
@@ -1227,8 +1264,10 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        with_web = _needs_web(user_msg, skill)
-        model = _pick_model(skill, with_web, user_msg, sess, explicit=bool(explicit))
+        apps_used = bool(getattr(sess, "apps_used", False))
+        with_web = _needs_web(user_msg, skill) and not apps_used
+        model = (chat_session.ESCALATED_MODEL if app_turn
+                 else _pick_model(skill, with_web, user_msg, sess, explicit=bool(explicit)))
 
         wants_file_search = _needs_workspace(user_msg, skill)
         wants_app_context = _needs_app_context(user_msg, skill, suggest)
@@ -1344,9 +1383,9 @@ class Handler(BaseHTTPRequestHandler):
         ctx_len = len((body.get("context") or "").strip())
         fresh = sess.is_fresh()
         self.log_message(
-            "chat turn prompt=%d ctx=%d bot=%s skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s fresh=%s turn=%d",
+            "chat turn prompt=%d ctx=%d bot=%s skill=%s explicit=%s model=%s web=%s app=%s graph=%s files=%s apps=%s fresh=%s turn=%d",
             len(text), ctx_len, bot_id, skill or "-", bool(explicit), model, with_web,
-            bool(workspace_dir), bool(graph_context), file_search_mode, fresh,
+            bool(workspace_dir), bool(graph_context), file_search_mode, app_turn, fresh,
             sess._turn_count,
         )
 
@@ -1397,7 +1436,7 @@ class Handler(BaseHTTPRequestHandler):
             own = team.skills_of(b2)
             c_skill = _suggest_skill(question, among=own)
             c_skill = c_skill if c_skill in own else None
-            c_web = _needs_web(question, c_skill)
+            c_web = _needs_web(question, c_skill) and not apps_used  # app data in this thread
             c_model = (chat_session.ESCALATED_MODEL if (c_skill or c_web)
                        else chat_session.CHAT_MODEL)
             prompt = _teammate_prompt(team, b2, asked_by, question, msgs[0]["content"],
@@ -1408,6 +1447,14 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 _EXTRA["sess"] = None
 
+        # The turn token lives for this request: the lead and its follow-up run
+        # get it, a consulted teammate never does; revoked in the finally below.
+        apps_kw = {}
+        if app_turn:
+            apps_kw = {"apps_token": apps_relay.TOKENS.mint(
+                           {"ws": ws, "bot": bot_id, "chat": getattr(sess, "session_id", None),
+                            "room": (room or {}).get("id"), "person": bots.CEO}),
+                       "apps_port": self.server.server_address[1]}
         try:
             # Tell the client which saved chat this turn belongs to (a scope
             # change or first turn may have started a new one).
@@ -1419,7 +1466,7 @@ class Handler(BaseHTTPRequestHandler):
             emit({"bot": {**_bot_info(team, bot_id), "skill": skill, "handoff_from": handoff_from}})
             lead_text = run(sess, text, model, with_web, msgs[0],
                             workspace_dir=(workspace_dir if file_search_mode else None),
-                            file_search_mode=file_search_mode)
+                            file_search_mode=file_search_mode, **apps_kw)
             lead_text, asks = _extract_consults(lead_text, team)
             if asks:
                 msgs[0]["content"] = lead_text
@@ -1435,7 +1482,7 @@ class Handler(BaseHTTPRequestHandler):
                 emit({"msg_start": {**_bot_info(team, bot_id), "followup": True}})
                 m3 = {"bot": bot_id, "content": ""}
                 msgs.append(m3)
-                run(sess, _followup_prompt(team, answers), model, with_web, m3)
+                run(sess, _followup_prompt(team, answers), model, with_web, m3, **apps_kw)
             last = len(msgs) - 1
             if files_before is not None:
                 handed = deliverables.changed(ROOT, ws, files_before, db.tree(), db.posts())
@@ -1470,6 +1517,8 @@ class Handler(BaseHTTPRequestHandler):
             traceback.print_exc()
             emit({"error": "internal error"})
         finally:
+            if apps_kw:
+                apps_relay.TOKENS.revoke(apps_kw["apps_token"])
             if isinstance(getattr(sess, "session_id", None), str):
                 try:
                     head = msgs[0]
