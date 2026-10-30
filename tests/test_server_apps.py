@@ -139,6 +139,14 @@ class IntegrationsApi(Base):
             code, data, _, _ = request("POST", "/api/integrations/connect", {"toolkit": "gmail"})
         self.assertEqual((code, data["url"]), (200, "https://backend.composio.dev/l/1"))
 
+    def test_grants_unknown_workspace_400(self):
+        # An unknown workspace must not fall back to HQ and grant an HQ bot apps.
+        with mock.patch.object(server.db, "tree", return_value=[]):
+            code = request("POST", "/api/integrations/grants",
+                           {"ws": "gone-project", "bot": "cos", "apps": {"gmail": "write"}})[0]
+        self.assertEqual(code, 400)
+        self.assertEqual(integrations.all_grants(self.root), {})
+
     def test_grants_invalid_400(self):
         self.assertEqual(request("POST", "/api/integrations/grants",
                                  {"ws": "hq", "bot": "cos", "apps": {"firecrawl": "write"}})[0], 400)

@@ -2095,6 +2095,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._send(502, {"ok": False, "error": str(e)})
                 if path == "/api/integrations/grants":
                     ws, _ = _resolve_workspace(body.get("ws"), db.tree())
+                    if ws != (body.get("ws") or bots.HQ):  # never fall back to HQ for a grant
+                        raise ValueError(f"unknown workspace: {body.get('ws')}")
                     bot_id = str(body.get("bot") or "")
                     if bot_id not in bots.load_defs():
                         raise ValueError(f"unknown bot: {bot_id}")
