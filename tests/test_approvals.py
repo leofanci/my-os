@@ -151,5 +151,100 @@ class Memory(unittest.TestCase):
         self.assertIn("premium tier", bots.read_memory("cmo", "acme", self.root))
 
 
+class AppActions(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def hold(self, ws="hq", chat="c1", slug="GMAIL_SEND_EMAIL", args=None):
+        return approvals.add_app_action(self.root, ws=ws, room=f"{ws}/general", chat=chat, bot="cos",
+                                        person="ceo", toolkit="gmail", slug=slug,
+                                        arguments=args or {"recipient_email": "a@example.com"})
+
+    def test_add_and_claim_once(self):
+        rec = self.hold()
+        self.assertEqual((rec["kind"], rec["status"]), ("app_action", "pending"))
+        self.assertEqual(rec["preview"]["title"], "Send email")
+        self.assertEqual(approvals.claim(rec["id"], self.root)["status"], "running")
+        with self.assertRaises(ValueError):
+            approvals.claim(rec["id"], self.root)
+
+    def test_finish_done(self):
+        rec = self.hold()
+        approvals.claim(rec["id"], self.root)
+        approvals.finish(rec["id"], "done", "Sent.", self.root)
+        got = approvals.get(rec["id"], self.root)
+        self.assertEqual((got["status"], got["result"]), ("done", "Sent."))
+        self.assertEqual(approvals.pending(self.root), [])
+
+    def test_reject(self):
+        rec = self.hold()
+        approvals.reject(rec["id"], self.root)
+        self.assertEqual(approvals.get(rec["id"], self.root)["status"], "rejected")
+        with self.assertRaises(ValueError):
+            approvals.claim(rec["id"], self.root)
+
+    def test_resolve_chat_skips_app_action(self):
+        rec = self.hold()
+        approvals.add(self.root, ws="hq", room="hq/general", chat="c1", bot="cos", summary="save memo")
+        self.assertEqual(approvals.resolve_chat("c1", "answered", self.root), 1)
+        self.assertEqual(approvals.get(rec["id"], self.root)["status"], "pending")
+
+    def test_chat_add_does_not_supersede_app_action(self):
+        rec = self.hold()
+        approvals.add(self.root, ws="hq", room="hq/general", chat="c1", bot="cos", summary="save memo")
+        self.assertEqual(approvals.get(rec["id"], self.root)["status"], "pending")
+
+    def test_two_app_actions_same_chat_both_pending(self):
+        self.hold()
+        self.hold()
+        self.assertEqual(len(approvals.pending(self.root)), 2)
+
+    def test_expire_after_7_days(self):
+        rec = self.hold()
+        with mock.patch("core.approvals.time.time", return_value=rec["created"] + 7 * 86400 + 1):
+            self.assertEqual(approvals.pending(self.root), [])
+        self.assertEqual(approvals.get(rec["id"], self.root)["status"], "expired")
+
+    def test_stale_running_becomes_failed(self):
+        rec = self.hold()
+        approvals.claim(rec["id"], self.root)
+        started = approvals.get(rec["id"], self.root)["started"]
+        with mock.patch("core.approvals.time.time", return_value=started + 601):
+            approvals.pending(self.root)
+        got = approvals.get(rec["id"], self.root)
+        self.assertEqual(got["status"], "failed")
+        self.assertEqual(got["result"], "May or may not have gone out. Check the app.")
+
+    def test_trim_keeps_pending_app_actions(self):
+        rec = self.hold()
+        for i in range(approvals.KEEP + 50):
+            approvals.add(self.root, ws="hq", room="hq/general", chat=f"x{i}", bot="cos", summary="s")
+        self.assertIsNotNone(approvals.get(rec["id"], self.root))
+        self.assertLessEqual(len(approvals.load(self.root)), approvals.KEEP + 1)
+
+    def test_rows_without_kind_still_chat(self):
+        approvals._save(self.root, [{"id": "old1", "chat": "c9", "status": "pending", "ws": "hq"}])
+        self.assertEqual(approvals.resolve_chat("c9", "answered", self.root), 1)
+
+    def test_edit_rebuilds_preview(self):
+        rec = self.hold()
+        approvals.edit_arguments(rec["id"], {"recipient_email": "z@example.com", "subject": "New"}, self.root)
+        got = approvals.get(rec["id"], self.root)
+        self.assertEqual(got["action"]["arguments"]["subject"], "New")
+        self.assertEqual(dict(got["preview"]["fields"])["To"], "z@example.com")
+
+    def test_app_actions_scoped_by_ws(self):
+        a = self.hold(ws="acme", chat="c1")
+        b = self.hold(ws="demo", chat="c2")
+        self.assertEqual([r["id"] for r in approvals.pending(self.root, "acme")], [a["id"]])
+        self.assertEqual(len(approvals.pending(self.root, "hq")), 2)
+        approvals.claim(a["id"], self.root)
+        self.assertEqual(approvals.get(b["id"], self.root)["status"], "pending")
+
+
 if __name__ == "__main__":
     unittest.main()

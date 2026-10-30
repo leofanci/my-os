@@ -102,5 +102,16 @@ class OpenSavedChat(unittest.TestCase):
         self.assertTrue(fresh.is_fresh())
 
 
+class AppsUsed(ChatStore):
+    def test_apps_used_round_trip(self):
+        s = _Sess()
+        s.apps_used = True
+        rec = store.record_turn(s, None, "summarize my inbox", "done")
+        self.assertIs(rec["apps_used"], True)
+        sess = server.chat_session.ChatSession.restore(".", "R", store.load(s.session_id))
+        self.assertIs(sess.apps_used, True)
+        self.assertIs(server.chat_session.ChatSession(repo_dir=".", rail="R").apps_used, False)
+
+
 if __name__ == "__main__":
     unittest.main()

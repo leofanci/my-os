@@ -96,6 +96,7 @@ SECRET_FILE_GLOBS = [
     ".env", ".env.*", "*.pem", "*.key", ".npmrc", ".netrc",
     "credentials*.json", "secrets.*", "id_rsa*", "id_ed25519*",
     ".auth-token",  # dashboard login token (server.TOKEN_FILE)
+    "integrations.json",  # Composio key + sessions (core.integrations)
 ]
 
 
@@ -116,6 +117,17 @@ APP_TOOLS = ["Glob", "Grep"]
 # (server._needs_web) — their schemas are small but off by default per the
 # token-lean policy.
 WEB_TOOLS = ["WebSearch", "WebFetch"]
+# Connected apps: on an app turn only, one HTTP MCP server pointing back at the
+# dashboard relay (server.APPS_RELAY_PATH). The turn token rides in the child's
+# env, never in argv (`ps` shows argv to every local user).
+APPS_MCP_PATH = "/api/internal/apps/mcp"
+APPS_TOKEN_ENV = "MYOS_APPS_TOKEN"
+
+
+def apps_mcp_config(port):
+    return json.dumps({"mcpServers": {"apps": {
+        "type": "http", "url": f"http://127.0.0.1:{port}{APPS_MCP_PATH}",
+        "headers": {"Authorization": "Bearer ${" + APPS_TOKEN_ENV + "}"}}}})
 
 # No turn cap: a chat persists via --resume until the user deletes it.
 # Full state snapshot + skill body inject on session start only (server); resume
@@ -151,6 +163,9 @@ class ChatSession:
         self.workspace = None
         self.deny_dirs = ()
         self.readonly = False  # a consulted teammate: osctl refuses every write
+        # Once a thread has read an app, its context holds that data: web tools
+        # stay off for good there (no "read mail, leak it via a search" path).
+        self.apps_used = False
 
     @classmethod
     def restore(cls, repo_dir, rail, rec, **kw):
@@ -161,6 +176,7 @@ class ChatSession:
         sess._last_skill = rec.get("last_skill")
         sess._skill_explicit = bool(rec.get("skill_explicit"))
         sess._last_bot = rec.get("last_bot")
+        sess.apps_used = bool(rec.get("apps_used"))
         return sess
 
     def is_fresh(self):
@@ -175,7 +191,7 @@ class ChatSession:
         }
 
     def _base_cmd(self, with_web=False, model=None, workspace_dir=None,
-                  file_search_mode=False, web_domains=()):
+                  file_search_mode=False, web_domains=(), apps_port=None):
         # Lean per-turn flags. Skills are NEVER discovered here (the server injects
         # the routed skill's body into the prompt instead), so we always pass
         # --disable-slash-commands + --setting-sources "" — zero skill-discovery
@@ -198,7 +214,8 @@ class ChatSession:
                          + (APP_ALLOWED_TOOLS
                             if workspace_dir and file_search_mode else [])
                          + (WEB_ALLOWED_TOOLS if with_web else [])
-                         + (web_fetch_rules(web_domains) if with_web else []))
+                         + (web_fetch_rules(web_domains) if with_web else [])
+                         + (["mcp__apps"] if apps_port else []))
         denied = [f"Read(**/{g})" for g in SECRET_FILE_GLOBS]
         denied += private_read_rules(self.repo_dir)
         if workspace_dir and file_search_mode:
@@ -214,6 +231,7 @@ class ChatSession:
                "--allowedTools", *allowed_tools,
                "--disallowedTools", *denied,
                "--strict-mcp-config",
+               *(["--mcp-config", apps_mcp_config(apps_port)] if apps_port else []),
                "--disable-slash-commands",
                "--setting-sources", "",
                "--restricted",
@@ -227,7 +245,7 @@ class ChatSession:
         return cmd
 
     def ask(self, text, with_web=False, model=None, workspace_dir=None,
-            file_search_mode=False, web_domains=()):
+            file_search_mode=False, web_domains=(), apps_token=None, apps_port=None):
         """Run one turn; yield (kind, payload) events. Each turn is its own
         `claude -p` invocation, resumed by session id so context persists.
         `with_web` adds the WebSearch/WebFetch tools for this turn;
@@ -239,10 +257,12 @@ class ChatSession:
         body on fresh session start only (no turn cap — session never auto-resets)."""
         proc = subprocess.Popen(
             self._base_cmd(with_web, model, workspace_dir, file_search_mode,
-                           web_domains),
+                           web_domains, apps_port=apps_port if apps_token else None),
             cwd=self.repo_dir,
-            env={**os.environ, "MYOS_WORKSPACE": self.workspace or "hq",
-                 **({"MYOS_READONLY": "1"} if self.readonly else {})},
+            env={**{k: v for k, v in os.environ.items() if k != APPS_TOKEN_ENV},
+                 "MYOS_WORKSPACE": self.workspace or "hq",
+                 **({"MYOS_READONLY": "1"} if self.readonly else {}),
+                 **({APPS_TOKEN_ENV: apps_token} if apps_token else {})},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)
         self._started = True
