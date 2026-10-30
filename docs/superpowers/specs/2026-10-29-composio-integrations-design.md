@@ -221,6 +221,10 @@ config to a `0600` file under `team/` (`mkstemp`) and delete it in the turn's
   client has no cookie. The relay path is matched **before** that check, still
   requires `_valid_host()`, accepts only the turn token, and is the only path
   exempted. A request with a cookie but no valid token is refused.
+- The gate (grant, read rule, hold) is written against a small upstream
+  interface (`list_tools`, `call`), with Composio as its only
+  implementation this round, so own MCP servers can be added later
+  without touching the gate (see "Prepared for later rounds").
 - The relay forwards MCP JSON-RPC to the person's session `mcp_url`, adding
   `x-api-key`. It must handle Composio's streamable-HTTP responses (plain JSON
   or `text/event-stream`) and the `mcp-session-id` header. It forwards
@@ -458,6 +462,20 @@ builder's call within these needs:
 - **Social publishing**: an approved post in the content calendar becomes one
   held `app_action` for its channel's app (Instagram carousel, LinkedIn post,
   ...), with a tailored card per platform.
+- **Own MCP servers (open-source tools)**: a second upstream kind beside
+  Composio, as OpenMausBot does with its `own_apps` server. The user adds a
+  server in the Integrations panel: a local command (stdio) or an HTTP URL,
+  e.g. a self-hosted Postiz, Listmonk, Plausible/Umami, Twenty, Cal.com, n8n,
+  Chatwoot, NocoDB or Baserow (MCP support checked per tool then). Same
+  rules as Composio apps: per-bot Off / Read / Read + write grants, reads run,
+  everything else held with a card, thread goes web-off. No Composio key
+  needed. Differences: a local server is code on the user's machine, so it
+  runs only after the user adds it explicitly; tool names are not
+  `APP_ACTION`-shaped, so the read rule uses the name check plus the
+  server's `readOnlyHint` only as a hint, defaulting to held; the server's
+  secrets live in `team/integrations.json` like the Composio key. Round 1
+  keeps the relay upstream-agnostic (section 3) so this is an addition, not
+  a rewrite.
 
 ## Left to the builder
 
