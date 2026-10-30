@@ -6,21 +6,36 @@ records a pending approval for the thread, and the UI shows Approve / Edit / No
 on the reply plus an inbox (HQ lists every workspace, a company only its own).
 Any new user message in that thread resolves it.
 
+A second kind, `app_action`, is a connected-app call a bot made that is not a
+read (send, post, create...). The relay stores it instead of running it, with a
+preview the server built from the real arguments; only an Approve click runs
+it, exactly once (pending -> running -> done/failed). Chat rules never touch
+these rows: a new message does not resolve them and a newer proposal does not
+supersede them. Rows with no `kind` are chat approvals.
+
 Stored in gitignored team/approvals.json (spans workspaces, so company bots
 are denied Read on team/).
 """
 import json
 import re
+import threading
 import time
 import uuid
 from pathlib import Path
 
-from core import bots
+from core import app_preview, bots
 
 MARKER_RE = re.compile(r"^[ \t>*_-]*APPROVAL:[*_ \t]*(.+?)[ \t*_]*$", re.M)
 SUMMARY_MAX = 200
 KEEP = 200
-STATUSES = {"pending", "approved", "rejected", "answered", "superseded"}
+STATUSES = {"pending", "approved", "rejected", "answered", "superseded",
+            "running", "done", "failed", "expired"}
+APP = "app_action"
+APP_TTL = 7 * 86400
+RUNNING_STALE = 600
+STALE_NOTE = "May or may not have gone out. Check the app."
+# Every read-modify-write holds this: the relay thread writes here too.
+LOCK = threading.RLock()
 
 
 def extract(reply):
@@ -45,53 +60,153 @@ def load(root=bots.ROOT):
     return [r for r in rows or [] if isinstance(r, dict) and r.get("id")]
 
 
+def _is_app(r):
+    return r.get("kind") == APP
+
+
+def _protected(r):
+    return _is_app(r) and r.get("status") in ("pending", "running")
+
+
 def _save(root, rows):
-    bots._atomic_write(_path(root), json.dumps({"approvals": rows[-KEEP:]}, indent=2) + "\n")
+    """Keep every open app action plus the newest KEEP of the rest."""
+    rest = {id(r) for r in [r for r in rows if not _protected(r)][-KEEP:]}
+    rows = [r for r in rows if _protected(r) or id(r) in rest]
+    bots._atomic_write(_path(root), json.dumps({"approvals": rows}, indent=2) + "\n")
 
 
 def add(root=bots.ROOT, *, ws, room, chat, bot, summary):
     """Record a pending approval; an older pending one in the same thread is superseded."""
-    rows = load(root)
-    for r in rows:
-        if r.get("chat") == chat and r.get("status") == "pending":
-            r["status"] = "superseded"
-    rec = {"id": uuid.uuid4().hex[:12], "ws": ws, "room": room, "chat": chat, "bot": bot,
-           "summary": summary, "created": time.time(), "status": "pending"}
-    rows.append(rec)
-    _save(root, rows)
-    return rec
+    with LOCK:
+        rows = load(root)
+        for r in rows:
+            if r.get("chat") == chat and r.get("status") == "pending" and not _is_app(r):
+                r["status"] = "superseded"
+        rec = {"id": uuid.uuid4().hex[:12], "ws": ws, "room": room, "chat": chat, "bot": bot,
+               "summary": summary, "created": time.time(), "status": "pending"}
+        rows.append(rec)
+        _save(root, rows)
+        return rec
 
 
 def resolve_chat(chat, status, root=bots.ROOT):
     """Close the thread's pending approval (the user answered it)."""
     if status not in STATUSES or not chat:
         return 0
-    rows = load(root)
-    n = 0
-    for r in rows:
-        if r.get("chat") == chat and r.get("status") == "pending":
-            r["status"], r["resolved"] = status, time.time()
-            n += 1
-    if n:
-        _save(root, rows)
-    return n
+    with LOCK:
+        rows = load(root)
+        n = 0
+        for r in rows:
+            if r.get("chat") == chat and r.get("status") == "pending" and not _is_app(r):
+                r["status"], r["resolved"] = status, time.time()
+                n += 1
+        if n:
+            _save(root, rows)
+        return n
 
 
 def move_room(old, new, root=bots.ROOT):
     """A renamed channel keeps its approvals: repoint every row at `new`."""
-    rows = load(root)
-    n = 0
-    for r in rows:
-        if r.get("room") == old:
-            r["room"] = new
-            n += 1
-    if n:
-        _save(root, rows)
-    return n
+    with LOCK:
+        rows = load(root)
+        n = 0
+        for r in rows:
+            if r.get("room") == old:
+                r["room"] = new
+                n += 1
+        if n:
+            _save(root, rows)
+        return n
 
 
 def pending(root=bots.ROOT, ws=None):
     """Open approvals, newest first; `ws` other than HQ narrows to one workspace."""
-    rows = [r for r in load(root) if r.get("status") == "pending"
+    with LOCK:
+        rows = load(root)
+        if _housekeep(rows):
+            _save(root, rows)
+    rows = [r for r in rows if r.get("status") == "pending"
             and (not ws or ws == bots.HQ or r.get("ws") == ws)]
     return sorted(rows, key=lambda r: r.get("created") or 0, reverse=True)
+
+
+def _housekeep(rows):
+    """Expire week-old app actions; a run cut off by a restart is failed, never re-run."""
+    now, changed = time.time(), False
+    for r in rows:
+        if not _is_app(r):
+            continue
+        if r.get("status") == "pending" and now - (r.get("created") or 0) > APP_TTL:
+            r["status"], r["resolved"], changed = "expired", now, True
+        elif r.get("status") == "running" and now - (r.get("started") or 0) > RUNNING_STALE:
+            r.update(status="failed", result=STALE_NOTE, resolved=now)
+            changed = True
+    return changed
+
+
+def add_app_action(root=bots.ROOT, *, ws, room, chat, bot, person, toolkit, slug, arguments):
+    """Hold one app tool call for an Approve click."""
+    rec = {"id": uuid.uuid4().hex[:12], "kind": APP, "ws": ws, "room": room, "chat": chat,
+           "bot": bot, "person": person, "status": "pending", "created": time.time(),
+           "action": {"toolkit": toolkit, "slug": slug, "arguments": arguments},
+           "preview": app_preview.build(slug, arguments, toolkit)}
+    with LOCK:
+        rows = load(root)
+        rows.append(rec)
+        _save(root, rows)
+    return rec
+
+
+def get(aid, root=bots.ROOT):
+    return next((r for r in load(root) if r.get("id") == aid), None)
+
+
+def _mutate_app(aid, root, fn):
+    with LOCK:
+        rows = load(root)
+        _housekeep(rows)
+        rec = next((r for r in rows if r.get("id") == aid and _is_app(r)), None)
+        if rec is None:
+            raise ValueError("no such app action")
+        fn(rec)
+        _save(root, rows)
+        return dict(rec)
+
+
+def _need(rec, status):
+    if rec.get("status") != status:
+        raise ValueError(f"not {status}")
+
+
+def claim(aid, root=bots.ROOT):
+    """pending -> running, once: a double click or a second tab cannot run it twice."""
+    def fn(r):
+        _need(r, "pending")
+        r.update(status="running", started=time.time())
+    return _mutate_app(aid, root, fn)
+
+
+def finish(aid, status, result, root=bots.ROOT):
+    if status not in ("done", "failed"):
+        raise ValueError("bad status")
+    def fn(r):
+        _need(r, "running")
+        r.update(status=status, result=result, resolved=time.time())
+    return _mutate_app(aid, root, fn)
+
+
+def reject(aid, root=bots.ROOT):
+    def fn(r):
+        _need(r, "pending")
+        r.update(status="rejected", resolved=time.time())
+    return _mutate_app(aid, root, fn)
+
+
+def edit_arguments(aid, arguments, root=bots.ROOT):
+    if not isinstance(arguments, dict):
+        raise ValueError("arguments must be an object")
+    def fn(r):
+        _need(r, "pending")
+        r["action"]["arguments"] = arguments
+        r["preview"] = app_preview.build(r["action"]["slug"], arguments, r["action"].get("toolkit"))
+    return _mutate_app(aid, root, fn)
