@@ -449,6 +449,11 @@ def _parse_frontmatter(text):
                     k, _, v = line.partition(":")
                     fm[k.strip()] = v.strip()
             body = parts[2].strip()
+        else:
+            print("warning: frontmatter opened but never closed", file=sys.stderr)
+    elif (first := text.split("\n", 1)[0].rstrip()).endswith("---"):
+        # e.g. stray typing before the opener: metadata would vanish silently
+        print(f"warning: malformed frontmatter opener {first!r}", file=sys.stderr)
     return fm, body
 
 
