@@ -82,6 +82,7 @@ RAIL = CHAT_RAIL
 # nothing. See do_GET "/" and write_token_file().
 TOKEN_FILE = HERE / ".auth-token"
 _TOKEN_IN_LOG = re.compile(r"([?&]token=)[^&\s\"]*")
+_MCP_SESSION_RE = re.compile(r"[\x21-\x7e]{1,256}")  # visible ASCII, as MCP specifies
 LOGIN_REQUIRED_HTML = (
     b"<!doctype html><meta charset=utf-8><title>myOS</title>"
     b"<p style='font:14px system-ui;margin:40px'>myOS is running. Open it from "
@@ -1164,7 +1165,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         if payload:
             self.send_header("Content-Type", "application/json")
-        if mcp_session_id:
+        if mcp_session_id and _MCP_SESSION_RE.fullmatch(mcp_session_id):  # never echo CR/LF
             self.send_header("mcp-session-id", mcp_session_id)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()

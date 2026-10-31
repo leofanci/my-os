@@ -117,6 +117,19 @@ class HttpBoundaryTest(unittest.TestCase):
         }
         self.assertTrue(h._authorized(require_origin=True))
 
+    def test_relay_session_header_is_never_echoed_raw(self):
+        h = server.Handler.__new__(server.Handler)
+        sent = []
+        h.send_response = lambda *a: None
+        h.send_header = lambda k, v: sent.append((k, v))
+        h.end_headers = lambda: None
+        h.wfile = io.BytesIO()
+        h._send_rpc(200, {"ok": 1}, "m-1\r\nSet-Cookie: x=1")
+        self.assertNotIn("mcp-session-id", [k for k, _ in sent])
+        sent.clear()
+        h._send_rpc(200, {"ok": 1}, "m-1")
+        self.assertIn(("mcp-session-id", "m-1"), sent)
+
     def test_json_body_limit_is_enforced_before_read(self):
         h = self.handler({"Content-Length": str(server.MAX_JSON_BYTES + 1)})
         h.rfile = io.BytesIO(b"")

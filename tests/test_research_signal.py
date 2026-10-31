@@ -58,6 +58,16 @@ class ResearchSignalTest(unittest.TestCase):
         self.assertEqual(result["query"], "demo topic")
         self.assertEqual(result["generated_at"], "2026-07-20T00:00:00Z")
 
+    def test_query_can_never_become_an_engine_flag(self):
+        # The query is bot-written: "--output=<path>" would write a file anywhere,
+        # "--publish" would put the result online.
+        seen = {}
+        self._mock_success()
+        run = subprocess.run
+        subprocess.run = lambda cmd, **kw: (seen.setdefault("cmd", cmd), run(cmd, **kw))[1]
+        fileops.research_signal("--output=/tmp/x --publish")
+        self.assertEqual(seen["cmd"][-2:], ["--", "--output=/tmp/x --publish"])
+
     def test_respects_max_clusters(self):
         self._mock_success()
         result = fileops.research_signal("demo topic", max_clusters=2)

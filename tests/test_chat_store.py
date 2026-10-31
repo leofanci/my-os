@@ -27,6 +27,13 @@ class ChatStore(unittest.TestCase):
         self.p.stop()
         self.tmp.cleanup()
 
+    def test_chat_id_must_match_whole(self):
+        s = _Sess()
+        store.record_turn(s, None, "hi", "ok")
+        self.assertIsNotNone(store.load(s.session_id))
+        with self.assertRaises(ValueError):  # "$" alone would admit it
+            store._path(s.session_id + "\n")
+
     def test_record_list_load_delete(self):
         s = _Sess()
         store.record_turn(s, ("demo", "/app"), "/workspace plan the demo launch", "ok")
