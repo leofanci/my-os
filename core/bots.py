@@ -84,9 +84,12 @@ def ws_dir(ws=HQ, root=ROOT):
     root = Path(root)
     if not ws or ws == HQ:
         return root / "team"
-    if not _SLUG_RE.match(ws) or not (root / "projects" / ws).is_dir():
+    if not _SLUG_RE.fullmatch(ws):  # one path segment: no "/", "..", or newline
         raise ValueError(f"unknown workspace: {ws}")
-    return root / "projects" / ws / "team"
+    project = root / "projects" / ws
+    if not project.is_dir():
+        raise ValueError(f"unknown workspace: {ws}")
+    return project / "team"
 
 
 def default_active(project=None):
@@ -251,11 +254,11 @@ def team(root=ROOT, ws=HQ, project=None):
 # Memory — one short markdown list per bot per project. Never mixes projects.
 # --------------------------------------------------------------------------- #
 def memory_path(bot_id, project=None, root=ROOT):
-    if not _SLUG_RE.match(bot_id or ""):
+    if not _SLUG_RE.fullmatch(bot_id or ""):
         raise ValueError("invalid bot id")
     root = Path(root)
     if project:
-        if not _SLUG_RE.match(project) or not (root / "projects" / project).is_dir():
+        if not _SLUG_RE.fullmatch(project) or not (root / "projects" / project).is_dir():
             raise ValueError(f"unknown project: {project}")
         return root / "projects" / project / "team" / f"{bot_id}.md"
     return root / "team" / "memory" / f"{bot_id}.md"

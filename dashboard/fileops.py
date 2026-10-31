@@ -380,11 +380,11 @@ def generate_brief(post_id, instruction=None, profile_slug=None, brief_id=None, 
     cmd = [sys.executable, str(ROOT / "generate.py"),
            "--workspace", str(ROOT), "brief", ctx["profile_slug"], post_id]
     if instruction and instruction.strip():
-        cmd += ["--instruction", instruction.strip()]
+        cmd += [f"--instruction={instruction.strip()}"]  # "=": option-looking text stays text
     if brief_id:
-        cmd += ["--spec", brief_id]
+        cmd += [f"--spec={brief_id}"]
     if voice_id:
-        cmd += ["--voice", voice_id]
+        cmd += [f"--voice={voice_id}"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise ActionError(f"brief job failed: {(res.stderr or res.stdout).strip()[:800]}")
@@ -420,11 +420,11 @@ def revise_post(post_id, instruction, profile_slug=None, brief_id=None, voice_id
 
     cmd = [sys.executable, str(ROOT / "generate.py"),
            "--workspace", str(ROOT), "revise", ctx["profile_slug"], post_id,
-           "--instruction", instruction]
+           f"--instruction={instruction}"]  # "=": option-looking text stays text
     if brief_id:
-        cmd += ["--spec", brief_id]
+        cmd += [f"--spec={brief_id}"]
     if voice_id:
-        cmd += ["--voice", voice_id]
+        cmd += [f"--voice={voice_id}"]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
         raise ActionError(f"revise job failed: {(res.stderr or res.stdout).strip()[:800]}")
@@ -894,6 +894,14 @@ def normalize_local_folder(value) -> str:
     # Claude's config holds every bot session's transcript, all workspaces.
     if resolved.is_relative_to(home / ".claude"):
         raise ActionError("local folder cannot be inside the Claude config folder")
+    # ~/.ssh, ~/.config, ~/.aws, ~/Library: keys and CLI tokens, never app code.
+    if resolved.is_relative_to(home):
+        top = resolved.relative_to(home).parts[0]
+        if top.startswith(".") or top == "Library":
+            raise ActionError("local folder cannot be a hidden or Library folder in your home")
+    # "Open folder" would launch an app bundle instead of showing it.
+    if any(part.lower().endswith(".app") for part in resolved.parts):
+        raise ActionError("local folder cannot be an app bundle")
     return str(resolved)
 
 
@@ -2050,22 +2058,23 @@ def _plan_args(profile_slug, params):
     if not period:
         raise ActionError("a period is required (e.g. '2026-07-01 to 2026-07-14')")
     args = [sys.executable, str(ROOT / "generate.py"),
-            "--workspace", str(ROOT), "plan", profile_slug, "--period", period]
+            "--workspace", str(ROOT), "plan", profile_slug, f"--period={period}"]
+    # "--flag=value" throughout: option-looking text stays text, never a flag.
     platforms = (params.get("platforms") or "").strip()
     if platforms:
-        args += ["--platforms", platforms]
+        args += [f"--platforms={platforms}"]
     cadence = params.get("cadence")
     if cadence not in (None, ""):
-        args += ["--cadence", str(int(cadence))]
+        args += [f"--cadence={int(cadence)}"]
     focus = (params.get("focus") or "").strip()
     if focus:
-        args += ["--focus", focus]
+        args += [f"--focus={focus}"]
     brief_counts = (params.get("brief_counts") or "").strip()
     if brief_counts:
-        args += ["--brief-counts", brief_counts]
+        args += [f"--brief-counts={brief_counts}"]
     voice_counts = (params.get("voice_counts") or "").strip()
     if voice_counts:
-        args += ["--voice-counts", voice_counts]
+        args += [f"--voice-counts={voice_counts}"]
     if params.get("dates"):
         args += ["--dates"]
     return args
@@ -2101,9 +2110,11 @@ def research_signal(query, max_clusters=5):
         raise ActionError(
             "last30days not installed — run `npx skills add mvanhorn/last30days-skill -g`"
         )
-    cmd = [sys.executable, str(LAST30DAYS_SCRIPT), query.strip(), "--emit=json",
+    # The query is bot-written: after "--" it can only be the topic, never a flag
+    # (--output=<path>, --publish, a cookie switch).
+    cmd = [sys.executable, str(LAST30DAYS_SCRIPT), "--emit=json",
            "--auto-resolve", "--no-browser-cookies",
-           "--search", LAST30DAYS_ZERO_CONFIG_SOURCES, "--days", "30"]
+           "--search", LAST30DAYS_ZERO_CONFIG_SOURCES, "--days", "30", "--", query.strip()]
     try:
         res = subprocess.run(cmd, capture_output=True, text=True,
                               timeout=LAST30DAYS_TIMEOUT_SECONDS)

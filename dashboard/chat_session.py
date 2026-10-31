@@ -17,7 +17,9 @@ stream_event/content_block_start/tool_use, and the turn ends with a top-level
 import json
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -122,6 +124,28 @@ WEB_TOOLS = ["WebSearch", "WebFetch"]
 # env, never in argv (`ps` shows argv to every local user).
 APPS_MCP_PATH = "/api/internal/apps/mcp"
 APPS_TOKEN_ENV = "MYOS_APPS_TOKEN"
+# Set on every turn of a thread that has read an app: osctl then refuses the
+# commands that send text off the machine (research-signal), like web-off does.
+APPS_USED_ENV = "MYOS_APPS_USED"
+
+# Claude lets a turn Read its project's temp folder. The default one is shared
+# with every dev session in this repo (scratch files, task output), so bots get
+# their own owner-only root per server run (CLAUDE_CODE_TMPDIR), removed on shutdown.
+_BOT_TMPDIR = None
+
+
+def bot_tmpdir():
+    global _BOT_TMPDIR
+    if _BOT_TMPDIR is None:
+        _BOT_TMPDIR = tempfile.mkdtemp(prefix="myos-bots-")
+    return _BOT_TMPDIR
+
+
+def remove_bot_tmpdir():
+    global _BOT_TMPDIR
+    if _BOT_TMPDIR:
+        shutil.rmtree(_BOT_TMPDIR, ignore_errors=True)
+        _BOT_TMPDIR = None
 
 
 def apps_mcp_config(port):
@@ -259,9 +283,11 @@ class ChatSession:
             self._base_cmd(with_web, model, workspace_dir, file_search_mode,
                            web_domains, apps_port=apps_port if apps_token else None),
             cwd=self.repo_dir,
-            env={**{k: v for k, v in os.environ.items() if k != APPS_TOKEN_ENV},
+            env={**{k: v for k, v in os.environ.items() if k not in (APPS_TOKEN_ENV, APPS_USED_ENV)},
                  "MYOS_WORKSPACE": self.workspace or "hq",
+                 "CLAUDE_CODE_TMPDIR": bot_tmpdir(),
                  **({"MYOS_READONLY": "1"} if self.readonly else {}),
+                 **({APPS_USED_ENV: "1"} if self.apps_used else {}),
                  **({APPS_TOKEN_ENV: apps_token} if apps_token else {})},
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, bufsize=1)

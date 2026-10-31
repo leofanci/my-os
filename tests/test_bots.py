@@ -21,6 +21,12 @@ def venture_root(tmp):
     return root
 
 
+class Paths(unittest.TestCase):
+    def test_bot_id_must_match_whole(self):
+        with self.assertRaises(ValueError):
+            bots.memory_path("cos\n")  # "$" alone would admit it
+
+
 class Defs(unittest.TestCase):
     def test_every_skill_has_exactly_one_defining_bot(self):
         owners = collections.Counter(s for b in bots.load_defs().values() for s in b.skills)
@@ -223,6 +229,7 @@ class Routing(unittest.TestCase):
 
         with mock.patch.object(server, "get_chat_session", return_value=S()), \
                 mock.patch.object(server.bots, "team", return_value=self.team), \
+                mock.patch.object(server.db, "tree", return_value=[]), \
                 mock.patch.object(server, "state_snapshot", return_value=""):
             h._handle_ask({"messages": [{"role": "user", "content": "@cmo map competitors"}]})
         out = sink.getvalue().decode()

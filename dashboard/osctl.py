@@ -44,6 +44,9 @@ _BLOCKED_IN_WORKSPACE = {"create-project"}
 _READ_ONLY_CMDS = {"tree", "get-project", "get-posts", "read-file", "get-id-catalog",
                    "resolve-id", "get-memory", "get-busy", "get-subsections",
                    "get-brief-spec", "get-voice", "research-signal"}
+# Commands that send text off the machine: off in a thread that read an app,
+# like WebSearch (chat_session.APPS_USED_ENV).
+_NETWORK_CMDS = {"research-signal"}
 # Repo areas that hold every workspace's data at once (calendar via get-busy).
 _PRIVATE_PREFIXES = ("chats/", "team/", "portfolio/", "database/", "os.db")
 # Args whose value names an existing entity (create commands mint new slugs,
@@ -85,9 +88,6 @@ def _guard(args, ws):
     """Refuse anything that reaches outside workspace `ws`."""
     if args.cmd in _BLOCKED_IN_WORKSPACE:
         raise fileops.ActionError(f"{args.cmd} is only available in HQ")
-    if getattr(args, "local_folder", None) is not None:
-        # A linked folder becomes the bot's --add-dir: only the user links one.
-        raise fileops.ActionError("linking a local folder is only available in HQ")
     if args.cmd in ("remember", "get-memory") and not args.project:
         args.project = ws  # a company's bot keeps memory in its company, never in HQ
     own = _owners()
@@ -858,6 +858,12 @@ def main(argv=None):
         if os.environ.get("MYOS_READONLY") and args.cmd not in _READ_ONLY_CMDS:
             raise fileops.ActionError("read-only: you were consulted. Tell your teammate "
                                       "what to save; they will do it.")
+        if os.environ.get("MYOS_WORKSPACE") and getattr(args, "local_folder", None) is not None:
+            # A linked folder becomes --add-dir on that company's turns: only the
+            # user links one, in the dashboard. Any bot (HQ too) is refused.
+            raise fileops.ActionError("only you can link a local folder, from the dashboard")
+        if os.environ.get(chat_session.APPS_USED_ENV) and args.cmd in _NETWORK_CMDS:
+            raise fileops.ActionError(f"{args.cmd} is off here: this thread read a connected app")
         ws = _workspace()
         if ws:
             _guard(args, ws)

@@ -86,6 +86,15 @@ class Gate(unittest.TestCase):
         self.handle(f)
         self.assertEqual(self.up.frames[-1], f)
 
+    def test_pass_through_rebuilt_from_name_and_arguments_only(self):
+        # Like a read: no extra fields (_meta, task hints, ...) reach Composio.
+        args = {"queries": [{"use_case": "read inbox"}]}
+        f = call("COMPOSIO_SEARCH_TOOLS", args)
+        f["params"]["_meta"] = {"progressToken": 1}
+        f["extra"] = True
+        self.handle(f)
+        self.assertEqual(self.up.frames[-1], call("COMPOSIO_SEARCH_TOOLS", args))
+
     def test_read_forwarded_rebuilt(self):
         read = {"tool_slug": "GMAIL_FETCH_EMAILS", "arguments": {"max_results": 5}}
         f = multi(read)

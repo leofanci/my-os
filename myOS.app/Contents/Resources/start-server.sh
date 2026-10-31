@@ -79,5 +79,6 @@ for pid in $(/usr/sbin/lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null); do
 done
 
 cd "$REPO" || { echo "NOREPO"; exit 1; }
+umask 077  # server.log and everything the server creates: owner-only
 "$PYTHON3" dashboard/server.py --port "$PORT" > "$LOGFILE" 2>&1 &
 echo "PID $!"

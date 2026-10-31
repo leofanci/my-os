@@ -126,10 +126,23 @@ def _frontmatter_values(path, keys=frozenset({"name", "handle"})):
     return values
 
 
+def project_dirs():
+    """This checkout's projects/ plus the main checkout's: a linked worktree has
+    none of its own, and the private-term check must not skip silently there."""
+    common = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT,
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    dirs = [PROJECTS]
+    if common and (Path(common).parent / "projects").resolve() != PROJECTS.resolve():
+        dirs.append(Path(common).parent / "projects")
+    return [d for d in dirs if d.is_dir()]
+
+
 def private_terms():
     terms = set()
-    if PROJECTS.is_dir():
-        for project in PROJECTS.iterdir():
+    for projects in project_dirs():
+        for project in projects.iterdir():
             if not project.is_dir() or project.name.startswith("."):
                 continue
             terms.add(project.name)
@@ -351,6 +364,16 @@ class TestNoUsageData(unittest.TestCase):
         )
         self.assertTrue(all(sensitive_path(path) for path in private_paths))
         self.assertFalse(sensitive_path("projects/.gitkeep"))
+
+    def test_linked_worktree_still_guards_main_checkout_terms(self):
+        # A worktree has no projects/ of its own: without the main checkout's,
+        # the private-term check would skip silently there.
+        main = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=ROOT,
+            capture_output=True, text=True, check=True,
+        ).stdout.splitlines()[0].split(" ", 1)[1]
+        self.assertIn((Path(main) / "projects").resolve(),
+                      [p.resolve() for p in project_dirs()])
 
     def test_staged_snapshot_contains_no_private_data_paths(self):
         hits = [path for path, _oid in staged_entries() if sensitive_path(path)]

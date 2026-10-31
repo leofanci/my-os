@@ -18,7 +18,7 @@ TITLE_MAX = 60
 
 
 def _path(chat_id):
-    if not isinstance(chat_id, str) or not _ID_RE.match(chat_id):
+    if not isinstance(chat_id, str) or not _ID_RE.fullmatch(chat_id):
         raise ValueError("invalid chat id")
     return CHATS_DIR / f"{chat_id}.json"
 

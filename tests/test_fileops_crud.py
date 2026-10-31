@@ -86,6 +86,21 @@ class CrudTest(unittest.TestCase):
                 with self.assertRaisesRegex(fileops.ActionError, "Claude"):
                     fileops.normalize_local_folder(path)
 
+    def test_project_local_folder_rejects_home_config_and_app_bundles(self):
+        # ~/.ssh, ~/.config (CLI tokens), ~/Library hold secrets, never app code;
+        # "open" on a .app launches it instead of showing a folder.
+        home = self.root / "home"
+        bad = (".ssh", ".config/gh", ".aws", "Library/Application Support", "apps/Tool.app")
+        for rel in bad:
+            (home / rel).mkdir(parents=True)
+        app = home / "code" / "acme-app"
+        app.mkdir(parents=True)
+        with mock.patch.object(Path, "home", return_value=home):
+            for rel in bad:
+                with self.assertRaises(fileops.ActionError, msg=rel):
+                    fileops.normalize_local_folder(home / rel)
+            self.assertEqual(fileops.normalize_local_folder(app), str(app.resolve()))
+
     def test_project_local_folder_rejects_slug_path_traversal(self):
         with self.assertRaises(fileops.ActionError):
             fileops.project_local_folder("../acme")

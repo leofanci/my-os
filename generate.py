@@ -699,7 +699,7 @@ def do_refine_guidelines(root: Path, channel_slug: str, raw_text: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description="Synchronous claude -p content pipeline")
     ap.add_argument("--workspace", default=".", help="workspace root (default: cwd)")
     sub = ap.add_subparsers(dest="job", required=True)
@@ -740,8 +740,11 @@ def main():
     pr = sub.add_parser("refine-guidelines",
                         help="read rough guideline notes from stdin, print refined markdown")
     pr.add_argument("channel", help="channel slug (resolves under projects/*/profiles/*/channels/<slug>/)")
+    return ap
 
-    args = ap.parse_args()
+
+def main():
+    args = build_parser().parse_args()
     root = Path(args.workspace).resolve()
     try:
         if args.job == "plan":

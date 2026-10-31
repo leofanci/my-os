@@ -82,6 +82,7 @@ RAIL = CHAT_RAIL
 # nothing. See do_GET "/" and write_token_file().
 TOKEN_FILE = HERE / ".auth-token"
 _TOKEN_IN_LOG = re.compile(r"([?&]token=)[^&\s\"]*")
+_MCP_SESSION_RE = re.compile(r"[\x21-\x7e]{1,256}")  # visible ASCII, as MCP specifies
 LOGIN_REQUIRED_HTML = (
     b"<!doctype html><meta charset=utf-8><title>myOS</title>"
     b"<p style='font:14px system-ui;margin:40px'>myOS is running. Open it from "
@@ -106,6 +107,12 @@ def remove_uploads():
     if _UPLOAD_DIR:
         shutil.rmtree(_UPLOAD_DIR, ignore_errors=True)
         _UPLOAD_DIR = None
+
+
+def restrict_new_files():
+    """Owner-only for everything this process creates: chats/, projects/, team/
+    and their files hold private data even when the checkout sits in a shared folder."""
+    os.umask(0o077)
 
 
 def health_proof(nonce):
@@ -1064,7 +1071,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:* "
-            "ws://localhost:*; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "ws://localhost:*; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'self'"
         ))
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -1157,7 +1165,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         if payload:
             self.send_header("Content-Type", "application/json")
-        if mcp_session_id:
+        if mcp_session_id and _MCP_SESSION_RE.fullmatch(mcp_session_id):  # never echo CR/LF
             self.send_header("mcp-session-id", mcp_session_id)
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -1432,6 +1440,7 @@ class Handler(BaseHTTPRequestHandler):
             """A teammate answers once, read-only, in its own fresh session."""
             c = chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL)
             c.workspace, c.deny_dirs, c.readonly = ws, sess.deny_dirs, True
+            c.apps_used = apps_used  # its prompt quotes the lead's reply (app data)
             own = team.skills_of(b2)
             c_skill = _suggest_skill(question, among=own)
             c_skill = c_skill if c_skill in own else None
@@ -2198,6 +2207,7 @@ def main():
         except (AttributeError, ValueError):
             pass
 
+    restrict_new_files()
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-reindex", action="store_true", help="skip the startup re-index")
@@ -2221,6 +2231,7 @@ def main():
             except Exception:  # noqa: BLE001
                 pass
         remove_uploads()
+        chat_session.remove_bot_tmpdir()
         remove_token_file()
 
     # /api/quit raises SIGTERM on this PID; clean up children before exiting.
