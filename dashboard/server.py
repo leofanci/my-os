@@ -762,12 +762,8 @@ def _load_skill_body(name):
     if not f.exists():
         return ""
     txt = f.read_text(encoding="utf-8")
-    # strip a leading YAML frontmatter block (--- ... ---)
-    if txt.startswith("---"):
-        end = txt.find("\n---", 3)
-        if end != -1:
-            txt = txt[end + 4:]
-    return txt.strip()
+    # same frontmatter parser as _skills_index, so one malformed file reads one way
+    return fileops._parse_frontmatter(txt)[1] if txt.startswith("---") else txt.strip()
 
 
 def _skills_index():

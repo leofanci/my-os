@@ -329,8 +329,20 @@ class RouteSkill(unittest.TestCase):
         names = {s["name"] for s in idx}
         self.assertIn("problem-validation", names)
         for s in idx:
-            self.assertIn("name", s)
-            self.assertIn("description", s)
+            self.assertTrue(s["name"])
+            self.assertTrue(s["description"], f"{s['name']}: empty description (broken frontmatter?)")
+
+    def test_every_skill_file_opens_frontmatter(self):
+        for f in sorted(server.SKILLS_DIR.glob("*/SKILL.md")):
+            self.assertTrue(f.read_text(encoding="utf-8").startswith("---\n"), f"{f.parent.name}: bad opener")
+
+    def test_skill_body_has_no_frontmatter(self):
+        for name in server.SKILL_NAMES:
+            if name in server._RAIL_COVERED_SKILL_STUBS:
+                continue
+            head = server._load_skill_body(name).splitlines()[:3]
+            self.assertFalse([l for l in head if l.startswith(("name:", "description:")) or l.endswith("---")],
+                             f"{name}: frontmatter leaked into body")
 
     def test_web_token_forces_web(self):
         self.assertTrue(server._needs_web("write copy /web"))
