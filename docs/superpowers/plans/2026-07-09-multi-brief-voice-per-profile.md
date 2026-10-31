@@ -10,7 +10,7 @@
 
 ## Global Constraints
 
-- Selection between multiple briefs/voices is always manual — no platform auto-matching, no layered merge (confirmed with user during brainstorming).
+- Selection between multiple briefs/voices is always manual — no platform auto-matching, no layered merge.
 - Default when nothing specified: `br1` / `vc1`.
 - `platforms` value is validated against the profile's actual channel platforms (plus the literal value `all`) — never free text.
 - Numbering is append-only: deleting `br2` never causes a later brief to reuse `br2`.
@@ -305,7 +305,7 @@ class VoiceStorageTest(unittest.TestCase):
 
     def test_legacy_profile_body_migrates_on_first_touch(self):
         (self.profile_dir / "profile.md").write_text(
-            "---\nname: Demo\ntopic: film\nproject: acme\n---\nLegacy voice text.\n",
+            "---\nname: Demo\ntopic: cooking\nproject: acme\n---\nLegacy voice text.\n",
             encoding="utf-8",
         )
         self.assertEqual(read_voice_text(self.profile_dir).strip(), "Legacy voice text.")
@@ -1619,7 +1619,7 @@ async function renderProfileSetup(slug){
           </div>
           <div>
             ${flabel("Topic / niche")}
-            <input id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Film reviews for movie lovers" style="width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px 13px;font:inherit;background:rgba(255,255,255,.82)">
+            <input id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Weekly tips for home cooks" style="width:100%;border:1px solid var(--hair);border-radius:10px;padding:10px 13px;font:inherit;background:rgba(255,255,255,.82)">
           </div>
         </div>
 
@@ -1810,7 +1810,7 @@ class MigrationEndToEndTest(unittest.TestCase):
         root = Path(self.tmp.name)
         prof = root / "projects" / "acme" / "profiles" / "demo"
         write(root / "projects" / "acme" / "project.md", "---\nname: Acme\n---")
-        write(prof / "profile.md", "---\nname: Demo\ntopic: film\nproject: acme\n---\nLegacy voice.\n")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: cooking\nproject: acme\n---\nLegacy voice.\n")
         write(prof / "brief-spec.md", "Legacy brief rules.")
         (prof / "content").mkdir(parents=True, exist_ok=True)
         fileops.ROOT = root

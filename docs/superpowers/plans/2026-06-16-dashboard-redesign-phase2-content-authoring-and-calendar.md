@@ -4,7 +4,7 @@
 
 **Goal:** Fix the information architecture so a **project is its whole GTM surface** (not just its social accounts), make content authoring possible (add / generate / edit / delete), and replace the Timeline table with a **month calendar**.
 
-**The three problems this fixes (user feedback):**
+**The three problems this fixes:**
 1. Social profiles looked like peers of the project — they must sit *inside* it, grouped under "Social profiles".
 2. The rail only showed channels, so a project looked social-only. A project must expose its full GTM scope: **Overview · Problem & validation · Experiments · Positioning & pricing · Product · Operations · Social profiles**.
 3. "Content / Planned" was jargon. Content becomes one list with plain stages **Idea → Draft → Scheduled → Published**, each row offering the obvious next action ("Write it →", "Review →").

@@ -276,7 +276,7 @@ class TestTreeWalk(unittest.TestCase):
         proj = root / "projects" / "acme"
         write(proj / "project.md", "---\nname: Acme\nkind: venture\npriority: primary\nhours_per_week: 12\n---\nvoice")
         prof = proj / "profiles" / "demo"
-        write(prof / "profile.md", "---\nname: Demo\ntopic: cinema\n---\nvoice")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: cooking\n---\nvoice")
         write(prof / "channels" / "demo-tiktok" / "channel.md", "---\nplatform: tiktok\n---\nrules")
         write(prof / "content" / "plan-2026-07.json", json.dumps({"posts": [
             {"id": "post-001", "date": "2026-07-01", "pillar": "curiosity", "status": "planned",

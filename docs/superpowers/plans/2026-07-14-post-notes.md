@@ -53,7 +53,7 @@ class PostNoteSchemaTest(unittest.TestCase):
               "---\nname: Acme\nkind: venture\npriority: primary\n"
               "status: idea\nhours_per_week: 5\n---\nour voice")
         prof = proj / "profiles" / "demo"
-        write(prof / "profile.md", "---\nname: Demo\ntopic: cinema\nproject: acme\n---\nvoice")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: cooking\nproject: acme\n---\nvoice")
         ch = prof / "channels" / "demo-tiktok"
         write(ch / "channel.md", "---\nplatform: tiktok\nhandle: @demo\n---\n")
         write(prof / "post-notes.json", json.dumps({"notes": [
@@ -273,7 +273,7 @@ class PostNoteCrudTest(unittest.TestCase):
         proj = root / "projects" / "acme"
         write(proj / "project.md", "---\nname: Acme\nkind: venture\npriority: primary\n---\nvoice")
         prof = proj / "profiles" / "demo"
-        write(prof / "profile.md", "---\nname: Demo\ntopic: cinema\n---\nvoice")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: cooking\n---\nvoice")
         write(prof / "channels" / "demo-tiktok" / "channel.md", "---\nplatform: tiktok\n---\n")
         fileops.ROOT = root
         db.DB_PATH = root / "database" / "data" / "os.db"
@@ -487,7 +487,7 @@ class ProfilePostNotesQueryTest(unittest.TestCase):
         proj = root / "projects" / "acme"
         write(proj / "project.md", "---\nname: Acme\nkind: venture\npriority: primary\n---\nvoice")
         prof = proj / "profiles" / "demo"
-        write(prof / "profile.md", "---\nname: Demo\ntopic: cinema\n---\nvoice")
+        write(prof / "profile.md", "---\nname: Demo\ntopic: cooking\n---\nvoice")
         write(prof / "channels" / "demo-tiktok" / "channel.md", "---\nplatform: tiktok\n---\n")
         fileops.ROOT = root
         db.DB_PATH = root / "database" / "data" / "os.db"

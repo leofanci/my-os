@@ -104,7 +104,7 @@ RELATIONSHIPS = """# Portfolio Relationships
 
 ## Projects
 - slug: demo-project
-  name: Weekly Film Pod
+  name: Weekly Demo Pod
   type: social
   priority: secondary
 

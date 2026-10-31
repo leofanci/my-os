@@ -81,10 +81,10 @@ One-time, on first read of a profile that hasn't been migrated (detected by the 
 
 ## Decisions
 
-- **Manual selection only** — confirmed with the user; no platform auto-matching, no layered merge. Keeps the mental model to "pick one," not "reason about precedence."
+- **Manual selection only**: no platform auto-matching, no layered merge. Keeps the mental model to "pick one," not "reason about precedence."
 - **Numbering via a per-directory `.max_id` marker, baked into the filename** — shipped simpler than originally planned (see the implementation note above): unlike posts, minting a brief/voice writes its file in the same call, so there's no chicken-and-egg gap that requires `core/ids.py`'s shared `next_counter`/`id_registry.json`. A plain monotonic marker file gives the same "never reissue a deleted id" guarantee with no cross-module coupling. Tradeoff accepted: two independent "never reuse this number" mechanisms now exist in the codebase (the JSON id-registry and these per-profile marker files) rather than one — acceptable here since briefs/voices number in the single digits per profile, not hundreds.
 - **`platforms` validated against the profile's real channels** — so the dropdown in the dashboard is a real list, not free text that can drift from what channels actually exist.
-- **Post tracks `brief_id`/`voice_id`** — confirmed with the user; makes "what produced this post" inspectable and regeneration deterministic by default.
+- **Post tracks `brief_id`/`voice_id`**: makes "what produced this post" inspectable and regeneration deterministic by default.
 - **`update-profile --voice` removed, not kept as a shim** — voice is no longer a profile identity field; keeping the old flag pointing at `vc1` would mean two ways to edit the same thing forever. `create-voice`/`update-voice` fully replace it.
 
 ## Affected files

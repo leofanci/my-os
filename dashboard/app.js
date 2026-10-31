@@ -2414,7 +2414,7 @@ async function renderProfileSetup(slug){
           </div>
           <div>
             ${flabel("Topic / niche")}
-            <input class="setup-input" id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Film reviews for movie lovers">
+            <input class="setup-input" id="ps-topic" value="${esc(profData.topic||"")}" placeholder="e.g. Weekly tips for home cooks">
           </div>
         </div>
 
