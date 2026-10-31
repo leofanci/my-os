@@ -476,6 +476,30 @@ builder's call within these needs:
   secrets live in `team/integrations.json` like the Composio key. Round 1
   keeps the relay upstream-agnostic (section 3) so this is an addition, not
   a rewrite.
+- **First own tool: Agent Reach** (open-source, MIT, Python CLI, repo
+  `Panniantong/Agent-Reach`): read-only research across web pages, RSS,
+  YouTube, GitHub, X, Reddit, LinkedIn, Instagram and more. Use: competitor
+  and audience research for ventures. Not an MCP server, it is shell
+  commands, so it goes behind a small wrapper exposing a fixed list of read
+  commands (no free shell, no arbitrary flags). Step 1: no-login channels
+  only (web, RSS, YouTube, GitHub). Step 2, opt-in: cookie channels
+  (X, Reddit, LinkedIn), on a secondary account the user chooses.
+  **Security, check before building:**
+  - Everything it returns is untrusted web text: treat as data, never
+    instructions (prompt injection rides in on posts and pages).
+  - Never in the same turn as connected apps: an app turn is web-off so
+    private data (inbox, Drive) cannot leak out through a fetched URL or a
+    search query; Agent Reach counts as web.
+  - Browser cookies are account keys: store them like the Composio key
+    (`team/integrations.json`, 0600, unreadable by bots), never the user's
+    main accounts, never copied into `~/.agent-reach/config.yaml` readable
+    by bot turns; add that path to `SECRET_FILE_GLOBS`.
+  - Pin the package version and review its source before install; it runs
+    as the user on this machine. Re-review on every upgrade.
+  - The wrapper validates arguments (URL scheme http/https only, no local
+    or private hosts, bounded length) so a bot cannot use it to reach
+    `127.0.0.1` or LAN services.
+  - Rate-limit per turn; scraping too fast gets the account banned.
 
 ## Left to the builder
 
