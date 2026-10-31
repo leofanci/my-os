@@ -194,5 +194,49 @@ class AppsMount(unittest.TestCase):
         self.assertNotIn("MYOS_APPS_TOKEN", seen["env"])
 
 
+def _turn_env(sess):
+    """The env one turn's `claude -p` child gets."""
+    seen = {}
+
+    class P:
+        def __init__(self, cmd, **kw):
+            seen["env"] = kw["env"]
+            self.stdin, self.stdout, self.stderr = io.StringIO(), io.StringIO(), io.StringIO()
+            self.returncode = 0
+
+        def wait(self, *a, **k):
+            return 0
+
+        def poll(self):
+            return 0
+    with mock.patch.object(cs.subprocess, "Popen", P):
+        list(sess.ask("hi"))
+    return seen["env"]
+
+
+class BotSandboxEnv(unittest.TestCase):
+    def tearDown(self):
+        cs.remove_bot_tmpdir()
+
+    def test_bot_temp_dir_is_private_not_the_shared_claude_one(self):
+        # Claude lets a turn Read its project's temp folder: the shared one holds
+        # every dev session's scratch and task output for this repo.
+        with mock.patch.dict(cs.os.environ, {"CLAUDE_CODE_TMPDIR": "/tmp/shared"}):
+            env = _turn_env(cs.ChatSession(repo_dir=".", rail="R"))
+        d = Path(env["CLAUDE_CODE_TMPDIR"])
+        self.assertNotEqual(str(d), "/tmp/shared")
+        self.assertTrue(d.is_dir())
+        self.assertEqual(stat.S_IMODE(d.stat().st_mode), 0o700)
+        cs.remove_bot_tmpdir()
+        self.assertFalse(d.exists())
+
+    def test_thread_that_read_an_app_tells_osctl(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        with mock.patch.dict(cs.os.environ, {"MYOS_APPS_USED": "1"}):  # never inherited
+            self.assertNotIn("MYOS_APPS_USED", _turn_env(sess))
+        sess.apps_used = True
+        self.assertEqual(_turn_env(sess)["MYOS_APPS_USED"], "1")
+
+
 if __name__ == "__main__":
     unittest.main()

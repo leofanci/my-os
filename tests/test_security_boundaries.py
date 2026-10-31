@@ -1,6 +1,7 @@
 import hmac
 import io
 import json
+import os
 import struct
 import tempfile
 import unittest
@@ -199,6 +200,26 @@ class LoginAndLocalFilesTest(unittest.TestCase):
             server.remove_token_file(path)
             self.assertFalse(path.exists())
 
+    def test_server_creates_files_owner_only(self):
+        # chats/, projects/, team/ and server.log hold private data; a clone outside
+        # an owner-only folder must not hand them to other accounts on the Mac.
+        old = os.umask(0o022)
+        try:
+            server.restrict_new_files()
+            with tempfile.TemporaryDirectory() as d:
+                f, sub = Path(d) / "f.json", Path(d) / "sub"
+                f.write_text("{}")
+                sub.mkdir()
+                self.assertEqual(f.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(sub.stat().st_mode & 0o777, 0o700)
+        finally:
+            os.umask(old)
+
+    def test_launcher_log_is_owner_only(self):
+        script = (Path(__file__).resolve().parents[1] / "myOS.app" / "Contents" / "Resources"
+                  / "start-server.sh").read_text(encoding="utf-8")
+        self.assertLess(script.index("umask 077"), script.index('> "$LOGFILE"'))
+
     def test_uploads_live_in_private_dir_removed_on_shutdown(self):
         d = Path(server.upload_dir())
         self.assertEqual(d.stat().st_mode & 0o777, 0o700)
@@ -207,6 +228,15 @@ class LoginAndLocalFilesTest(unittest.TestCase):
 
 
 class BrowserOutputBoundaryTest(unittest.TestCase):
+    def test_csp_keeps_forms_on_this_server(self):
+        # Escaped output is the first wall; this is the second for an injected <form>.
+        h = server.Handler.__new__(server.Handler)
+        sent = {}
+        h.send_header = lambda k, v: sent.__setitem__(k, v)
+        with mock.patch.object(server.BaseHTTPRequestHandler, "end_headers"):
+            h.end_headers()
+        self.assertIn("form-action 'self'", sent["Content-Security-Policy"])
+
     def test_html_escape_covers_quoted_attributes(self):
         source = (Path(__file__).resolve().parents[1] / "dashboard" / "app.js").read_text(
             encoding="utf-8"

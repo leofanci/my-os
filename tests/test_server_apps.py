@@ -57,6 +57,7 @@ class Base(unittest.TestCase):
         for p in (mock.patch.object(server, "ROOT", self.root),
                   mock.patch.object(server.chat_store, "CHATS_DIR", self.root / "chats"),
                   mock.patch.object(server.db, "db_exists", return_value=True),
+                  mock.patch.object(server.db, "tree", return_value=[]),  # never the real os.db
                   mock.patch.object(server.composio, "catalog", return_value=CAT),
                   mock.patch.object(server.composio, "connections", return_value={"gmail"})):
             p.start()
@@ -281,7 +282,7 @@ class Turn(Base):
                     pass
 
                 def ask(self, prompt, **kw):
-                    seen.append({"who": who, **kw})
+                    seen.append({"who": who, "apps_used": self.apps_used, **kw})
                     if kw.get("apps_token") and hold:  # what the relay does mid-turn
                         approvals.add_app_action(self_root, ws="hq", room="hq/general", chat=CHAT, bot="cos",
                                                  person="ceo", toolkit="gmail", slug="GMAIL_SEND_EMAIL",
@@ -333,6 +334,8 @@ class Turn(Base):
         self.assertEqual(seen[0]["apps_token"], seen[2]["apps_token"])
         self.assertNotIn("apps_token", seen[1])
         self.assertIs(seen[1]["with_web"], False)
+        # Its prompt quotes the lead's reply (app data): osctl's online research stays off too.
+        self.assertIs(seen[1]["apps_used"], True)
 
     def test_held_actions_streamed_to_thread(self):
         _, _, out = self.run_turn("reply to the thread in my inbox", hold=True)

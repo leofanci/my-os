@@ -108,6 +108,12 @@ def remove_uploads():
         _UPLOAD_DIR = None
 
 
+def restrict_new_files():
+    """Owner-only for everything this process creates: chats/, projects/, team/
+    and their files hold private data even when the checkout sits in a shared folder."""
+    os.umask(0o077)
+
+
 def health_proof(nonce):
     """HMAC-SHA256(AUTH_TOKEN, nonce): lets the launcher verify server identity."""
     return hmac.new(AUTH_TOKEN.encode(), nonce.encode(), "sha256").hexdigest()
@@ -1064,7 +1070,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:* "
-            "ws://localhost:*; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+            "ws://localhost:*; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; "
+            "form-action 'self'"
         ))
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -1432,6 +1439,7 @@ class Handler(BaseHTTPRequestHandler):
             """A teammate answers once, read-only, in its own fresh session."""
             c = chat_session.ChatSession(repo_dir=str(ROOT), rail=RAIL)
             c.workspace, c.deny_dirs, c.readonly = ws, sess.deny_dirs, True
+            c.apps_used = apps_used  # its prompt quotes the lead's reply (app data)
             own = team.skills_of(b2)
             c_skill = _suggest_skill(question, among=own)
             c_skill = c_skill if c_skill in own else None
@@ -2198,6 +2206,7 @@ def main():
         except (AttributeError, ValueError):
             pass
 
+    restrict_new_files()
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-reindex", action="store_true", help="skip the startup re-index")
@@ -2221,6 +2230,7 @@ def main():
             except Exception:  # noqa: BLE001
                 pass
         remove_uploads()
+        chat_session.remove_bot_tmpdir()
         remove_token_file()
 
     # /api/quit raises SIGTERM on this PID; clean up children before exiting.

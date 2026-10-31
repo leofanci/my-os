@@ -107,6 +107,7 @@ class Turn(unittest.TestCase):
 
         with mock.patch.object(server, "ROOT", self.root), \
                 mock.patch.object(server.db, "tree", return_value=self.tree), \
+                mock.patch.object(server.db, "posts", return_value=[]), \
                 mock.patch.object(server, "get_chat_session", return_value=S()):
             h._handle_ask({"messages": [{"role": "user", "content": msg}],
                            "room_id": "acme/general", "chat_id": S.session_id, **body})

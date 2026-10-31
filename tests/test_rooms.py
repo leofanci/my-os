@@ -234,7 +234,10 @@ class SharedCalendar(unittest.TestCase):
         self.assertEqual(self.osctl("hq", "get-busy", "--from", "2026-11-03")["busy"][0]["title"], "Shoot")
 
     def test_snapshot_lists_only_the_workspace(self):
-        with mock.patch.object(server, "ROOT", self.root):
+        # server imports db as a top-level module: point that copy at the test index
+        # too, or it reads the real os.db.
+        with mock.patch.object(server, "ROOT", self.root), \
+                mock.patch.object(server.db, "DB_PATH", db.DB_PATH):
             snap = server.state_snapshot(db.tree(), only="acme")
         self.assertIn("### acme", snap)
         self.assertNotIn("### demo", snap)
@@ -270,13 +273,28 @@ class SharedCalendar(unittest.TestCase):
         busy = self.osctl("demo", "get-busy", "--from", "2026-11-03")["busy"]
         self.assertEqual((busy[0]["title"], busy[0]["entity"]), ("Shoot", "profile-b"))
 
-    def test_only_hq_links_a_local_folder(self):
-        # A bot re-pointing its own project at ~/.claude (or a sibling app) would
-        # get that folder as --add-dir on later turns.
-        r = self.osctl("acme", "update-project", "--slug", "acme", "--local-folder", self.tmp.name)
+    def test_no_bot_links_a_local_folder_not_even_hq(self):
+        # A linked folder becomes --add-dir on that company's later turns: any bot
+        # (an HQ one steered by a web page too) could point it at ~/.config.
+        app = self.root / "apps" / "acme-app"
+        app.mkdir(parents=True)
+        for ws in ("acme", "hq"):
+            r = self.osctl(ws, "update-project", "--slug", "acme", "--local-folder", str(app))
+            self.assertFalse(r["ok"], ws)
+            self.assertIn("dashboard", r["error"])
+        r = self.osctl("hq", "create-project", "--slug", "newco", "--local-folder", str(app))
         self.assertFalse(r["ok"])
-        self.assertIn("HQ", r["error"])
         self.assertTrue(self.osctl("acme", "update-project", "--slug", "acme", "--status", "active")["ok"])
+
+    def test_research_signal_is_off_once_a_thread_read_an_app(self):
+        # Its query goes to public search sites: the "read mail, leak it via a
+        # search" path that web-off closes for WebSearch.
+        with mock.patch.dict(os.environ, {"MYOS_APPS_USED": "1"}), \
+                mock.patch.object(fileops, "research_signal") as research:
+            r = self.osctl("hq", "research-signal", "--query", "x")
+        self.assertFalse(r["ok"])
+        self.assertIn("connected app", r["error"])
+        research.assert_not_called()
 
     def test_owner_map_is_built_once_per_call(self):
         with mock.patch.object(osctl, "build_id_registry", wraps=osctl.build_id_registry) as reg:

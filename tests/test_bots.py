@@ -223,6 +223,7 @@ class Routing(unittest.TestCase):
 
         with mock.patch.object(server, "get_chat_session", return_value=S()), \
                 mock.patch.object(server.bots, "team", return_value=self.team), \
+                mock.patch.object(server.db, "tree", return_value=[]), \
                 mock.patch.object(server, "state_snapshot", return_value=""):
             h._handle_ask({"messages": [{"role": "user", "content": "@cmo map competitors"}]})
         out = sink.getvalue().decode()

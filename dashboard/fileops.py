@@ -894,6 +894,14 @@ def normalize_local_folder(value) -> str:
     # Claude's config holds every bot session's transcript, all workspaces.
     if resolved.is_relative_to(home / ".claude"):
         raise ActionError("local folder cannot be inside the Claude config folder")
+    # ~/.ssh, ~/.config, ~/.aws, ~/Library: keys and CLI tokens, never app code.
+    if resolved.is_relative_to(home):
+        top = resolved.relative_to(home).parts[0]
+        if top.startswith(".") or top == "Library":
+            raise ActionError("local folder cannot be a hidden or Library folder in your home")
+    # "Open folder" would launch an app bundle instead of showing it.
+    if any(part.lower().endswith(".app") for part in resolved.parts):
+        raise ActionError("local folder cannot be an app bundle")
     return str(resolved)
 
 

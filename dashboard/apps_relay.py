@@ -98,8 +98,9 @@ def _gate(frame, ctx, sid, upstream, root, catalog):
     rid = frame.get("id")
     params = frame.get("params") if isinstance(frame.get("params"), dict) else {}
     name = params.get("name")
-    if name in PASS_THROUGH:
-        return upstream.forward(frame, sid)
+    if name in PASS_THROUGH:  # rebuilt like a read: only the name and arguments travel
+        return upstream.forward({"jsonrpc": "2.0", "id": rid, "method": "tools/call",
+                                 "params": {"name": name, "arguments": params.get("arguments")}}, sid)
     if name != app_rules.MULTI_EXECUTE:
         return _text(rid, [REFUSED.format(slug=name)], True), sid
     calls = app_rules.calls_in(name, params.get("arguments"))
