@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Branch `feature/dashboard-redesign` (off `feature/team-bots`). Never merge into `main` or `feature/team-bots` without the user's go-ahead.
+- Branch `feature/dashboard-redesign` (off `feature/team-bots`). Never merge into `main` or `feature/team-bots` without review.
 - Public repo: fixtures and examples use only `demo`, `acme`, `profile-a`, `profile-b`, `@writer`, `@strategist`. Run `python3 -m unittest tests.test_no_usage_data` before every commit.
 - No commit trailer `Co-Authored-By` (user preference).
 - Never stage `skills/channel-strategy/SKILL.md` (pre-existing local edit, not ours).

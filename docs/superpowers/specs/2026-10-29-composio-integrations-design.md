@@ -1,6 +1,6 @@
 # Connected apps via Composio (round 1)
 
-Date: 2026-10-29. Status: design, awaiting approval (user decisions folded in).
+Date: 2026-10-29. Status: approved design.
 
 ## Intent
 
@@ -79,7 +79,7 @@ folder (separate license).
   writes and do not go through osctl.
 - Secrets live under gitignored `team/` (`.gitignore:92`).
 
-## Decided by the user
+## Decisions
 
 - Composio as the broker (not Pipedream, not self-hosted MCP servers).
 - The user's own Composio key; never shared with people outside the team.

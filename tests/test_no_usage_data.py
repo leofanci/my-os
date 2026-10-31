@@ -83,6 +83,18 @@ HOME_PATH_PATTERNS = (
 )
 GENERIC_HOME_NAMES = {b"you", b"user", b"username", b"example", b"<user>"}
 
+# Specs and plans describe the design, not the conversation that produced it:
+# no quoted owner feedback, no "decided/confirmed with the user" provenance.
+# Checked on the current tree only (older history predates the rule).
+DESIGN_DOC_PREFIXES = ("docs/",)
+PERSONAL_REASONING_PATTERNS = (
+    re.compile(rb"(?i)\b(?:decided|confirmed|agreed|chosen|picked)\s+(?:by|with)\s+(?:the\s+)?user\b"),
+    re.compile(rb"(?i)\buser\s+(?:feedback|decisions?|may override)\b"),
+    re.compile(rb"(?i)\bthe user(?:'s)?\s*(?::|found|flagged|said|asked|wants|prefers|liked|hated|go-ahead)"),
+    re.compile(rb"(?i)\bclaude'?s calls\b"),
+    re.compile(rb"(?i)\bduring brainstorming\b"),
+)
+
 NETWORK_HOST_PATTERN = re.compile(rb"(?i)(?:https?|wss?)://([A-Z0-9.-]+)")
 PUBLIC_NETWORK_HOSTS = {
     b"127.0.0.1", b"localhost", b"attacker.example",
@@ -430,6 +442,33 @@ class TestNoUsageData(unittest.TestCase):
                     if match.group(1).lower() not in GENERIC_HOME_NAMES:
                         hits.append(f"{label}: machine-specific home path")
         self.assertEqual(hits, [], "Personal identifiers are reachable from Git:\n" + "\n".join(hits))
+
+    def test_design_docs_carry_no_personal_reasoning(self):
+        hits = []
+        for records in (working_tree_records(), staged_records()):
+            for label, data in records:
+                rel = label.split(":", 1)[1]
+                if not rel.startswith(DESIGN_DOC_PREFIXES):
+                    continue
+                for line_no, line in enumerate(data.splitlines(), 1):
+                    if any(pattern.search(line) for pattern in PERSONAL_REASONING_PATTERNS):
+                        hits.append(f"{label}:{line_no}")
+        self.assertEqual(hits, [], "Design docs quote the owner or their decisions:\n" + "\n".join(hits))
+
+    def test_personal_reasoning_patterns_match_known_leaks(self):
+        leaks = (
+            b"## Decided by the user",
+            b"Manual selection only, confirmed with the user",
+            b"(the user found the first proposal too big)",
+            b"Keep the canvas (the user: \"looks better\")",
+            b"## Claude's calls",
+            b"(confirmed with user during brainstorming)",
+            b"without the user's go-ahead.",
+        )
+        for leak in leaks:
+            self.assertTrue(any(p.search(leak) for p in PERSONAL_REASONING_PATTERNS), leak)
+        self.assertFalse(any(p.search(b"Tell the user it is waiting in Approvals.")
+                             for p in PERSONAL_REASONING_PATTERNS))
 
     def test_no_unapproved_network_host_is_tracked_or_reachable(self):
         hits = []

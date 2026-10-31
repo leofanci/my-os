@@ -5,7 +5,7 @@
 
 ## Problem
 
-Chat @-mention candidates come from `_TREE` (`/api/tree`): project → profile → channel only. Posts are not mentionable. User wants to pull a specific post into chat context by its id.
+Chat @-mention candidates come from `_TREE` (`/api/tree`): project → profile → channel only. Posts are not mentionable. Goal: pull a specific post into chat context by its id.
 
 Not in scope: metadata tag field on posts, filtering content by tag, controlled vocab. This is chat referencing only.
 
