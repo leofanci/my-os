@@ -12,7 +12,7 @@ Goal: a calm, modern, compact team-chat look where posts are clearly divided per
 ## Goals
 
 1. New visual system: Graphite sidebar, indigo accent, neutral grey surfaces, one icon set, one shape language, light and dark themes.
-2. Compact density everywhere (the user found the first proposal "too full or big").
+2. Compact density everywhere.
 3. Canvas content view groups posts **per profile**, each profile in its own card with a sticky header.
 4. Light chat: fewer boxes, less chrome, clear separation between messages.
 5. Fix the five usability bugs listed below.
@@ -20,14 +20,14 @@ Goal: a calm, modern, compact team-chat look where posts are clearly divided per
 ## Non-goals
 
 - No change to the backend data model, osctl, IDs, or file storage.
-- No new information architecture beyond what the mockup shows. In particular, the UX Architect's "Option A" ideas are **not** in scope: profiles as chat rooms in the sidebar, a tabbed multi-document canvas, moving Approvals/Team/Calendar out of the canvas into the center pane, unifying the Approvals inbox with post status, per-workspace state restore, `⌘K` search. They may come later as a separate design.
+- No new information architecture beyond what the mockup shows. In particular these are **not** in scope: profiles as chat rooms in the sidebar, a tabbed multi-document canvas, moving Approvals/Team/Calendar out of the canvas into the center pane, unifying the Approvals inbox with post status, per-workspace state restore, `⌘K` search. They may come later as a separate design.
 - No new features (no cost meter changes, no new bot capabilities).
 
 ## Anti-goals (failure even if it "works")
 
 - Anything that looks green/pine or reintroduces the rust/beige palette.
 - Purple-gradient "AI SaaS" look.
-- A chat where messages run together (the user flagged this on the light chat: separation must be obvious).
+- A chat where messages run together: separation must be obvious.
 - Losing a current action: every button that exists today (approve, edit, revise, open in canvas, mark ready, schedule, bulk select, filters) must still be reachable.
 - Real venture/profile/post names anywhere in tracked files (public repo; `tests/test_no_usage_data.py`).
 
@@ -37,9 +37,9 @@ Goal: a calm, modern, compact team-chat look where posts are clearly divided per
 - Local-first and works offline: fonts are self-hosted under `dashboard/vendor/fonts/` (woff2, OFL licensed), system font stack as fallback. No runtime Google Fonts request.
 - Keep existing `data-*` hooks and `data-os-id` attributes that JS and tests rely on.
 - Existing test suite must stay green; run `tests/test_no_usage_data.py` before every commit.
-- Work on a branch off `feature/team-bots`. Do **not** merge into `main` or into `feature/team-bots` without the user's go-ahead.
+- Work on a branch off `feature/team-bots`. Do **not** merge into `main` or into `feature/team-bots` without review.
 
-## Decided by the user
+## Decisions
 
 ### Palette: "Graphite + indigo"
 
@@ -81,7 +81,7 @@ The mockup reaches "compact" with smaller tokens plus a 92% scale on the whole s
 
 ### Canvas
 
-Keep the mockup's canvas as is (the user: "the canvas looks way better"):
+Keep the mockup's canvas as is:
 
 - White bar with breadcrumb (`acme › Content`), Files, More menu, Close. The "Sections…" select moves into the More menu.
 - Document title (serif, Newsreader) + one-line summary ("2 profiles · 6 posts this week · 1 waiting on you").
@@ -99,7 +99,7 @@ Keep the mockup's canvas as is (the user: "the canvas looks way better"):
 
 Line numbers are approximate pointers from the proposals; verify before editing.
 
-## Claude's calls (settled after the builder check; user may override)
+## Implementation calls
 
 1. **Content view.** New route `#/content` that renders the grouped-per-profile Posts view for the current workspace (in HQ: every project's profiles, grouped by project, then profile). It is the canvas default when the canvas opens with nothing else requested. A post deliverable's "Open in canvas" lands on `#/content` with that post's row focused inside its profile card; clicking the row title (or Review) opens post detail `#/post/<id>` as today. Each profile card header links to the full profile page `#/profile/<slug>`. Content-plan deliverables also land on `#/content`, focused on that profile's card. Canvas breadcrumb reflects the route: `acme › Content`, `acme › profile-a`, `acme › profile-a › po3`.
 2. **Canvas tabs reuse existing data, no new screens.** Posts = the Content view. Calendar = the existing calendar view scoped to the current workspace. Briefs and Voice = per-profile lists of brief-specs (`br1`, `br2`…) and voices (`vc1`…), grouped in the same profile cards, each item linking to the existing editor on `#/profile/<slug>/setup`.
@@ -111,7 +111,7 @@ Line numbers are approximate pointers from the proposals; verify before editing.
 8. **Bot progress.** While a bot reply streams, show the live tool-step line and the typing indicator; once the reply is complete they collapse away (light chat hides them only on finished messages).
 9. **Fonts.** Self-hosted woff2 in `dashboard/vendor/fonts/`; `server.py`'s `/vendor/` handler must serve `font/woff2`.
 
-## Screens not in the mockup (decided by the user)
+## Screens not in the mockup
 
 - **Re-laid out** with the new components: the full profile page (`#/profile/<slug>`: one profile card using the new post rows, keeping bulk select, channel filter, Add idea, Generate ideas, Setup, Log posted, Write all) and post detail (`#/post/<id>`, including edit/revise and the explicit Approve).
 - **Restyle only, layout unchanged:** profile setup, Approvals, Team (memory, costs), Files, Calendar, Today, Operations, project sections, every form, the terminal panel. They pick up the new tokens, buttons, inputs, pills, cards and icons.

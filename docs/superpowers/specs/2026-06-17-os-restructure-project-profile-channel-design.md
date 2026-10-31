@@ -73,7 +73,7 @@ Generation inherits identity top-down:
 > **Project voice → Profile voice → Channel guidelines**
 
 A Demo-on-TikTok post composes Acme's overall voice + Demo's
-cinema topic/voice + TikTok's per-platform posting rules. This replaces today's
+topic/voice + TikTok's per-platform posting rules. This replaces today's
 single flat "brand identity" injection.
 
 ---
