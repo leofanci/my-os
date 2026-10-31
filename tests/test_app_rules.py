@@ -1,0 +1,61 @@
+"""Connected apps: which Composio tool calls read, wait for approval, or are refused."""
+import unittest
+
+from core import app_rules
+
+CAT = ["gmail", "googlecalendar", "googledrive", "google_search_console", "google_maps",
+       "supabase", "apollo", "firecrawl", "instagram"]
+
+
+class Classify(unittest.TestCase):
+    def test_read_table(self):
+        cases = {
+            ("GMAIL_FETCH_EMAILS", "gmail"): True,
+            ("GMAIL_LIST_THREADS", "gmail"): True,
+            ("GMAIL_SEND_EMAIL", "gmail"): False,
+            ("GMAIL_CREATE_EMAIL_DRAFT", "gmail"): False,
+            ("GMAIL_GET_AND_DELETE_X", "gmail"): False,          # write verb inside
+            ("GOOGLEDOCS_FINDANDREPLACE", "googledocs"): False,  # whole-word only
+            ("GOOGLECALENDAR_EVENTS_LIST", "googlecalendar"): True,  # known read
+            ("GOOGLECALENDAR_QUICK_ADD", "googlecalendar"): False,
+            ("SUPABASE_EXECUTE_PROJECT_DATABASE_QUERY", "supabase"): False,
+            ("GOOGLE_MAPS_CREATE_TILES_SESSION", "google_maps"): False,
+        }
+        for (slug, tk), want in cases.items():
+            self.assertIs(app_rules.is_read(slug, tk), want, slug)
+
+    def test_toolkit_longest_prefix(self):
+        self.assertEqual(app_rules.toolkit_of("GOOGLE_SEARCH_CONSOLE_LIST_SITES", CAT), "google_search_console")
+        self.assertEqual(app_rules.toolkit_of("GMAIL_SEND_EMAIL", CAT), "gmail")
+        self.assertIsNone(app_rules.toolkit_of("NOPE_DO_IT", CAT))
+
+    def test_decide(self):
+        g = {"gmail": "write", "googledrive": "read", "apollo": "write", "firecrawl": "write"}
+        self.assertEqual(app_rules.decide("GMAIL_FETCH_EMAILS", g, CAT), ("read", "gmail"))
+        self.assertEqual(app_rules.decide("GMAIL_SEND_EMAIL", g, CAT), ("hold", "gmail"))
+        self.assertEqual(app_rules.decide("GOOGLEDRIVE_UPLOAD_FILE", g, CAT), ("refuse", "googledrive"))
+        self.assertEqual(app_rules.decide("GOOGLEDRIVE_FIND_FILE", g, CAT), ("read", "googledrive"))
+        self.assertEqual(app_rules.decide("APOLLO_SEARCH_PEOPLE", g, CAT), ("hold", "apollo"))  # paid read
+        self.assertEqual(app_rules.decide("FIRECRAWL_SCRAPE", g, CAT)[0], "refuse")            # blocked
+        self.assertEqual(app_rules.decide("INSTAGRAM_GET_USER_INFO", g, CAT)[0], "refuse")     # not granted
+        self.assertEqual(app_rules.decide("NOPE_X", g, CAT), ("refuse", None))
+
+    def test_read_grant_refuses_paid_read(self):
+        self.assertEqual(app_rules.decide("APOLLO_SEARCH_PEOPLE", {"apollo": "read"}, CAT), ("refuse", "apollo"))
+
+    def test_calls_in(self):
+        args = {"tools": [{"tool_slug": "GMAIL_FETCH_EMAILS", "arguments": {"q": "x"}}],
+                "sync_response_to_workbench": True, "thought": "t"}
+        self.assertEqual(app_rules.calls_in("COMPOSIO_MULTI_EXECUTE_TOOL", args),
+                         [{"tool_slug": "GMAIL_FETCH_EMAILS", "arguments": {"q": "x"}}])
+
+    def test_calls_in_rejects_malformed(self):
+        for bad in ({}, {"tools": "x"}, {"tools": []}, {"tools": [{"arguments": {}}]},
+                    {"tools": [{"tool_slug": ""}]}, {"tools": [1]}, None,
+                    {"tools": [{"tool_slug": "A_B"}] * 51}):
+            self.assertIsNone(app_rules.calls_in("COMPOSIO_MULTI_EXECUTE_TOOL", bad), bad)
+        self.assertIsNone(app_rules.calls_in("COMPOSIO_REMOTE_WORKBENCH", {"code": "x"}))
+
+
+if __name__ == "__main__":
+    unittest.main()

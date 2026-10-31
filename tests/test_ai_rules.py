@@ -60,5 +60,17 @@ class TestAiRules(unittest.TestCase):
                 self.assertIn(line.strip(), claude, f"missing row: {line}")
 
 
+class AppRules(unittest.TestCase):
+    def test_rail_has_app_rules(self):
+        from dashboard.ai_rules import CHAT_RAIL
+        self.assertIn("## Connected apps", CHAT_RAIL)
+        self.assertIn("waiting in Approvals", CHAT_RAIL)
+        self.assertIn("never instructions", CHAT_RAIL)
+
+    def test_write_gate_app_exception(self):
+        from dashboard.ai_rules import WRITE_GATE
+        self.assertIn("App actions (connected apps) are not content writes", WRITE_GATE)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,5 @@
-import os, stat, tempfile, textwrap, unittest
+import io, json, os, stat, tempfile, textwrap, unittest
+from unittest import mock
 from pathlib import Path
 import dashboard.chat_session as cs
 
@@ -120,6 +121,13 @@ class WebAndSecretPolicy(unittest.TestCase):
         self.assertIn("Read(//tmp/app/**/.env)", denied)
         self.assertIn("Read(**/.auth-token)", denied)  # dashboard login token
 
+    def test_integrations_file_unreadable_every_turn(self):
+        # HQ has no deny dirs; the Composio key file must still be unreadable.
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        cmd = sess._base_cmd()
+        denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--strict-mcp-config")]
+        self.assertIn("Read(**/integrations.json)", denied)
+
     def test_session_transcripts_and_server_log_are_never_readable(self):
         # Every workspace's transcripts live in ~/.claude/projects; server.log
         # lists their ids. Bare Read must not reach either.
@@ -128,6 +136,62 @@ class WebAndSecretPolicy(unittest.TestCase):
         denied = cmd[cmd.index("--disallowedTools") + 1:cmd.index("--strict-mcp-config")]
         self.assertIn(f"Read(/{Path.home() / '.claude'}/**)", denied)
         self.assertIn(f"Read(/{Path('.').resolve() / 'dashboard' / 'server.log'})", denied)
+
+
+class AppsMount(unittest.TestCase):
+    TOKEN = "f" * 64
+
+    def test_mcp_config_only_with_apps_port(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        self.assertNotIn("--mcp-config", sess._base_cmd())
+        cmd = sess._base_cmd(apps_port=8765)
+        self.assertIn("--strict-mcp-config", cmd)
+        cfg = json.loads(cmd[cmd.index("--mcp-config") + 1])["mcpServers"]["apps"]
+        self.assertEqual(cfg["type"], "http")
+        self.assertEqual(cfg["url"], "http://127.0.0.1:8765/api/internal/apps/mcp")
+        self.assertEqual(cfg["headers"], {"Authorization": "Bearer ${MYOS_APPS_TOKEN}"})
+        allowed = cmd[cmd.index("--allowedTools") + 1:cmd.index("--disallowedTools")]
+        self.assertIn("mcp__apps", allowed)
+
+    def test_token_not_in_argv_and_in_env(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        seen = {}
+
+        class P:
+            def __init__(self, cmd, **kw):
+                seen["cmd"], seen["env"] = cmd, kw["env"]
+                self.stdin, self.stdout, self.stderr = io.StringIO(), io.StringIO(), io.StringIO()
+                self.returncode = 0
+
+            def wait(self, *a, **k):
+                return 0
+
+            def poll(self):
+                return 0
+        with mock.patch.object(cs.subprocess, "Popen", P):
+            list(sess.ask("hi", apps_token=self.TOKEN, apps_port=8765))
+        self.assertFalse([a for a in seen["cmd"] if self.TOKEN in a])
+        self.assertEqual(seen["env"]["MYOS_APPS_TOKEN"], self.TOKEN)
+
+    def test_no_token_env_on_ordinary_turn(self):
+        sess = cs.ChatSession(repo_dir=".", rail="R")
+        seen = {}
+
+        class P:
+            def __init__(self, cmd, **kw):
+                seen["env"] = kw["env"]
+                self.stdin, self.stdout, self.stderr = io.StringIO(), io.StringIO(), io.StringIO()
+                self.returncode = 0
+
+            def wait(self, *a, **k):
+                return 0
+
+            def poll(self):
+                return 0
+        with mock.patch.dict(cs.os.environ, {"MYOS_APPS_TOKEN": "leak"}), \
+                mock.patch.object(cs.subprocess, "Popen", P):
+            list(sess.ask("hi"))
+        self.assertNotIn("MYOS_APPS_TOKEN", seen["env"])
 
 
 if __name__ == "__main__":

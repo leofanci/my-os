@@ -77,6 +77,16 @@ def records():
             yield rec
 
 
+def append_note(chat_id, bot, text):
+    """One assistant line after the fact (an approved app action's result)."""
+    rec = load(chat_id)
+    if not rec:
+        return
+    rec.setdefault("messages", []).append({"role": "assistant", "bot": bot, "content": text, "ts": time.time()})
+    rec["updated"] = time.time()
+    save(rec)
+
+
 def record_turn(sess, scope, user_msg, reply, bot=None, room=None, meta=None, extra=None):
     """Append one exchange to the chat backing `sess` and snapshot its resume state.
     `bot` = id of the teammate that answered (shown on the reply when reopened);
@@ -112,6 +122,7 @@ def record_turn(sess, scope, user_msg, reply, bot=None, room=None, meta=None, ex
         "last_skill": sess._last_skill,
         "skill_explicit": sess._skill_explicit,
         "last_bot": getattr(sess, "_last_bot", None),
+        "apps_used": bool(getattr(sess, "apps_used", False)),
     })
     if room and not rec.get("room"):
         rec["room"] = room
