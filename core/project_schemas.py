@@ -537,13 +537,16 @@ def normalize_workspace_artifacts(root) -> list[str]:
     from core.subsections import (
         config_path,
         ensure_config,
+        is_project_slug,
         normalize_doc_text,
         save_config,
         subsections_for_doc,
     )
 
     for proj in sorted(projects.glob("*")):
-        if not proj.is_dir():
+        # A hand-made folder whose name is not a slug is indexed but never
+        # normalized: neither the dashboard nor osctl can address it either.
+        if not proj.is_dir() or not is_project_slug(proj.name):
             continue
         slug = proj.name
         cfg = ensure_config(root, slug)

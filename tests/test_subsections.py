@@ -6,6 +6,7 @@ from pathlib import Path
 from core.subsections import (
     CONFIG_FILENAME,
     add_doc_subsection,
+    config_path,
     default_config,
     ensure_config,
     load_config,
@@ -29,6 +30,29 @@ class TestSubsections(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_config_path_takes_one_plain_folder_name(self):
+        # It builds a path from its argument: guard it here, not only in callers.
+        for bad in ("../acme", "acme/../../x", "a/b", "acme\n", "", ".hidden", "/etc"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                config_path(self.root, bad)
+        self.assertEqual(config_path(self.root, "acme"), self.proj / CONFIG_FILENAME)
+
+    def test_odd_folder_name_reads_defaults_and_never_writes(self):
+        (self.root / "projects" / "My App").mkdir()
+        self.assertEqual(load_config(self.root, "My App"), default_config())
+        with self.assertRaises(ValueError):
+            save_config(self.root, "../acme", default_config())
+        self.assertFalse((self.root / "projects" / "My App" / CONFIG_FILENAME).exists())
+
+    def test_index_still_builds_with_an_odd_project_folder(self):
+        import index
+        import io, contextlib
+        p = self.root / "projects" / "My App"
+        p.mkdir()
+        (p / "project.md").write_text("---\nname: My App\nkind: venture\n---\n")
+        with contextlib.redirect_stdout(io.StringIO()):
+            index.build(self.root)  # must not raise
 
     def test_default_config_matches_legacy_sections(self):
         cfg = default_config()

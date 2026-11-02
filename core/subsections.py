@@ -58,7 +58,17 @@ def default_config() -> dict[str, Any]:
     }
 
 
+# One plain folder name: no "/", "..", leading dot or newline (same rule as gtm_dir).
+_SAFE_SLUG_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+
+
+def is_project_slug(value) -> bool:
+    return bool(_SAFE_SLUG_RE.fullmatch(str(value or "")))
+
+
 def config_path(root: Path, project_slug: str) -> Path:
+    if not is_project_slug(project_slug):
+        raise ValueError(f"invalid project slug: {project_slug!r}")
     return Path(root) / "projects" / project_slug / CONFIG_FILENAME
 
 
@@ -84,8 +94,12 @@ def _clean_title(value: Any) -> str:
 
 
 def load_config(root: Path, project_slug: str) -> dict[str, Any]:
-    """Return project subsection config (defaults if file missing)."""
-    path = config_path(root, project_slug)
+    """Return project subsection config (defaults if file missing, or for a
+    hand-made folder whose name is not a slug: such a project still indexes)."""
+    try:
+        path = config_path(root, project_slug)
+    except ValueError:
+        return default_config()
     if not path.is_file():
         return default_config()
     try:
@@ -97,10 +111,9 @@ def load_config(root: Path, project_slug: str) -> dict[str, Any]:
 
 def save_config(root: Path, project_slug: str, config: dict[str, Any]) -> dict[str, Any]:
     cfg = _normalize_config(config)
-    proj = Path(root) / "projects" / project_slug
-    if not proj.is_dir():
+    path = config_path(root, project_slug)  # validates before any path is built
+    if not path.parent.is_dir():
         raise ValueError(f"project '{project_slug}' not found")
-    path = config_path(root, project_slug)
     path.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return cfg
 
