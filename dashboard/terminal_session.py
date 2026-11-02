@@ -12,6 +12,10 @@ import struct
 import termios
 import threading
 
+# The user's own umask, saved by the server before it goes owner-only: the
+# full-trust terminal is the user's shell, so files made there stay normal.
+USER_UMASK = None
+
 
 class TerminalSession:
     def __init__(self, cmd, cwd):
@@ -27,6 +31,8 @@ class TerminalSession:
         if self.pid == 0:  # child
             try:
                 os.chdir(self.cwd)
+                if USER_UMASK is not None:
+                    os.umask(USER_UMASK)
                 # Finder-launched GUI apps inherit no TERM, so claude detects no
                 # color support and renders monochrome. Advertise a color terminal.
                 env = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}

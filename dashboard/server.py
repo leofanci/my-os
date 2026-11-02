@@ -111,8 +111,9 @@ def remove_uploads():
 
 def restrict_new_files():
     """Owner-only for everything this process creates: chats/, projects/, team/
-    and their files hold private data even when the checkout sits in a shared folder."""
-    os.umask(0o077)
+    and their files hold private data even when the checkout sits in a shared folder.
+    The integrated terminal gets the user's own umask back (terminal_session)."""
+    terminal_session.USER_UMASK = os.umask(0o077)
 
 
 def health_proof(nonce):

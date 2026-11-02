@@ -79,6 +79,9 @@ for pid in $(/usr/sbin/lsof -ti tcp:"$PORT" -sTCP:LISTEN 2>/dev/null); do
 done
 
 cd "$REPO" || { echo "NOREPO"; exit 1; }
-umask 077  # server.log and everything the server creates: owner-only
+# The log holds chat ids and paths: owner-only. Only the log, so the server
+# (and the terminal it hosts) still starts with the user's own umask.
+( umask 077; : > "$LOGFILE" )
+chmod 600 "$LOGFILE"  # a log from an older build may be 0644
 "$PYTHON3" dashboard/server.py --port "$PORT" > "$LOGFILE" 2>&1 &
 echo "PID $!"

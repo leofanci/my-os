@@ -230,6 +230,24 @@ class BotSandboxEnv(unittest.TestCase):
         cs.remove_bot_tmpdir()
         self.assertFalse(d.exists())
 
+    def test_concurrent_first_turns_share_one_temp_dir(self):
+        # Two chat requests at once must not each make one (the loser would leak).
+        import threading, time
+        real, calls = cs.tempfile.mkdtemp, []
+
+        def slow_mkdtemp(**kw):
+            calls.append(1)
+            time.sleep(0.05)
+            return real(**kw)
+        with mock.patch.object(cs.tempfile, "mkdtemp", slow_mkdtemp):
+            got = []
+            threads = [threading.Thread(target=lambda: got.append(cs.bot_tmpdir())) for _ in range(6)]
+            for th in threads:
+                th.start()
+            for th in threads:
+                th.join()
+        self.assertEqual((len(calls), len(set(got))), (1, 1))
+
     def test_thread_that_read_an_app_tells_osctl(self):
         sess = cs.ChatSession(repo_dir=".", rail="R")
         with mock.patch.dict(cs.os.environ, {"MYOS_APPS_USED": "1"}):  # never inherited

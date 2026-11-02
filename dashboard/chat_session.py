@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 
@@ -132,20 +133,23 @@ APPS_USED_ENV = "MYOS_APPS_USED"
 # with every dev session in this repo (scratch files, task output), so bots get
 # their own owner-only root per server run (CLAUDE_CODE_TMPDIR), removed on shutdown.
 _BOT_TMPDIR = None
+_BOT_TMPDIR_LOCK = threading.Lock()  # chat requests run on server threads
 
 
 def bot_tmpdir():
     global _BOT_TMPDIR
-    if _BOT_TMPDIR is None:
-        _BOT_TMPDIR = tempfile.mkdtemp(prefix="myos-bots-")
-    return _BOT_TMPDIR
+    with _BOT_TMPDIR_LOCK:
+        if _BOT_TMPDIR is None:
+            _BOT_TMPDIR = tempfile.mkdtemp(prefix="myos-bots-")
+        return _BOT_TMPDIR
 
 
 def remove_bot_tmpdir():
     global _BOT_TMPDIR
-    if _BOT_TMPDIR:
-        shutil.rmtree(_BOT_TMPDIR, ignore_errors=True)
-        _BOT_TMPDIR = None
+    with _BOT_TMPDIR_LOCK:
+        if _BOT_TMPDIR:
+            shutil.rmtree(_BOT_TMPDIR, ignore_errors=True)
+            _BOT_TMPDIR = None
 
 
 def apps_mcp_config(port):

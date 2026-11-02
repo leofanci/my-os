@@ -101,6 +101,23 @@ class CrudTest(unittest.TestCase):
                     fileops.normalize_local_folder(home / rel)
             self.assertEqual(fileops.normalize_local_folder(app), str(app.resolve()))
 
+    def test_project_local_folder_allows_apps_in_cloud_drives_not_whole_drives(self):
+        # iCloud Drive, Dropbox, Google Drive live under ~/Library: an app inside
+        # one is fine, the drive itself (everything synced) is not.
+        home = self.root / "home"
+        icloud = home / "Library" / "Mobile Documents" / "com~apple~CloudDocs"
+        cloud = home / "Library" / "CloudStorage" / "Dropbox"
+        ok = (icloud / "apps" / "acme-app", cloud / "code" / "acme-app")
+        bad = (icloud, cloud, home / "Library" / "CloudStorage")
+        for d in ok + bad:
+            d.mkdir(parents=True, exist_ok=True)
+        with mock.patch.object(Path, "home", return_value=home):
+            for d in ok:
+                self.assertEqual(fileops.normalize_local_folder(d), str(d.resolve()))
+            for d in bad:
+                with self.assertRaises(fileops.ActionError, msg=str(d)):
+                    fileops.normalize_local_folder(d)
+
     def test_project_local_folder_rejects_slug_path_traversal(self):
         with self.assertRaises(fileops.ActionError):
             fileops.project_local_folder("../acme")
