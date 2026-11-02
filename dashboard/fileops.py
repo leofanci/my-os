@@ -867,6 +867,17 @@ def _slugify(name: str) -> str:
     return re.sub(r"-+", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
 
 
+# Cloud drives sync under ~/Library (None = any provider folder): an app folder
+# inside one is fine, the drive itself (everything synced) is not.
+_CLOUD_DRIVES = (("Library", "Mobile Documents", "com~apple~CloudDocs"), ("Library", "CloudStorage", None))
+
+
+def _inside_cloud_drive(rel_parts) -> bool:
+    return any(len(rel_parts) > len(drive)
+               and all(d is None or d == p for d, p in zip(drive, rel_parts))
+               for drive in _CLOUD_DRIVES)
+
+
 def normalize_local_folder(value) -> str:
     """Return one safe app directory, or an empty string to unlink it."""
     raw = str(value or "").strip()
@@ -896,8 +907,8 @@ def normalize_local_folder(value) -> str:
         raise ActionError("local folder cannot be inside the Claude config folder")
     # ~/.ssh, ~/.config, ~/.aws, ~/Library: keys and CLI tokens, never app code.
     if resolved.is_relative_to(home):
-        top = resolved.relative_to(home).parts[0]
-        if top.startswith(".") or top == "Library":
+        rel = resolved.relative_to(home).parts
+        if (rel[0].startswith(".") or rel[0] == "Library") and not _inside_cloud_drive(rel):
             raise ActionError("local folder cannot be a hidden or Library folder in your home")
     # "Open folder" would launch an app bundle instead of showing it.
     if any(part.lower().endswith(".app") for part in resolved.parts):

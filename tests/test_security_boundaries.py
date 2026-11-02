@@ -3,6 +3,7 @@ import io
 import json
 import os
 import struct
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -219,6 +220,7 @@ class LoginAndLocalFilesTest(unittest.TestCase):
         old = os.umask(0o022)
         try:
             server.restrict_new_files()
+            self.assertEqual(server.terminal_session.USER_UMASK, 0o022)  # the terminal gets it back
             with tempfile.TemporaryDirectory() as d:
                 f, sub = Path(d) / "f.json", Path(d) / "sub"
                 f.write_text("{}")
@@ -228,10 +230,19 @@ class LoginAndLocalFilesTest(unittest.TestCase):
         finally:
             os.umask(old)
 
-    def test_launcher_log_is_owner_only(self):
+    def test_launcher_log_is_owner_only_without_a_global_umask(self):
+        # Only the log: a global umask 077 would reach the integrated terminal too.
         script = (Path(__file__).resolve().parents[1] / "myOS.app" / "Contents" / "Resources"
                   / "start-server.sh").read_text(encoding="utf-8")
-        self.assertLess(script.index("umask 077"), script.index('> "$LOGFILE"'))
+        lines = [ln for ln in script.splitlines() if "LOGFILE" in ln and not ln.startswith(("LOGFILE", "#"))]
+        self.assertNotIn("umask 077", [ln.strip().split("#")[0].strip() for ln in script.splitlines()])
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "server.log"
+            log.write_text("old")
+            os.chmod(log, 0o644)  # a log from before this change
+            setup = "\n".join(ln for ln in lines if "server.py" not in ln)
+            subprocess.run(["sh", "-c", f"umask 022\nLOGFILE={log}\n{setup}\n: > \"$LOGFILE\""], check=True)
+            self.assertEqual(log.stat().st_mode & 0o777, 0o600)
 
     def test_uploads_live_in_private_dir_removed_on_shutdown(self):
         d = Path(server.upload_dir())
